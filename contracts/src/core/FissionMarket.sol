@@ -5,6 +5,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {AccessControlDefaultAdminRules} from
     "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 
@@ -31,6 +32,7 @@ contract FissionMarket is
     IFissionMarket,
     ERC20,
     ReentrancyGuardTransient,
+    Pausable,
     AccessControlDefaultAdminRules
 {
     using PMath for uint256;
@@ -38,6 +40,12 @@ contract FissionMarket is
     using SafeERC20 for IERC20;
 
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+
+    /// @notice Hard cap on `reserveFeePercent` — fraction of the swap fee routed to
+    ///         treasury, expressed in percent (1..100). Anything above 100 would route
+    ///         more than the full fee.
+    uint256 public constant MAX_RESERVE_FEE_PERCENT = 100;
 
     // ───────────────────── immutables ─────────────────────
 
@@ -149,6 +157,7 @@ contract FissionMarket is
         _assetDecimals = assetDecimals_;
         factory = msg.sender;
         _grantRole(ADMIN_ROLE, admin_);
+        _grantRole(PAUSER_ROLE, admin_);
     }
 
     /// @notice LP shares are 18 decimals — independent of the SY/asset decimals.
@@ -180,6 +189,7 @@ contract FissionMarket is
     function initialize(uint256 syIn, uint256 ptIn, int256 initialAnchor, int256 lnFeeRateRoot_, uint256 reserveFeePercent_)
         external
         nonReentrant
+        whenNotPaused
         onlyRole(ADMIN_ROLE)
         preExpiry
         returns (uint256 lpOut)
@@ -187,7 +197,7 @@ contract FissionMarket is
         if (address(pt) == address(0)) revert TokensNotSet();
         if (totalSupply() != 0) revert AlreadyInitialized();
         if (syIn == 0 || ptIn == 0) revert ZeroAmount();
-        if (reserveFeePercent_ > 100) revert InsufficientLiquidity();
+        if (reserveFeePercent_ > MAX_RESERVE_FEE_PERCENT) revert InsufficientLiquidity();
         MarketMath.validateLnFeeRateRoot(lnFeeRateRoot_);
 
         IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), syIn);
@@ -219,7 +229,7 @@ contract FissionMarket is
     // ───────────────────── split / merge ─────────────────────
 
     /// @notice 1 SY → 1 PT + 1 YT. No fee, no AMM math.
-    function split(uint256 amount) external nonReentrant preExpiry returns (uint256) {
+    function split(uint256 amount) external nonReentrant whenNotPaused preExpiry returns (uint256) {
         if (amount == 0) revert ZeroAmount();
         if (address(pt) == address(0)) revert TokensNotSet();
 
@@ -253,6 +263,7 @@ contract FissionMarket is
     function swapExactPtForSy(uint256 ptIn, uint256 minSyOut, address receiver)
         external
         nonReentrant
+        whenNotPaused
         preExpiry
         returns (uint256 syOut)
     {
@@ -292,6 +303,7 @@ contract FissionMarket is
     function swapExactSyForPt(uint256 syInMax, uint256 ptOut, address receiver)
         external
         nonReentrant
+        whenNotPaused
         preExpiry
         returns (uint256 syIn)
     {
@@ -331,6 +343,7 @@ contract FissionMarket is
     function addLiquidity(uint256 syIn, uint256 ptIn, uint256 minLpOut, address receiver)
         external
         nonReentrant
+        whenNotPaused
         preExpiry
         returns (uint256 lpOut)
     {
@@ -500,10 +513,23 @@ contract FissionMarket is
 
     function setFee(int256 lnFeeRateRoot_, uint256 reserveFeePercent_) external onlyRole(ADMIN_ROLE) {
         MarketMath.validateLnFeeRateRoot(lnFeeRateRoot_);
-        if (reserveFeePercent_ > 100) revert InsufficientLiquidity();
+        if (reserveFeePercent_ > MAX_RESERVE_FEE_PERCENT) revert InsufficientLiquidity();
         lnFeeRateRoot = lnFeeRateRoot_;
         reserveFeePercent = reserveFeePercent_;
         emit FeeUpdated(lnFeeRateRoot_, reserveFeePercent_);
+    }
+
+    /// @notice Pause new entry into the market. While paused: `initialize`, `split`,
+    ///         `swapExactPtForSy`, `swapExactSyForPt`, and `addLiquidity` revert.
+    /// @dev    `merge`, `removeLiquidity`, `claimYield`, `redeemAfterExpiry`, and the
+    ///         YT-balance accrual callback remain callable so users can always exit
+    ///         and collect what they're owed even with the market paused.
+    function pause() external onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _unpause();
     }
 
     // ───────────────────── views ─────────────────────

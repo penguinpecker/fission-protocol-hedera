@@ -328,4 +328,57 @@ contract FissionMarketTest is Test {
 
         assertGe(assetValue, ptLiability + yieldLiabilityAsset, "solvency violated");
     }
+
+    // ───── pause ─────
+
+    function test_pause_blocksEntryButLeavesEscapeHatchesOpen() public {
+        // Alice enters before pause: splits 1_000 SY → 1_000 PT + 1_000 YT.
+        vm.startPrank(alice);
+        IERC20(address(sy)).approve(address(market), type(uint256).max);
+        IERC20(address(pt)).approve(address(market), type(uint256).max);
+        market.split(1_000e18);
+        vm.stopPrank();
+
+        // Pauser pauses (admin holds PAUSER_ROLE by construction).
+        vm.prank(admin);
+        market.pause();
+        assertTrue(market.paused());
+
+        // Entry paths revert.
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSignature("EnforcedPause()"));
+        market.split(1e18);
+        vm.expectRevert(abi.encodeWithSignature("EnforcedPause()"));
+        market.swapExactPtForSy(10e18, 0, alice);
+        vm.expectRevert(abi.encodeWithSignature("EnforcedPause()"));
+        market.swapExactSyForPt(1e18, 1e18, alice);
+        vm.expectRevert(abi.encodeWithSignature("EnforcedPause()"));
+        market.addLiquidity(1e18, 1e18, 0, alice);
+
+        // Escape hatches still work: merge + claimYield.
+        market.merge(500e18);
+        market.claimYield(alice);
+        vm.stopPrank();
+
+        // Unpause requires DEFAULT_ADMIN_ROLE.
+        vm.prank(alice);
+        vm.expectRevert();
+        market.unpause();
+        vm.prank(admin);
+        market.unpause();
+        assertFalse(market.paused());
+    }
+
+    function test_pause_onlyPauser() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        market.pause();
+    }
+
+    function test_setFee_revertsAboveMaxReservePercent() public {
+        uint256 over = market.MAX_RESERVE_FEE_PERCENT() + 1;
+        vm.prank(admin);
+        vm.expectRevert(FissionMarket.InsufficientLiquidity.selector);
+        market.setFee(LN_FEE_ROOT, over);
+    }
 }

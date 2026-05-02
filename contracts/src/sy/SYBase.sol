@@ -51,7 +51,6 @@ abstract contract SYBase is
     error AmountZero();
     error TokenNotSupported(address token);
     error SlippageExceeded();
-    error LengthMismatch();
     error InsufficientSharesOut();
 
     constructor(
