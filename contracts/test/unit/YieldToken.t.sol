@@ -2,20 +2,40 @@
 pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/Test.sol";
-import {Vm} from "forge-std/Vm.sol";
 import {YieldToken} from "../../src/core/YieldToken.sol";
+import {IFissionMarket} from "../../src/interfaces/IFissionMarket.sol";
+
+/// @notice Stub market that records every callback. Unit tests for YT only verify the
+///         callback is fired with the right arguments — yield accrual itself is tested
+///         in FissionMarket.t.sol.
+contract MockMarket is IFissionMarket {
+    address public lastFrom;
+    address public lastTo;
+    uint256 public callCount;
+
+    function onYTBalanceChange(address from, address to) external override {
+        lastFrom = from;
+        lastTo = to;
+        callCount++;
+    }
+}
 
 contract YieldTokenTest is Test {
     YieldToken yt;
+    MockMarket mockMarket;
     address sy = address(0xBEEF);
-    address market = address(0xCAFE);
     address alice = address(0xA11CE);
     address bob = address(0xB0B);
     uint256 expiry;
 
     function setUp() public {
+        mockMarket = new MockMarket();
         expiry = block.timestamp + 90 days;
-        yt = new YieldToken("Fission YT-0", "fYT-0", sy, expiry, market);
+        yt = new YieldToken("Fission YT-0", "fYT-0", sy, expiry, address(mockMarket), 18);
+    }
+
+    function _market() internal view returns (address) {
+        return address(mockMarket);
     }
 
     // ───── construction ─────
@@ -24,14 +44,14 @@ contract YieldTokenTest is Test {
         assertEq(yt.decimals(), 18);
         assertEq(yt.sy(), sy);
         assertEq(yt.expiry(), expiry);
-        assertEq(yt.market(), market);
+        assertEq(yt.market(), address(mockMarket));
     }
 
     function test_revertsOnZeroAddresses() public {
         vm.expectRevert(YieldToken.ZeroAddress.selector);
-        new YieldToken("X", "X", address(0), expiry, market);
+        new YieldToken("X", "X", address(0), expiry, address(mockMarket), 18);
         vm.expectRevert(YieldToken.ZeroAddress.selector);
-        new YieldToken("X", "X", sy, expiry, address(0));
+        new YieldToken("X", "X", sy, expiry, address(0), 18);
     }
 
     // ───── mint/burn gating ─────
@@ -41,70 +61,55 @@ contract YieldTokenTest is Test {
         vm.expectRevert(YieldToken.OnlyMarket.selector);
         yt.mint(alice, 1e18);
 
-        vm.prank(market);
+        vm.prank(_market());
         yt.mint(alice, 1e18);
         assertEq(yt.balanceOf(alice), 1e18);
     }
 
     function test_burn_onlyMarket() public {
-        vm.prank(market);
+        vm.prank(_market());
         yt.mint(alice, 5e18);
 
         vm.prank(alice);
         vm.expectRevert(YieldToken.OnlyMarket.selector);
         yt.burn(alice, 1e18);
 
-        vm.prank(market);
+        vm.prank(_market());
         yt.burn(alice, 2e18);
         assertEq(yt.balanceOf(alice), 3e18);
     }
 
-    // ───── YTTransfer event (used by indexers / Market accrual) ─────
+    // ───── onYTBalanceChange callback fires on every balance update ─────
 
-    function test_transfer_emitsYTTransferEvent() public {
-        vm.prank(market);
-        yt.mint(alice, 10e18);
+    function test_callback_firedOnTransfer() public {
+        vm.prank(_market());
+        yt.mint(alice, 10e18); // call 1: from = 0, to = alice
+        assertEq(mockMarket.callCount(), 1);
+        assertEq(mockMarket.lastFrom(), address(0));
+        assertEq(mockMarket.lastTo(), alice);
 
-        vm.recordLogs();
         vm.prank(alice);
-        yt.transfer(bob, 3e18);
-
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        // first log is ERC20 Transfer, second is YTTransfer
-        bool foundYT;
-        for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == keccak256("YTTransfer(address,address,uint256)")) {
-                foundYT = true;
-                assertEq(address(uint160(uint256(logs[i].topics[1]))), alice);
-                assertEq(address(uint160(uint256(logs[i].topics[2]))), bob);
-                assertEq(abi.decode(logs[i].data, (uint256)), 3e18);
-            }
-        }
-        assertTrue(foundYT, "YTTransfer event missing");
+        yt.transfer(bob, 3e18); // call 2: from = alice, to = bob
+        assertEq(mockMarket.callCount(), 2);
+        assertEq(mockMarket.lastFrom(), alice);
+        assertEq(mockMarket.lastTo(), bob);
     }
 
-    function test_mint_emitsYTTransferEvent() public {
-        vm.recordLogs();
-        vm.prank(market);
+    function test_callback_firedOnBurn() public {
+        vm.prank(_market());
         yt.mint(alice, 5e18);
 
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        bool found;
-        for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == keccak256("YTTransfer(address,address,uint256)")) {
-                // mint: from = address(0), to = alice
-                assertEq(address(uint160(uint256(logs[i].topics[1]))), address(0));
-                assertEq(address(uint160(uint256(logs[i].topics[2]))), alice);
-                found = true;
-            }
-        }
-        assertTrue(found);
+        vm.prank(_market());
+        yt.burn(alice, 2e18); // from = alice, to = 0
+        assertEq(mockMarket.callCount(), 2); // mint + burn
+        assertEq(mockMarket.lastFrom(), alice);
+        assertEq(mockMarket.lastTo(), address(0));
     }
 
     // ───── transfers always work, even at/after expiry ─────
 
     function test_transferPostExpiry() public {
-        vm.prank(market);
+        vm.prank(_market());
         yt.mint(alice, 1e18);
 
         vm.warp(expiry + 1);

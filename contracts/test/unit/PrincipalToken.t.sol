@@ -14,7 +14,7 @@ contract PrincipalTokenTest is Test {
 
     function setUp() public {
         expiry = block.timestamp + 90 days;
-        pt = new PrincipalToken("Fission PT-0", "fPT-0", sy, expiry, market);
+        pt = new PrincipalToken("Fission PT-0", "fPT-0", sy, expiry, market, 18);
     }
 
     // ───── construction ─────
@@ -31,12 +31,12 @@ contract PrincipalTokenTest is Test {
 
     function test_revertsOnZeroSY() public {
         vm.expectRevert(PrincipalToken.ZeroAddress.selector);
-        new PrincipalToken("X", "X", address(0), expiry, market);
+        new PrincipalToken("X", "X", address(0), expiry, market, 18);
     }
 
     function test_revertsOnZeroMarket() public {
         vm.expectRevert(PrincipalToken.ZeroAddress.selector);
-        new PrincipalToken("X", "X", sy, expiry, address(0));
+        new PrincipalToken("X", "X", sy, expiry, address(0), 18);
     }
 
     // ───── mint / burn gating ─────

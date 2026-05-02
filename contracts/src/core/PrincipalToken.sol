@@ -8,14 +8,14 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 ///         SY (where `index` is the SY's exchange rate at redemption time). The redemption
 ///         math lives in `FissionMarket`; this contract is a thin ERC-20 mint/burn surface
 ///         gated to the market.
-/// @dev    Decimals = 18 regardless of the underlying SY's decimals. PT/YT amounts are
-///         denominated in MarketMath's internal 1e18 unit, so keeping them at 18 decimals
-///         avoids per-market scaling. The Market is responsible for converting between
-///         this 1e18 PT-unit and the SY's native decimals at the deposit/redeem boundary.
+/// @dev    Decimals match the underlying SY (which itself matches the asset, per
+///         ERC-5115). This keeps `MarketMath` ratios decimal-cancelling and avoids
+///         scale conversions at every entry point. Pendle V2 does the same:
+///         `PT.decimals() == YT.decimals() == SY.decimals() == asset.decimals()`.
 ///
 ///         Transfers are always allowed (no pause on PT transfers — pausing trading would
 ///         strand users on secondary markets like SaucerSwap). Only minting and burning
-///         are gated: `MARKET_ROLE` (set once at construction, immutable thereafter).
+///         are gated to the Market.
 contract PrincipalToken is ERC20 {
     /// @notice The SY this PT corresponds to.
     address public immutable sy;
@@ -26,6 +26,9 @@ contract PrincipalToken is ERC20 {
     /// @notice Sole minter and burner. Set once at construction; immutable.
     address public immutable market;
 
+    /// @notice Decimals — matches the SY/asset; supplied by the factory at construction.
+    uint8 private immutable _decimals;
+
     error OnlyMarket();
     error ZeroAddress();
 
@@ -34,18 +37,23 @@ contract PrincipalToken is ERC20 {
         _;
     }
 
-    constructor(string memory name_, string memory symbol_, address sy_, uint256 expiry_, address market_)
-        ERC20(name_, symbol_)
-    {
+    constructor(
+        string memory name_,
+        string memory symbol_,
+        address sy_,
+        uint256 expiry_,
+        address market_,
+        uint8 decimals_
+    ) ERC20(name_, symbol_) {
         if (sy_ == address(0) || market_ == address(0)) revert ZeroAddress();
         sy = sy_;
         expiry = expiry_;
         market = market_;
+        _decimals = decimals_;
     }
 
-    /// @notice 18 decimals — protocol invariant; do not override per-market.
-    function decimals() public pure override returns (uint8) {
-        return 18;
+    function decimals() public view override returns (uint8) {
+        return _decimals;
     }
 
     /// @notice True at and after expiry.
