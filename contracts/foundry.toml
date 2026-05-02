@@ -1,0 +1,54 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+solc = "0.8.27"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 1_000_000
+via_ir = true
+bytecode_hash = "none"
+cbor_metadata = false
+ffi = false
+fs_permissions = [{ access = "read-write", path = "./deployments" }]
+gas_reports = ["FissionMarket", "PrincipalToken", "YieldToken", "ActionRouter", "SY_HBARX", "SY_SaucerSwap"]
+remappings = [
+    "@openzeppelin/=lib/openzeppelin-contracts/",
+    "forge-std/=lib/forge-std/src/",
+    "@solady/=lib/solady/src/",
+]
+
+[profile.default.fuzz]
+runs = 5_000
+max_test_rejects = 1_000_000
+seed = "0x1"
+
+[profile.default.invariant]
+runs = 256
+depth = 500
+fail_on_revert = false
+call_override = false
+dictionary_weight = 80
+include_storage = true
+include_push_bytes = true
+
+[profile.ci]
+fuzz = { runs = 50_000 }
+invariant = { runs = 1024, depth = 500 }
+verbosity = 3
+
+[profile.deep]
+fuzz = { runs = 1_000_000 }
+invariant = { runs = 5000, depth = 1000 }
+
+[fmt]
+bracket_spacing = true
+int_types = "long"
+line_length = 110
+multiline_func_header = "all"
+number_underscore = "thousands"
+quote_style = "double"
+tab_width = 4
+wrap_comments = true

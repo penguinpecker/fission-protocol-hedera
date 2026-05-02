@@ -1,0 +1,66 @@
+name: contracts
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+defaults:
+  run:
+    working-directory: contracts
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with: { version: stable }
+
+      - name: Forge build
+        run: forge build --sizes
+
+      - name: Forge fmt check
+        run: forge fmt --check
+
+      - name: Forge tests + invariants (CI profile)
+        run: FOUNDRY_PROFILE=ci forge test -vv
+
+      - name: Coverage
+        run: forge coverage --report lcov --report summary
+        continue-on-error: true
+
+      - uses: codecov/codecov-action@v4
+        with:
+          files: contracts/lcov.info
+          fail_ci_if_error: false
+
+  slither:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: foundry-rs/foundry-toolchain@v1
+        with: { version: stable }
+      - uses: crytic/slither-action@v0.4.0
+        id: slither
+        with:
+          target: contracts/
+          slither-config: .github/slither.config.json
+          fail-on: high
+          slither-args: --foundry-out-directory contracts/out
+
+  aderyn:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: foundry-rs/foundry-toolchain@v1
+        with: { version: stable }
+      - name: Install aderyn
+        run: cargo install aderyn || true
+      - name: Run aderyn
+        run: aderyn . --no-snapshot
+        continue-on-error: true

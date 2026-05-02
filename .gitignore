@@ -1,0 +1,46 @@
+# Env / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Node
+node_modules/
+.pnp
+.pnp.js
+.yarn/
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/cache_forge/
+contracts/broadcast/*/dryRun/
+
+# Hardhat
+contracts/cache_hardhat/
+contracts/artifacts/
+contracts/typechain-types/
+
+# Build / coverage
+**/dist/
+**/build/
+**/.next/
+**/coverage/
+**/lcov.info
+**/coverage.json
+
+# Editor
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Verification dumps (regenerated)
+contracts/verification/

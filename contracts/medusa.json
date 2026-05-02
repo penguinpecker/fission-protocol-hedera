@@ -1,0 +1,34 @@
+{
+  "fuzzing": {
+    "workers": 8,
+    "workerResetLimit": 50,
+    "timeout": 0,
+    "testLimit": 0,
+    "callSequenceLength": 100,
+    "corpusDirectory": "medusa-corpus",
+    "coverageEnabled": true,
+    "deploymentOrder": [],
+    "targetContracts": [],
+    "constructorArgs": {},
+    "deployerAddress": "0x30000",
+    "senderAddresses": ["0x10000", "0x20000", "0x30000"],
+    "blockNumberDelayMax": 60480,
+    "blockTimestampDelayMax": 604800,
+    "blockGasLimit": 125000000,
+    "transactionGasLimit": 12500000,
+    "testing": {
+      "stopOnFailedTest": false,
+      "stopOnFailedContractMatching": true,
+      "stopOnNoTests": true,
+      "testAllContracts": false,
+      "traceAll": false,
+      "assertionTesting": { "enabled": true, "testViewMethods": false },
+      "propertyTesting": { "enabled": true, "testPrefixes": ["invariant_"] },
+      "optimizationTesting": { "enabled": false }
+    }
+  },
+  "compilation": {
+    "platform": "crytic-compile",
+    "platformConfig": { "target": ".", "solcVersion": "", "exportDirectory": "", "args": ["--foundry-compile-all"] }
+  }
+}

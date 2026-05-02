@@ -1,0 +1,9 @@
+{
+  "filter_paths": "lib|node_modules|test",
+  "exclude_dependencies": true,
+  "exclude_informational": false,
+  "exclude_low": false,
+  "fail_high": true,
+  "fail_medium": true,
+  "compile_force_framework": "foundry"
+}
