@@ -165,10 +165,13 @@ contract FissionFactory is AccessControlDefaultAdminRules {
             dec
         );
 
-        m.setTokens(address(pt), address(yt));
-
+        // Effects-first: stash the market in our own storage BEFORE the only external
+        // call (setTokens). The new market contract is freshly-deployed and can't
+        // reasonably reenter the factory, but reordering removes the formal CFR.
         markets.push(address(m));
         marketAddr = address(m);
+
+        m.setTokens(address(pt), address(yt));
 
         emit MarketCreated(marketId, marketAddr, sy, address(pt), address(yt), expiry, scalarRoot);
     }

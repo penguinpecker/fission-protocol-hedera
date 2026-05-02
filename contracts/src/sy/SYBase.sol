@@ -37,7 +37,9 @@ abstract contract SYBase is
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     /// @dev Sentinel for native HBAR deposits/redeems on Hedera. Uses the same
-    ///      address Aave / 1inch use for native-asset signalling.
+    ///      address Aave / 1inch use for native-asset signalling. Reserved for a
+    ///      future SY adapter that accepts HBAR directly; current adapters never
+    ///      return `true` from `isValidTokenIn(NATIVE)`.
     address public constant NATIVE = address(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE);
 
     /// @notice The yield-bearing token deposited into the SY (what the SY actually holds).
@@ -218,6 +220,9 @@ abstract contract SYBase is
             || super.supportsInterface(interfaceId);
     }
 
-    // Required to receive native HBAR for Hedera-native deposits.
-    receive() external payable virtual {}
+    // No `receive()` — the SY base does not currently support native HBAR deposits.
+    // When an adapter declares the NATIVE sentinel valid via `isValidTokenIn`, that
+    // adapter overrides `deposit` (or this contract gains a receive in a future
+    // revision). Until then, a raw HBAR send to an SY reverts — preventing the
+    // attractive-nuisance / locked-ether failure mode Slither flags.
 }

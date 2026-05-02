@@ -49,7 +49,6 @@ contract ActionRouter is ReentrancyGuardTransient {
         uint256 deadline
     )
         external
-        payable
         nonReentrant
         checkDeadline(deadline)
         returns (uint256 ptOut, uint256 ytOut)
