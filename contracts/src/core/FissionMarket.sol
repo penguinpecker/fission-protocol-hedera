@@ -174,10 +174,13 @@ contract FissionMarket is
     /// @notice Seed initial liquidity and set the implied-rate anchor. Call once after
     ///         setTokens. Caller (factory) supplies SY+PT and receives LP shares; this
     ///         is the only path that can mint LP from nothing.
+    /// @notice Seed initial liquidity. Restricted to ADMIN_ROLE so the factory can
+    ///         deploy Market+PT+YT first and the protocol's Safe later seeds with its own
+    ///         capital — no factory custody of seed funds.
     function initialize(uint256 syIn, uint256 ptIn, int256 initialAnchor, int256 lnFeeRateRoot_, uint256 reserveFeePercent_)
         external
         nonReentrant
-        onlyFactory
+        onlyRole(ADMIN_ROLE)
         preExpiry
         returns (uint256 lpOut)
     {

@@ -60,14 +60,19 @@ contract FissionMarketTest is Test {
         // We can't split before initialize because split needs the pool? Let's check:
         // Actually split doesn't need the pool — it just mints PT+YT 1:1. Yes can split.
 
-        // Plan: factory mints lots of SY for itself, splits half into PT, then initialize
-        // with (sy, pt) ratio.
+        // Plan: factory mints lots of SY for itself, splits half into PT, then transfers
+        // some PT+SY to admin who initializes.
         market.split(500_000e18);
         // Now factory has 500_000 PT + 500_000 YT + 500_000 SY.
+        IERC20(address(sy)).transfer(admin, 200_000e18);
+        IERC20(address(pt)).transfer(admin, 200_000e18);
 
-        // Initialize with (100k SY, 100k PT). Anchor at 1.05e18.
-        IERC20(address(pt)).approve(address(market), type(uint256).max);
+        // Admin initializes with (100k SY, 100k PT). Anchor at 1.05e18.
+        vm.startPrank(admin);
+        IERC20(address(sy)).approve(address(market), 100_000e18);
+        IERC20(address(pt)).approve(address(market), 100_000e18);
         market.initialize(100_000e18, 100_000e18, INITIAL_ANCHOR, LN_FEE_ROOT, RESERVE_PCT);
+        vm.stopPrank();
 
         // Distribute test balances to alice and bob.
         IERC20(address(sy)).transfer(alice, 100_000e18);
@@ -104,6 +109,7 @@ contract FissionMarketTest is Test {
     }
 
     function test_initialize_oneShot() public {
+        vm.prank(admin);
         vm.expectRevert(FissionMarket.AlreadyInitialized.selector);
         market.initialize(1, 1, INITIAL_ANCHOR, LN_FEE_ROOT, RESERVE_PCT);
     }
@@ -192,11 +198,13 @@ contract FissionMarketTest is Test {
     }
 
     function test_removeLiquidity_proportional() public {
-        // Factory burns half its LP.
-        uint256 lpBefore = market.balanceOf(address(this));
+        // Admin (who initialized) holds the LP. Burn half.
+        uint256 lpBefore = market.balanceOf(admin);
         uint256 lpToRemove = lpBefore / 2;
+        assertGt(lpToRemove, 0, "admin should hold LP from init");
 
-        (uint256 syOut, uint256 ptOut) = market.removeLiquidity(lpToRemove, 0, 0, address(this));
+        vm.prank(admin);
+        (uint256 syOut, uint256 ptOut) = market.removeLiquidity(lpToRemove, 0, 0, admin);
 
         // Should get ~half the reserves.
         assertGt(syOut, 49_000e18);
