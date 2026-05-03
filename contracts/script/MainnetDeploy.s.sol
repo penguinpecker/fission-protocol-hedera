@@ -50,7 +50,7 @@ contract MainnetDeploy is Script {
         require(syAdmin != deployer, "deployer should not own SY in prod");
 
         address stader = vm.envOr("STADER_ORACLE_ADDRESS", MainnetAddresses.STADER_STAKING);
-        address npm = vm.envAddress("SAUCER_V2_NPM"); // mandatory — placeholder in MainnetAddresses
+        address npm = vm.envOr("SAUCER_V2_NPM", MainnetAddresses.SAUCER_V2_NPM);
         address pool = vm.envOr("SAUCER_V2_POOL", MainnetAddresses.SAUCER_V2_WHBAR_USDC_POOL);
         require(npm != address(0), "SAUCER_V2_NPM not set");
         require(pool != address(0), "SAUCER_V2_POOL not set");

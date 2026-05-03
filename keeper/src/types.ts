@@ -8,7 +8,6 @@ import type { Address } from "viem";
 
 export type RateSource =
   | { kind: "stader"; staderContract: Address }
-  | { kind: "saucerswap-v1"; sy: Address /* the SY adapter; reads pool + initialVP from it */ }
   | { kind: "static"; rate: bigint /* test only */ };
 
 export interface AdapterConfig {

@@ -1,6 +1,6 @@
 # Fission Protocol — Hedera
 
-Yield tokenization on Hedera. Split yield-bearing tokens (HBARX, SaucerSwap LPs, Bonzo lending positions) into tradeable Principal Tokens (PT) and Yield Tokens (YT).
+Yield tokenization on Hedera. Split yield-bearing positions (HBARX liquid staking, SaucerSwap V2 LP) into tradeable Principal Tokens (PT) and Yield Tokens (YT).
 
 > Production rebuild — design goals are **real on-chain rate sources** (no mocks), **HTS-native PT/YT** for native wallet visibility, **multisig + timelock governance**, and **audit-ready** quality with invariant fuzzing.
 
@@ -21,13 +21,15 @@ deployments/ Per-network address ledger
 
 ## Architecture (intended)
 
-| Component        | Role                                                     |
-|------------------|----------------------------------------------------------|
-| `FissionFactory` | Deploys PT/YT (as HTS tokens via precompile) per market  |
-| `FissionMarket`  | Per-market AMM (Pendle V2-style logit + rate-anchor)     |
-| `SY*` adapters   | ERC-5115 wrappers around HBARX / SaucerSwap LP / bUSDC   |
-| `ActionRouter`   | Multi-step user flows (deposit → split → swap)           |
-| `ProtocolMultisig` + `Timelock` | 3-of-5 with 48h delay on owner actions    |
+| Component               | Role                                                                   |
+|-------------------------|------------------------------------------------------------------------|
+| `FissionFactory`        | Deploys PT/YT (as HTS tokens via precompile) per market                |
+| `FissionMarket`         | AMM for rate-growth SYs (HBARX). Pendle V2 logit + rate-anchor curve   |
+| `FissionMarketRewards`  | AMM for reward-bearing SYs (V3-LP). Pendle-Kyber pattern, exchangeRate=1, fees as reward tokens |
+| `SY_HBARX`              | ERC-5115 over Stader's HBARX (TWAP-bounded keeper-posted rate)         |
+| `SY_SaucerSwapV2LP`     | ERC-5115 over a fixed-range SaucerSwap V2 NFT position                 |
+| `ActionRouter`          | Multi-step user flows (deposit → split → swap)                         |
+| Safe + OZ Timelock      | 3-of-5 with 48h delay on owner actions                                 |
 
 ## License
 

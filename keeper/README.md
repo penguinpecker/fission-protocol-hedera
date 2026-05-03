@@ -1,8 +1,11 @@
 # Fission Keeper
 
-Off-chain rate poster for Fission SY adapters. Reads source-of-truth rates from
-Stader / SaucerSwap V1 and posts them to the on-chain SY contracts with bps and
-interval gating that mirrors (and pre-empts) the contract-side caps.
+Off-chain rate poster for the SY_HBARX adapter. Reads Stader's `getExchangeRate()`
+and posts to SY_HBARX with bps + interval gating that mirrors (and pre-empts) the
+contract-side caps.
+
+Note: SY_SaucerSwapV2LP needs no keeper. Its yield path is `harvest()` (anyone
+callable) plus the Market's auto-trigger on every YT balance change.
 
 ## Run locally
 
@@ -33,11 +36,10 @@ docker run --rm \
 | `KEEPER_INTERVAL_SECONDS` | no | `3600` | Loop period; SY contract enforces ≥1h |
 | `KEEPER_MAX_DELTA_BPS` | no | `50` | Soft cap; contract enforces hard cap |
 | `PORT` | no | `8080` | Health endpoint listens here |
-| `KEEPER_ADAPTER_HBARX_SY` | optional | — | Address of the SY_HBARX adapter |
-| `KEEPER_ADAPTER_HBARX_STADER` | with HBARX | — | Stader's getExchangeRate contract |
-| `KEEPER_ADAPTER_SAUCER_SY` | optional | — | Address of the SY_SaucerSwapV1LP adapter |
+| `KEEPER_ADAPTER_HBARX_SY` | yes | — | Address of the SY_HBARX adapter |
+| `KEEPER_ADAPTER_HBARX_STADER` | yes | — | Stader's getExchangeRate contract |
 
-If no `KEEPER_ADAPTER_*` set is configured the keeper exits with an error.
+If `KEEPER_ADAPTER_HBARX_SY` is unset the keeper exits with an error.
 
 ## Health and metrics
 

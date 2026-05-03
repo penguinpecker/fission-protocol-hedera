@@ -44,7 +44,7 @@ contract PreFlight is Script {
         }
 
         // ─── SaucerSwap V2 NPM ───────────────────────────────────────────
-        address npm = vm.envOr("SAUCER_V2_NPM", address(0));
+        address npm = vm.envOr("SAUCER_V2_NPM", MainnetAddresses.SAUCER_V2_NPM);
         if (npm == address(0)) revert EnvMissing("SAUCER_V2_NPM");
         console2.log("Probing SaucerSwap V2 NPM at:", npm);
 

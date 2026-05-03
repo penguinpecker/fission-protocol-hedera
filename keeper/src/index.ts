@@ -68,17 +68,9 @@ if (process.env.KEEPER_ADAPTER_HBARX_SY) {
   });
 }
 
-if (process.env.KEEPER_ADAPTER_SAUCER_SY) {
-  const sy = parseAddress(process.env.KEEPER_ADAPTER_SAUCER_SY, "KEEPER_ADAPTER_SAUCER_SY");
-  adapters.push({
-    name: "saucer-v1",
-    sy,
-    source: { kind: "saucerswap-v1", sy },
-    minIntervalSec: POLL_INTERVAL_SEC,
-    maxDeltaBps: MAX_DELTA_BPS,
-    bootstrap: true,
-  });
-}
+// SaucerSwap V2 LP SY needs no keeper — fees flow through the public `harvest()`
+// path on the SY (also auto-triggered via the Market's reward forwarding on every
+// YT balance change). HBARX is the only adapter that requires off-chain rate posts.
 
 if (adapters.length === 0) {
   log("error", "no adapters configured — set KEEPER_ADAPTER_* env vars");

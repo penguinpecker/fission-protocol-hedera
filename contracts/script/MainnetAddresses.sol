@@ -2,7 +2,7 @@
 pragma solidity ^0.8.27;
 
 /// @title  MainnetAddresses — pinned Hedera mainnet (chain 295) addresses for Fission.
-/// @notice Sources verified 2026-05-02 via Mirror Node + Bonzo docs.
+/// @notice Sources verified 2026-05-02 via Mirror Node + GeckoTerminal.
 ///         Anything marked UNVERIFIED is a constructor-time risk: the preflight
 ///         script ABI-pings each before deploy and reverts if the call shape
 ///         doesn't match expectations.
@@ -27,17 +27,6 @@ library MainnetAddresses {
     ///         catch any contract upgrade between research and deploy.
     address internal constant STADER_STAKING = 0x0000000000000000000000000000000000158d97;
 
-    // ─── Bonzo Finance (Aave V2 fork) ─────────────────────────────────────
-
-    /// @notice Bonzo LendingPool — Aave V2 pool exposing
-    ///         `getReserveNormalizedIncome(asset)` returning a 1e27 ray.
-    ///         Verified via docs.bonzo.finance: 0.0.7308459.
-    address internal constant BONZO_POOL = 0x236897c518996163E7b313aD21D1C9fCC7BA1afc;
-
-    /// @notice Bonzo bUSDC aToken — receipt token for USDC supplied to the pool.
-    ///         Verified: 0.0.7308496.
-    address internal constant BONZO_BUSDC = 0xB7687538c7f4CAD022d5e97CC778d0b46457c5DB;
-
     // ─── SaucerSwap V2 (Uniswap V3 fork) ──────────────────────────────────
 
     /// @notice SaucerSwap V2 WHBAR-USDC 0.15% pool. Verified 2026-05-02 via Mirror
@@ -45,12 +34,14 @@ library MainnetAddresses {
     ///         token0 = USDC (6 dec), token1 = WHBAR (8 dec).
     address internal constant SAUCER_V2_WHBAR_USDC_POOL = 0xC5B707348dA504E9Be1bD4E21525459830e7B11d;
 
-    /// @notice SaucerSwap V2 NonFungiblePositionManager. UNCONFIRMED at compile time —
-    ///         deploy script reads from `SAUCER_V2_NPM` env var, and preflight ABI-pings
-    ///         `mint`/`positions` selectors before broadcast. See
-    ///         https://docs.saucerswap.finance/developerx/contract-deployments for the
-    ///         current canonical address (matches Uniswap V3 NPM ABI).
-    address internal constant SAUCER_V2_NPM_PLACEHOLDER = address(0);
+    /// @notice SaucerSwap V2 NonFungiblePositionManager — Hedera contract `0.0.4053945`,
+    ///         user-facing direct-call (no EIP-1967 proxy). Standard Uniswap V3 NPM ABI:
+    ///         `mint` / `increaseLiquidity` / `decreaseLiquidity` / `collect` / `positions`.
+    ///         The associated LP NFT collection is HTS `0.0.4054027`.
+    ///         Verified 2026-05-02 via docs.saucerswap.finance + Hedera Mirror Node.
+    ///         The deprecated V1 NPM (`0.0.3949448`) is distinct — do NOT use.
+    /// @dev    Preflight ABI-pings `positions(uint256)` before any broadcast.
+    address internal constant SAUCER_V2_NPM = 0x00000000000000000000000000000000003DDbb9;
 
     /// @notice WHBAR (wrapped HBAR ERC-20 facade). Used as token1 of the V2 pool.
     ///         Source: SaucerSwap docs.
