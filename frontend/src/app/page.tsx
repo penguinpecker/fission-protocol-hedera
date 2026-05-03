@@ -34,8 +34,10 @@ export default function LandingPage() {
         </div>
 
         <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-border bg-white/[0.03] px-3.5 py-1.5">
-          <span className="size-[5px] animate-[pulse_2s_infinite] rounded-full bg-success" />
-          <span className="text-xs font-medium tracking-wide text-textSec">Live on Hedera Mainnet</span>
+          <span className="size-[5px] animate-[pulse_2s_infinite] rounded-full bg-warning" />
+          <span className="text-xs font-medium tracking-wide text-textSec">
+            Pre-launch · Audit gated · 0 H/M findings
+          </span>
         </div>
 
         <h1 className="mx-auto max-w-[700px] text-[64px] font-light leading-[1.05] tracking-[-2px]">
@@ -46,7 +48,7 @@ export default function LandingPage() {
         </h1>
 
         <p className="mx-auto mt-6 max-w-[500px] text-[17px] font-light leading-relaxed text-textSec">
-          Tokenize future yield from SaucerSwap LPs, HBARX staking, and Bonzo lending into tradeable Principal and Yield tokens — Pendle V2 design, Hedera mainnet, audit-grade.
+          Tokenize future yield from HBARX liquid staking and SaucerSwap V2 LP positions into tradeable Principal and Yield tokens — Pendle V2-faithful, Hedera-native, audit-ready.
         </p>
 
         <div className="mt-10 flex justify-center gap-3">
@@ -95,7 +97,7 @@ export default function LandingPage() {
         <footer className="mt-24 border-t border-border pt-12 pb-16">
           <div className="flex items-center justify-center gap-2 text-xs text-textDim">
             <FissionLogo size={14} color="#52525b" />
-            <span>Fission Protocol · Pendle V2-faithful · audit-ready in Q3 2026</span>
+            <span>Fission Protocol · Pendle V2-faithful · audit gate before mainnet</span>
           </div>
         </footer>
       </section>

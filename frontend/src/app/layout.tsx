@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Fission Protocol — yield tokenization on Hedera",
   description:
-    "Split yield-bearing tokens (HBARX, SaucerSwap LPs, Bonzo lending) into tradeable Principal and Yield tokens. Live on Hedera Mainnet.",
+    "Split yield-bearing positions (HBARX liquid staking, SaucerSwap V2 LP) into tradeable Principal and Yield tokens. Pendle V2-faithful, audit-gated.",
   metadataBase: new URL("https://fission.example"),
 };
 

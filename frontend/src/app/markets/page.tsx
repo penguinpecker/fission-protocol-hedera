@@ -107,29 +107,62 @@ function Stat({ label, value, accent }: { label: string; value: string; accent: 
 
 function NotDeployed() {
   return (
-    <div className="rounded-2xl border border-border bg-bgCard p-10 text-center">
-      <div className="mb-2 text-base font-semibold">Factory not yet deployed</div>
-      <p className="mb-4 text-sm text-textSec">
-        Set <code className="font-mono text-xs text-text">NEXT_PUBLIC_FACTORY_ADDRESS</code> at build time
-        to point at a live FissionFactory deployment. Mainnet deployment is gated on the audit
-        pipeline (Phase 9).
+    <div className="flex min-h-[420px] flex-col items-center justify-center rounded-2xl border border-border bg-bgCard p-12 text-center">
+      <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-border bg-white/[0.03] px-3 py-1">
+        <span className="size-[5px] rounded-full bg-warning" />
+        <span className="text-[10px] font-medium uppercase tracking-[2px] text-textSec">
+          Pre-launch · Audit gate
+        </span>
+      </div>
+
+      <h2 className="mb-3 text-[28px] font-light tracking-[-0.5px]">
+        No markets <span className="font-serif italic">live</span> yet
+      </h2>
+
+      <p className="mb-7 max-w-[460px] text-sm font-light leading-relaxed text-textSec">
+        The protocol is code-complete and through two internal audit passes (
+        <span className="font-mono text-text">0 H/M findings</span>), but mainnet deployment is
+        gated on the external audit pipeline (HashEx → ChainSecurity → Code4rena → Immunefi).
+        Once Safe + Timelock are provisioned and the factory is deployed, markets land here.
       </p>
-      <a
-        href="https://github.com/penguinpecker/fission-protocol-hedera/blob/main/docs/IMPLEMENTATION_PLAN.md"
-        target="_blank"
-        rel="noreferrer"
-        className="text-xs text-textSec underline-offset-4 hover:text-text hover:underline"
-      >
-        Roadmap
-      </a>
+
+      <div className="mb-6 flex items-center gap-3">
+        <a
+          href="https://github.com/penguinpecker/fission-protocol-hedera"
+          target="_blank"
+          rel="noreferrer"
+          className="rounded-xl border border-borderHover px-5 py-2.5 text-[13px] font-medium text-text transition hover:bg-white/[0.03]"
+        >
+          View source
+        </a>
+        <a
+          href="https://github.com/penguinpecker/fission-protocol-hedera/tree/main/audits/internal"
+          target="_blank"
+          rel="noreferrer"
+          className="rounded-xl border border-borderHover px-5 py-2.5 text-[13px] font-medium text-textSec transition hover:bg-white/[0.03]"
+        >
+          Audit reports
+        </a>
+      </div>
+
+      <p className="font-mono text-[10px] text-textDim">
+        v1 lineup: HBARX (Stader) · SaucerSwap V2 LP (WHBAR/USDC, Pendle-Kyber)
+      </p>
     </div>
   );
 }
 
 function EmptyState() {
   return (
-    <div className="rounded-2xl border border-border bg-bgCard p-10 text-center">
-      <div className="text-sm text-textSec">No markets created yet — proposeSY → 7-day review → confirmSY → createMarket.</div>
+    <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-border bg-bgCard p-10 text-center">
+      <div className="mb-2 text-base font-semibold">Factory deployed — no markets created yet</div>
+      <p className="max-w-[460px] text-sm text-textSec">
+        Markets enter via the 7-day SY whitelist:&nbsp;
+        <span className="font-mono text-textSec">proposeSY</span> →&nbsp;wait 7d →&nbsp;
+        <span className="font-mono text-textSec">confirmSY</span> →&nbsp;
+        <span className="font-mono text-textSec">createMarket</span> →&nbsp;
+        <span className="font-mono text-textSec">initialize</span>.
+      </p>
     </div>
   );
 }
