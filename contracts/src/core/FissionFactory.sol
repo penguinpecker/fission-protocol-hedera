@@ -5,6 +5,7 @@ import {AccessControlDefaultAdminRules} from
     "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 
 import {FissionMarket} from "./FissionMarket.sol";
+import {FissionMarketRewards} from "./FissionMarketRewards.sol";
 import {PrincipalToken} from "./PrincipalToken.sol";
 import {YieldToken} from "./YieldToken.sol";
 import {IStandardizedYield} from "../interfaces/IStandardizedYield.sol";
@@ -168,6 +169,62 @@ contract FissionFactory is AccessControlDefaultAdminRules {
         // Effects-first: stash the market in our own storage BEFORE the only external
         // call (setTokens). The new market contract is freshly-deployed and can't
         // reasonably reenter the factory, but reordering removes the formal CFR.
+        markets.push(address(m));
+        marketAddr = address(m);
+
+        m.setTokens(address(pt), address(yt));
+
+        emit MarketCreated(marketId, marketAddr, sy, address(pt), address(yt), expiry, scalarRoot);
+    }
+
+    /// @notice Deploy a `FissionMarketRewards` Market + PT + YT for an SY whose yield is
+    ///         distributed via reward tokens (e.g. `SY_SaucerSwapV2LP`). Same gating as
+    ///         `createMarket` — SY must be whitelisted via the 7-day review window.
+    /// @dev    Distinct from `createMarket` because the constructor for
+    ///         `FissionMarketRewards` reads `sy.getRewardTokens()` and pins the reward
+    ///         token addresses immutable. Calling `createMarket` for a reward-bearing SY
+    ///         is permitted but will silently produce a market whose YT yield path never
+    ///         fires — the `assetType == LIQUIDITY` SYs should always go through this
+    ///         entry point. Frontends and routers should pre-check `sy.assetInfo()`.
+    function createRewardsMarket(address sy, uint256 expiry, int256 scalarRoot, string calldata suffix)
+        external
+        onlyRole(MARKET_CREATOR_ROLE)
+        returns (uint256 marketId, address marketAddr)
+    {
+        if (!whitelistedSY[sy]) revert SYNotWhitelisted();
+
+        marketId = markets.length;
+        IStandardizedYield syIface = IStandardizedYield(sy);
+        (, , uint8 dec) = syIface.assetInfo();
+
+        FissionMarketRewards m = new FissionMarketRewards(
+            sy,
+            expiry,
+            scalarRoot,
+            marketAdmin,
+            marketTreasury,
+            dec,
+            string.concat("Fission LP-", suffix),
+            string.concat("fLP-", suffix)
+        );
+
+        PrincipalToken pt = new PrincipalToken(
+            string.concat("Fission PT-", suffix),
+            string.concat("fPT-", suffix),
+            sy,
+            expiry,
+            address(m),
+            dec
+        );
+        YieldToken yt = new YieldToken(
+            string.concat("Fission YT-", suffix),
+            string.concat("fYT-", suffix),
+            sy,
+            expiry,
+            address(m),
+            dec
+        );
+
         markets.push(address(m));
         marketAddr = address(m);
 
