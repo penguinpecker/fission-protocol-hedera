@@ -3,37 +3,15 @@ pragma solidity ^0.8.27;
 
 import {IHederaTokenService} from "../../src/interfaces/IHederaTokenService.sol";
 import {HederaResponseCodes} from "../../src/interfaces/IHederaResponseCodes.sol";
+import {MockHTSFacadeERC20, IMockHederaForFacade, IMockHederaForRead} from "./MockHTSFacadeERC20.sol";
 
 /// @title  MockHederaTokenService — in-memory simulator for the HTS precompile (`0x167`).
-/// @notice Foundry's revm cannot execute the real HTS precompile (a Hedera-native
-///         system contract, not standard EVM). This mock implements every IHTS function
-///         we use, with faithful semantics:
-///
-///           - Token registry: each created token gets a fresh address (sequential).
-///           - Per-token: name, symbol, decimals, treasury, supplyKey, freezeKey, wipeKey, freezeDefault, totalSupply.
-///           - Per-(token, account): balance, isAssociated, isFrozen.
-///           - Mint goes to treasury; supplyKey check enforced.
-///           - Burn from treasury; supplyKey check enforced.
-///           - Wipe from any account; wipeKey check enforced; bypasses freeze.
-///           - Transfer requires from-and-to associated AND unfrozen; sender = msg.sender or has allowance (allowance not modelled here — tests transfer via the supply contract).
-///           - Freeze/unfreeze gated on freezeKey.
-///           - Association: if not auto-associated, must explicitly associate.
-///         FreezeDefault: when an account first acquires balance via mint/transfer,
-///         it gets `isAssociated = true` and `isFrozen = freezeDefault`.
-///
-///         Tests deploy this contract, then `vm.etch(0x167, address(mock).code)` —
-///         storage is lost. Cleaner pattern: deploy the mock at the precompile
-///         address using `vm.etch(0x167, type(MockHederaTokenService).runtimeCode)`
-///         and use `vm.store` to seed any state. We use a different pattern: `vm.etch`
-///         the BYTECODE only, then call functions; storage starts empty for each test.
-///
-///         Limitations vs real HTS:
-///         - No HBAR fee charged for createFungibleToken.
-///         - No allowance model — caller must equal `from` for transfer.
-///         - No KYC, custom fees, or NFTs.
-///         - No HIP-904 auto-association — every account must be explicitly associated
-///           OR receive via mint/transfer-from-treasury (we auto-associate then).
-contract MockHederaTokenService is IHederaTokenService {
+/// @notice Deployed at `0x167` via `vm.etch`. Every IHTS call we use is implemented
+///         with faithful semantics. Every token created via `createFungibleToken`
+///         also gets a real `MockHTSFacadeERC20` deployed at the new token address,
+///         giving tests proper `IERC20(htsToken).balanceOf` / `transfer` / `approve`
+///         behavior — same as real Hedera, where HTS tokens expose ERC-20 facades.
+contract MockHederaTokenService is IHederaTokenService, IMockHederaForFacade, IMockHederaForRead {
     uint256 internal _nextTokenSeq = 1;
 
     struct TokenState {
@@ -42,17 +20,26 @@ contract MockHederaTokenService is IHederaTokenService {
         string symbol;
         uint8 decimals;
         address treasury;
-        address supplyKey;       // contract that holds supply key (0 = none)
-        address freezeKey;       // 0 = no freeze
-        address wipeKey;         // 0 = no wipe
+        address supplyKey;
+        address freezeKey;
+        address wipeKey;
         bool freezeDefault;
         uint256 totalSupply;
+        bool isFacade;          // true if this address is a deployed facade we recognize
     }
 
     mapping(address => TokenState) internal _tokens;
-    mapping(address => mapping(address => uint256)) internal _balanceOf;          // token => account => bal
-    mapping(address => mapping(address => bool)) internal _associated;            // token => account => associated
-    mapping(address => mapping(address => bool)) internal _frozen;                // token => account => frozen
+    mapping(address => mapping(address => uint256)) internal _balanceOf;
+    mapping(address => mapping(address => bool)) internal _associated;
+    mapping(address => mapping(address => bool)) internal _frozen;
+    mapping(address => mapping(address => mapping(address => uint256))) internal _allow; // token => owner => spender => amt
+
+    error NotAFacade(address caller);
+
+    modifier onlyFacade(address token) {
+        if (!_tokens[token].isFacade || msg.sender != token) revert NotAFacade(msg.sender);
+        _;
+    }
 
     // ───────────────────── createFungibleToken ─────────────────────
 
@@ -61,13 +48,16 @@ contract MockHederaTokenService is IHederaTokenService {
         int64 initialTotalSupply,
         int32 decimals
     ) external payable override returns (int32 responseCode, address tokenAddress) {
-        // Deterministic, sequential. In real HTS this would be a long-zero alias of
-        // the Hedera token ID; we just use sequential addresses for test legibility.
-        tokenAddress = address(uint160(0xC0DE_0000) + uint160(_nextTokenSeq));
+        // Deploy a real facade contract; address(facade) becomes the token address.
+        // Real Hedera does the equivalent at the network layer: every HTS token has
+        // an EVM-callable ERC-20 facade at its long-zero alias.
+        MockHTSFacadeERC20 facade = new MockHTSFacadeERC20(address(this));
+        tokenAddress = address(facade);
         _nextTokenSeq++;
 
         TokenState storage t = _tokens[tokenAddress];
         t.exists = true;
+        t.isFacade = true;
         t.name = token.name;
         t.symbol = token.symbol;
         t.decimals = uint8(uint32(decimals));
@@ -75,17 +65,15 @@ contract MockHederaTokenService is IHederaTokenService {
         t.freezeDefault = token.freezeDefault;
         t.totalSupply = uint256(uint64(initialTotalSupply));
 
-        // Walk tokenKeys[] and assign each role to its contract holder.
         for (uint256 i = 0; i < token.tokenKeys.length; i++) {
             uint256 keyType = token.tokenKeys[i].keyType;
             address holder = token.tokenKeys[i].key.contractId;
             if ((keyType & 4) != 0) t.freezeKey = holder;
             if ((keyType & 8) != 0) t.wipeKey = holder;
             if ((keyType & 16) != 0) t.supplyKey = holder;
-            // 1 = ADMIN, 2 = KYC, 32 = FEE_SCHEDULE, 64 = PAUSE — we don't model.
         }
 
-        // Treasury auto-associates and starts unfrozen (treasury is exempt from freezeDefault).
+        // Treasury auto-associates and starts unfrozen.
         _associated[tokenAddress][token.treasury] = true;
         _frozen[tokenAddress][token.treasury] = false;
         if (t.totalSupply > 0) {
@@ -100,11 +88,10 @@ contract MockHederaTokenService is IHederaTokenService {
     function mintToken(address token, int64 amount, bytes[] memory)
         external
         override
-        returns (int32 responseCode, int64 newTotalSupply, int64[] memory serialNumbers)
+        returns (int32, int64, int64[] memory)
     {
         TokenState storage t = _tokens[token];
         if (!t.exists) return (HederaResponseCodes.INVALID_TOKEN_ID, 0, new int64[](0));
-        if (t.supplyKey == address(0)) return (HederaResponseCodes.TOKEN_HAS_NO_SUPPLY_KEY, 0, new int64[](0));
         if (msg.sender != t.supplyKey) return (HederaResponseCodes.TOKEN_HAS_NO_SUPPLY_KEY, 0, new int64[](0));
 
         uint256 amt = uint256(uint64(amount));
@@ -116,7 +103,7 @@ contract MockHederaTokenService is IHederaTokenService {
     function burnToken(address token, int64 amount, int64[] memory)
         external
         override
-        returns (int32 responseCode, int64 newTotalSupply)
+        returns (int32, int64)
     {
         TokenState storage t = _tokens[token];
         if (!t.exists) return (HederaResponseCodes.INVALID_TOKEN_ID, 0);
@@ -133,19 +120,19 @@ contract MockHederaTokenService is IHederaTokenService {
     function wipeTokenAccount(address token, address account, int64 amount)
         external
         override
-        returns (int32 responseCode)
+        returns (int32)
     {
         TokenState storage t = _tokens[token];
         if (!t.exists) return HederaResponseCodes.INVALID_TOKEN_ID;
-        if (t.wipeKey == address(0)) return HederaResponseCodes.TOKEN_HAS_NO_WIPE_KEY;
-        if (msg.sender != t.wipeKey) return HederaResponseCodes.TOKEN_HAS_NO_WIPE_KEY;
+        if (t.wipeKey == address(0) || msg.sender != t.wipeKey) {
+            return HederaResponseCodes.TOKEN_HAS_NO_WIPE_KEY;
+        }
 
         uint256 amt = uint256(uint64(amount));
         if (_balanceOf[token][account] < amt) return HederaResponseCodes.INSUFFICIENT_TOKEN_BALANCE;
 
         _balanceOf[token][account] -= amt;
         t.totalSupply -= amt;
-        // Wipe bypasses freeze — don't touch _frozen.
         return HederaResponseCodes.SUCCESS;
     }
 
@@ -154,13 +141,20 @@ contract MockHederaTokenService is IHederaTokenService {
     function transferToken(address token, address sender, address recipient, int64 amount)
         external
         override
-        returns (int32 responseCode)
+        returns (int32)
     {
         TokenState storage t = _tokens[token];
         if (!t.exists) return HederaResponseCodes.INVALID_TOKEN_ID;
 
-        // Auto-associate the recipient on first transfer if not yet associated (HIP-904
-        // simulation). Apply freezeDefault on first association.
+        // Permission check: msg.sender == sender, OR allowance(sender → msg.sender) >= amount.
+        uint256 amt = uint256(uint64(amount));
+        if (msg.sender != sender) {
+            uint256 al = _allow[token][sender][msg.sender];
+            if (al < amt) return HederaResponseCodes.INSUFFICIENT_TOKEN_BALANCE;
+            _allow[token][sender][msg.sender] = al - amt;
+        }
+
+        // Auto-associate recipient (HIP-904 simulation).
         if (!_associated[token][recipient]) {
             _associated[token][recipient] = true;
             _frozen[token][recipient] = t.freezeDefault;
@@ -168,8 +162,6 @@ contract MockHederaTokenService is IHederaTokenService {
 
         if (_frozen[token][sender]) return HederaResponseCodes.ACCOUNT_FROZEN_FOR_TOKEN;
         if (_frozen[token][recipient]) return HederaResponseCodes.ACCOUNT_FROZEN_FOR_TOKEN;
-
-        uint256 amt = uint256(uint64(amount));
         if (_balanceOf[token][sender] < amt) return HederaResponseCodes.INSUFFICIENT_TOKEN_BALANCE;
 
         _balanceOf[token][sender] -= amt;
@@ -177,13 +169,53 @@ contract MockHederaTokenService is IHederaTokenService {
         return HederaResponseCodes.SUCCESS;
     }
 
-    // ───────────────────── association ─────────────────────
+    // ───────────────────── allowance ─────────────────────
 
-    function associateToken(address account, address token)
+    function approve(address token, address spender, uint256 amount) external override returns (int32) {
+        TokenState storage t = _tokens[token];
+        if (!t.exists) return HederaResponseCodes.INVALID_TOKEN_ID;
+        _allow[token][msg.sender][spender] = amount;
+        return HederaResponseCodes.SUCCESS;
+    }
+
+    function allowance(address token, address owner, address spender)
+        external
+        view
+        override
+        returns (int32, uint256)
+    {
+        if (!_tokens[token].exists) return (HederaResponseCodes.INVALID_TOKEN_ID, 0);
+        return (HederaResponseCodes.SUCCESS, _allow[token][owner][spender]);
+    }
+
+    function transferFrom(address token, address from, address to, uint256 amount)
         external
         override
-        returns (int32 responseCode)
+        returns (int32)
     {
+        TokenState storage t = _tokens[token];
+        if (!t.exists) return HederaResponseCodes.INVALID_TOKEN_ID;
+
+        uint256 al = _allow[token][from][msg.sender];
+        if (al < amount) return HederaResponseCodes.INSUFFICIENT_TOKEN_BALANCE;
+        _allow[token][from][msg.sender] = al - amount;
+
+        if (!_associated[token][to]) {
+            _associated[token][to] = true;
+            _frozen[token][to] = t.freezeDefault;
+        }
+        if (_frozen[token][from]) return HederaResponseCodes.ACCOUNT_FROZEN_FOR_TOKEN;
+        if (_frozen[token][to]) return HederaResponseCodes.ACCOUNT_FROZEN_FOR_TOKEN;
+        if (_balanceOf[token][from] < amount) return HederaResponseCodes.INSUFFICIENT_TOKEN_BALANCE;
+
+        _balanceOf[token][from] -= amount;
+        _balanceOf[token][to] += amount;
+        return HederaResponseCodes.SUCCESS;
+    }
+
+    // ───────────────────── association ─────────────────────
+
+    function associateToken(address account, address token) external override returns (int32) {
         TokenState storage t = _tokens[token];
         if (!t.exists) return HederaResponseCodes.INVALID_TOKEN_ID;
         _associated[token][account] = true;
@@ -193,55 +225,112 @@ contract MockHederaTokenService is IHederaTokenService {
 
     // ───────────────────── freeze / unfreeze ─────────────────────
 
-    function freezeToken(address token, address account)
-        external
-        override
-        returns (int32 responseCode)
-    {
+    function freezeToken(address token, address account) external override returns (int32) {
         TokenState storage t = _tokens[token];
         if (!t.exists) return HederaResponseCodes.INVALID_TOKEN_ID;
-        if (t.freezeKey == address(0)) return HederaResponseCodes.TOKEN_HAS_NO_FREEZE_KEY;
-        if (msg.sender != t.freezeKey) return HederaResponseCodes.TOKEN_HAS_NO_FREEZE_KEY;
+        if (t.freezeKey == address(0) || msg.sender != t.freezeKey) {
+            return HederaResponseCodes.TOKEN_HAS_NO_FREEZE_KEY;
+        }
         _frozen[token][account] = true;
         return HederaResponseCodes.SUCCESS;
     }
 
-    function unfreezeToken(address token, address account)
-        external
-        override
-        returns (int32 responseCode)
-    {
+    function unfreezeToken(address token, address account) external override returns (int32) {
         TokenState storage t = _tokens[token];
         if (!t.exists) return HederaResponseCodes.INVALID_TOKEN_ID;
-        if (t.freezeKey == address(0)) return HederaResponseCodes.TOKEN_HAS_NO_FREEZE_KEY;
-        if (msg.sender != t.freezeKey) return HederaResponseCodes.TOKEN_HAS_NO_FREEZE_KEY;
+        if (t.freezeKey == address(0) || msg.sender != t.freezeKey) {
+            return HederaResponseCodes.TOKEN_HAS_NO_FREEZE_KEY;
+        }
         _frozen[token][account] = false;
         return HederaResponseCodes.SUCCESS;
     }
 
-    // ───────────────────── test-side views ─────────────────────
+    // ───────────────────── facade-write surface ─────────────────────
 
-    function balanceOf(address token, address account) external view returns (uint256) {
+    function facadeTransfer(address token, address from, address to, uint256 amount)
+        external
+        override
+        onlyFacade(token)
+    {
+        // Re-emulate the permission semantics: facade-caller is `from`.
+        if (!_associated[token][to]) {
+            _associated[token][to] = true;
+            _frozen[token][to] = _tokens[token].freezeDefault;
+        }
+        require(!_frozen[token][from], "FROZEN_FROM");
+        require(!_frozen[token][to], "FROZEN_TO");
+        require(_balanceOf[token][from] >= amount, "BAL");
+        _balanceOf[token][from] -= amount;
+        _balanceOf[token][to] += amount;
+    }
+
+    function facadeTransferFrom(address token, address spender, address from, address to, uint256 amount)
+        external
+        override
+        onlyFacade(token)
+    {
+        uint256 al = _allow[token][from][spender];
+        require(al >= amount, "ALLOW");
+        _allow[token][from][spender] = al - amount;
+
+        if (!_associated[token][to]) {
+            _associated[token][to] = true;
+            _frozen[token][to] = _tokens[token].freezeDefault;
+        }
+        require(!_frozen[token][from], "FROZEN_FROM");
+        require(!_frozen[token][to], "FROZEN_TO");
+        require(_balanceOf[token][from] >= amount, "BAL");
+        _balanceOf[token][from] -= amount;
+        _balanceOf[token][to] += amount;
+    }
+
+    function facadeApprove(address token, address owner, address spender, uint256 amount)
+        external
+        override
+        onlyFacade(token)
+    {
+        _allow[token][owner][spender] = amount;
+    }
+
+    // ───────────────────── view surface (for facade + tests) ─────────────────────
+
+    function balanceOf(address token, address account) external view override returns (uint256) {
         return _balanceOf[token][account];
     }
 
-    function totalSupply(address token) external view returns (uint256) {
+    function totalSupply(address token) external view override returns (uint256) {
         return _tokens[token].totalSupply;
     }
 
-    function isFrozen(address token, address account) external view returns (bool) {
+    function isFrozen(address token, address account) external view override returns (bool) {
         return _frozen[token][account];
     }
 
-    function isAssociated(address token, address account) external view returns (bool) {
+    function isAssociated(address token, address account) external view override returns (bool) {
         return _associated[token][account];
     }
 
-    function decimals(address token) external view returns (uint8) {
+    function decimalsOf(address token) external view override returns (uint8) {
         return _tokens[token].decimals;
+    }
+
+    function nameOf(address token) external view override returns (string memory) {
+        return _tokens[token].name;
+    }
+
+    function symbolOf(address token) external view override returns (string memory) {
+        return _tokens[token].symbol;
+    }
+
+    function allowanceOf(address token, address owner, address spender) external view override returns (uint256) {
+        return _allow[token][owner][spender];
     }
 
     function supplyKey(address token) external view returns (address) {
         return _tokens[token].supplyKey;
+    }
+
+    function decimals(address token) external view returns (uint8) {
+        return _tokens[token].decimals;
     }
 }

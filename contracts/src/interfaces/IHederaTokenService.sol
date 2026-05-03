@@ -128,4 +128,33 @@ interface IHederaTokenService {
         address token,
         address account
     ) external returns (int32 responseCode);
+
+    // ───────────────────── allowance flow ─────────────────────
+
+    /// @notice Set HTS allowance: `spender` can transfer up to `amount` of `token`
+    ///         on behalf of msg.sender. Routes through the precompile (the same
+    ///         path that `IERC20(htsToken).approve(spender, amount)` takes via the
+    ///         token's ERC-20 facade).
+    function approve(
+        address token,
+        address spender,
+        uint256 amount
+    ) external returns (int32 responseCode);
+
+    /// @notice Read HTS allowance.
+    function allowance(
+        address token,
+        address owner,
+        address spender
+    ) external view returns (int32 responseCode, uint256 allowance);
+
+    /// @notice Transfer `amount` of `token` from `from` to `to`, consuming
+    ///         allowance(from → msg.sender). Distinct from `transferToken` which
+    ///         requires msg.sender == from (or has allowance).
+    function transferFrom(
+        address token,
+        address from,
+        address to,
+        uint256 amount
+    ) external returns (int32 responseCode);
 }

@@ -147,4 +147,20 @@ library HtsHelpers {
         freeze(token, from);
         freeze(token, to);
     }
+
+    // ───────────────────── allowance ─────────────────────
+
+    function approve(address token, address spender, uint256 amount) internal {
+        int32 code = IHederaTokenService(PRECOMPILE).approve(token, spender, amount);
+        _check(code);
+    }
+
+    /// @notice Pull `amount` of `token` from `from` to `to`, using msg.sender's
+    ///         allowance from `from`. The allowance MUST have been granted prior
+    ///         via `approve` (either directly to the precompile or through the
+    ///         token's ERC-20 facade — both route to the same allowance store).
+    function transferFrom(address token, address from, address to, uint256 amount) internal {
+        int32 code = IHederaTokenService(PRECOMPILE).transferFrom(token, from, to, amount);
+        _check(code);
+    }
 }

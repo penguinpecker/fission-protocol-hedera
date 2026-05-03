@@ -2,6 +2,7 @@
 pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/Test.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {HtsHelpers} from "../../src/libraries/HtsHelpers.sol";
 import {IHederaTokenService} from "../../src/interfaces/IHederaTokenService.sol";
@@ -154,6 +155,41 @@ contract HtsHelpersTest is Test {
         assertTrue(ok);
         (int32 code, , ) = abi.decode(data, (int32, int64, int64[]));
         assertEq(code, HederaResponseCodes.TOKEN_HAS_NO_SUPPLY_KEY);
+    }
+
+    /// @notice The MockHTSFacadeERC20 deployed at the new htsToken address must
+    ///         expose proper IERC20 reads + writes that route to the precompile.
+    ///         This is the surface SY/PT/YT/LP-on-HTS will rely on.
+    function test_facadeERC20_balanceOfAndTransfer() public {
+        address t = _deployToken(false, false, address(this));
+        HtsHelpers.mintToTreasury(t, 1_000e8);
+
+        // ERC-20 view facade reads through to mock state.
+        assertEq(IERC20(t).totalSupply(), 1_000e8);
+        assertEq(IERC20(t).balanceOf(address(this)), 1_000e8);
+        // Treasury → ALICE via facade transfer (as msg.sender = this contract).
+        IERC20(t).transfer(ALICE, 100e8);
+        assertEq(IERC20(t).balanceOf(ALICE), 100e8);
+        assertEq(IERC20(t).balanceOf(address(this)), 900e8);
+    }
+
+    /// @notice Approve + transferFrom over the facade — used by Market.split-style flows.
+    function test_facadeERC20_approveAndTransferFrom() public {
+        address t = _deployToken(false, false, address(this));
+        HtsHelpers.mintToTreasury(t, 1_000e8);
+        IERC20(t).transfer(ALICE, 500e8);
+
+        // ALICE approves BOB to pull 200e8.
+        vm.prank(ALICE);
+        IERC20(t).approve(BOB, 200e8);
+        assertEq(IERC20(t).allowance(ALICE, BOB), 200e8);
+
+        // BOB pulls 150e8 from ALICE → himself.
+        vm.prank(BOB);
+        IERC20(t).transferFrom(ALICE, BOB, 150e8);
+        assertEq(IERC20(t).balanceOf(BOB), 150e8);
+        assertEq(IERC20(t).balanceOf(ALICE), 350e8);
+        assertEq(IERC20(t).allowance(ALICE, BOB), 50e8);
     }
 
     function test_freezeWithoutKey_returnsCode() public {
