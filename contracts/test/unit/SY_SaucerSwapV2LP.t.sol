@@ -211,7 +211,7 @@ contract SY_SaucerSwapV2LPTest is Test {
         uint256 prevBal1 = token1.balanceOf(alice);
 
         vm.prank(alice);
-        (uint256 a0, uint256 a1) = sy.redeemLiquidity(1_000e6, alice);
+        (uint256 a0, uint256 a1) = sy.redeemLiquidity(1_000e6, 0, 0, alice);
 
         assertEq(a0, 500e6);
         assertEq(a1, 500e6);
@@ -225,7 +225,7 @@ contract SY_SaucerSwapV2LPTest is Test {
         sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
 
         vm.prank(alice);
-        sy.redeemLiquidity(2_000e6, alice);
+        sy.redeemLiquidity(2_000e6, 0, 0, alice);
 
         assertEq(sy.balanceOf(alice), 0);
         assertEq(sy.totalSupply(), 0);
@@ -234,7 +234,7 @@ contract SY_SaucerSwapV2LPTest is Test {
     function test_redeem_revertsBeforeFirstDeposit() public {
         vm.prank(alice);
         vm.expectRevert(SY_SaucerSwapV2LP.PositionNotInitialized.selector);
-        sy.redeemLiquidity(1, alice);
+        sy.redeemLiquidity(1, 0, 0, alice);
     }
 
     function test_redeem_zeroAmountReverts() public {
@@ -242,7 +242,7 @@ contract SY_SaucerSwapV2LPTest is Test {
         sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
         vm.prank(alice);
         vm.expectRevert(SYBase.AmountZero.selector);
-        sy.redeemLiquidity(0, alice);
+        sy.redeemLiquidity(0, 0, 0, alice);
     }
 
     function test_redeem_zeroReceiverReverts() public {
@@ -250,7 +250,7 @@ contract SY_SaucerSwapV2LPTest is Test {
         sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
         vm.prank(alice);
         vm.expectRevert(SY_SaucerSwapV2LP.ZeroAddress.selector);
-        sy.redeemLiquidity(100, address(0));
+        sy.redeemLiquidity(100, 0, 0, address(0));
     }
 
     // ───────────────────── harvest ─────────────────────
@@ -395,7 +395,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
         // alice redeems all — her rewards are settled and remain claimable.
         vm.prank(alice);
-        sy.redeemLiquidity(2_000e6, alice);
+        sy.redeemLiquidity(2_000e6, 0, 0, alice);
 
         vm.prank(alice);
         uint256[] memory a = sy.claimRewards(alice);
@@ -467,12 +467,71 @@ contract SY_SaucerSwapV2LPTest is Test {
 
         // Redeem still works (escape hatch).
         vm.prank(alice);
-        sy.redeemLiquidity(500e6, alice);
+        sy.redeemLiquidity(500e6, 0, 0, alice);
 
         // Claim still works.
         vm.prank(alice);
         uint256[] memory a = sy.claimRewards(alice);
         assertEq(a[0], 100e6);
+    }
+
+    // ───────────────────── transfer-time harvest (Bug A regression) ─────
+
+    /// @dev Without the harvest-in-_update fix, alice would forfeit her share of fees
+    ///      that accrued in the V3 pool but weren't yet pulled into the SY. The recipient
+    ///      bob would inherit those fees pro-rata to his post-transfer balance.
+    function test_transfer_harvestsBeforeSettling() public {
+        vm.prank(alice);
+        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0); // alice 2_000e6 SY
+
+        // Fees accrue in the V3 position but are NOT yet pulled into the SY.
+        _injectFees(100e6, 0);
+
+        // Alice transfers half her SY to bob WITHOUT calling harvest first.
+        vm.prank(alice);
+        sy.transfer(bob, 1_000e6);
+
+        // No more fees accrue. Both claim. With the fix, alice gets 100% of the fees
+        // (she held all 2_000e6 SY when fees accrued); bob gets 0.
+        // Without the fix, bob would inherit a slice (50% in this case).
+        vm.prank(alice);
+        uint256[] memory a = sy.claimRewards(alice);
+        vm.prank(bob);
+        uint256[] memory b = sy.claimRewards(bob);
+
+        assertEq(a[0], 100e6, "alice should get all pre-transfer fees");
+        assertEq(b[0], 0, "bob should not inherit pre-transfer fees");
+    }
+
+    // ───────────────────── redeem slippage (Bug C) ─────────────────────
+
+    function test_redeem_revertsBelowAmount0Min() public {
+        vm.prank(alice);
+        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+
+        // Redeem 1_000e6 = half supply → mock returns 500e6 of each. Demand 600e6 → revert.
+        vm.prank(alice);
+        vm.expectRevert(bytes("slip0"));
+        sy.redeemLiquidity(1_000e6, 600e6, 0, alice);
+    }
+
+    function test_redeem_revertsBelowAmount1Min() public {
+        vm.prank(alice);
+        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("slip1"));
+        sy.redeemLiquidity(1_000e6, 0, 600e6, alice);
+    }
+
+    function test_redeem_succeedsAtExactMin() public {
+        vm.prank(alice);
+        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+
+        vm.prank(alice);
+        (uint256 a0, uint256 a1) = sy.redeemLiquidity(1_000e6, 500e6, 500e6, alice);
+        assertEq(a0, 500e6);
+        assertEq(a1, 500e6);
     }
 
     // ───────────────────── helpers ─────────────────────

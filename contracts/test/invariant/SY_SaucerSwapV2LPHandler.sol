@@ -73,7 +73,7 @@ contract SY_SaucerSwapV2LPHandler is CommonBase, StdCheats, StdUtils {
         uint256 shares = bound(sharesSeed, 1, bal);
 
         vm.prank(a);
-        try sy.redeemLiquidity(shares, a) {
+        try sy.redeemLiquidity(shares, 0, 0, a) {
             redeemCount++;
         } catch {}
     }

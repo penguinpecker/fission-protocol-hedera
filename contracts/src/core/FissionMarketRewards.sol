@@ -396,17 +396,15 @@ contract FissionMarketRewards is
 
     /// @dev Internal harvest. Called BEFORE every YT-balance change so accrual is
     ///      always settled against an up-to-date global index.
+    /// @dev    Pendle semantics for reward-bearing markets: rewards keep flowing to YT
+    ///         holders indefinitely. Post-expiry, YT has no SY claim but a YT holder
+    ///         that hasn't yet redeemed/burned still earns its share of any incoming
+    ///         rewards. This is intentional — freezing post-expiry would create a race
+    ///         where pre-expiry-accrued-but-not-yet-harvested fees would be forfeited
+    ///         by the last harvester. Users should redeem at expiry to free their YT
+    ///         and stop subsidising late harvests, but the protocol does NOT force it.
     function _harvestRewards() internal {
         if (address(yt) == address(0)) return;
-
-        uint256 ts = yt.totalSupply();
-        if (ts == 0) {
-            // No YT to distribute to. Pull anyway (don't leave rewards stranded at SY)
-            // — they accrue to the Market's balance; future YT holders won't get the
-            // pre-existence rewards. This is the same trade-off the SY adapter makes.
-            sy.claimRewards(address(this));
-            return;
-        }
 
         uint256 prev0 = IERC20(rewardToken0).balanceOf(address(this));
         uint256 prev1 = IERC20(rewardToken1).balanceOf(address(this));
@@ -416,10 +414,20 @@ contract FissionMarketRewards is
         uint256 r0 = IERC20(rewardToken0).balanceOf(address(this)) - prev0;
         uint256 r1 = IERC20(rewardToken1).balanceOf(address(this)) - prev1;
 
+        if (r0 == 0 && r1 == 0) return;
+
+        uint256 ts = yt.totalSupply();
+        if (ts == 0) {
+            // No YT yet. Funds remain in the Market; the first split() that follows
+            // sees the accrued balance but the new YT holder's userIndex starts
+            // current, so they earn from FUTURE rewards only. The pre-existence
+            // harvest is forfeit — same trade-off the SY adapter makes.
+            return;
+        }
+
         if (r0 > 0) globalRewardIndex0 += (r0 * REWARD_SCALE) / ts;
         if (r1 > 0) globalRewardIndex1 += (r1 * REWARD_SCALE) / ts;
-
-        if (r0 > 0 || r1 > 0) emit RewardsHarvested(r0, r1);
+        emit RewardsHarvested(r0, r1);
     }
 
     /// @dev Lock in `user`'s accruable share of (globalIndex - userIndex) using their

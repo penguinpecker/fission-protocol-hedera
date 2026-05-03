@@ -296,7 +296,13 @@ contract SY_SaucerSwapV2LP is SYBase {
     /// @notice Burn `shares` and pay out the corresponding (amount0, amount1) to receiver.
     /// @dev    Harvests pending fees first, then decreases liquidity by exactly `shares`
     ///         (since shares == liquidity 1:1), then collects principal to receiver.
-    function redeemLiquidity(uint256 shares, address receiver)
+    /// @param  amount0Min slippage floor — V3 NPM reverts if it'd return less token0.
+    /// @param  amount1Min slippage floor — V3 NPM reverts if it'd return less token1.
+    /// @dev    Slippage matters here because V3 redemption amounts depend on the pool's
+    ///         tick at execution time. A sandwich attacker can swap to skew the tick,
+    ///         take profit on the user's lopsided redeem, and swap back. The min params
+    ///         force the NPM to revert if amounts come out below the user's tolerance.
+    function redeemLiquidity(uint256 shares, uint256 amount0Min, uint256 amount1Min, address receiver)
         external
         nonReentrant
         returns (uint256 amount0, uint256 amount1)
@@ -315,8 +321,8 @@ contract SY_SaucerSwapV2LP is SYBase {
             IUniswapV3PositionManager.DecreaseLiquidityParams({
                 tokenId: positionTokenId,
                 liquidity: uint128(shares),
-                amount0Min: 0,
-                amount1Min: 0,
+                amount0Min: amount0Min,
+                amount1Min: amount1Min,
                 deadline: block.timestamp
             });
         (amount0, amount1) = npm.decreaseLiquidity(dp);
@@ -510,9 +516,18 @@ contract SY_SaucerSwapV2LP is SYBase {
         userRewardIndex1[user] = g1;
     }
 
-    /// @dev OZ ERC20 v5 single hook — fires on every mint/burn/transfer. Settle BOTH
-    ///      sides before the balance moves so reward bookkeeping stays consistent.
+    /// @dev OZ ERC20 v5 single hook — fires on every mint/burn/transfer. Harvest pending
+    ///      V3 fees FIRST so the global index is current, then settle both sides against
+    ///      that index. Without the harvest, a raw `transfer(bob, x)` would settle alice
+    ///      and bob against a stale `globalRewardIndex`, letting bob earn a slice of
+    ///      pre-transfer fees and stripping alice of her rightful share. The deposit /
+    ///      redeem / claim flows already harvest explicitly, but a vanilla SY-share
+    ///      transfer needs this safety net.
+    /// @dev    `_harvest()` is idempotent within a single tx — `collect` returns 0 the
+    ///      second time. So the explicit harvest in deposit/redeem/claim isn't redundant
+    ///      with this hook; it just makes the second call cheap (~3K gas).
     function _update(address from, address to, uint256 value) internal override {
+        _harvest();
         _settleUserRewards(from);
         _settleUserRewards(to);
         super._update(from, to, value);
