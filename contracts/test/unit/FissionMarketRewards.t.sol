@@ -309,6 +309,47 @@ contract FissionMarketRewardsTest is Test {
         market.redeemAfterExpiry(1_000e6, 1, alice);
     }
 
+    // I-NEW-3 audit: block.timestamp == expiry boundary. preExpiry/afterExpiry must
+    // be consistent — exactly at the boundary, redeemAfterExpiry succeeds and split/
+    // swap revert.
+    function test_expiryBoundary_redeemSucceedsAtExactExpiry() public {
+        _absorbAdminYT(alice);
+        vm.prank(alice);
+        market.split(1_000e6);
+        vm.warp(expiry); // exactly at boundary
+        vm.prank(alice);
+        uint256 syOut = market.redeemAfterExpiry(1_000e6, 0, alice);
+        assertEq(syOut, 1_000e6);
+    }
+
+    function test_expiryBoundary_splitRevertsAtExactExpiry() public {
+        vm.warp(expiry);
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.MarketExpired.selector);
+        market.split(1e6);
+    }
+
+    // H-4 audit fix: post-expiry removeLiquidity auto-redeems LP's PT share to SY,
+    // so LP exits never compete with PT redeemers for SY backing.
+    function test_removeLiquidity_autoRedeemsPTPostExpiry() public {
+        // The admin is the sole LP (from setUp's initialize). After expiry, removing
+        // all LP should yield SY only (ptOut == 0).
+        uint256 lpBal = market.balanceOf(admin);
+        assertGt(lpBal, 0);
+        vm.warp(expiry + 1);
+
+        uint256 prevSy = IERC20(address(sy)).balanceOf(admin);
+        uint256 prevPt = pt.balanceOf(admin);
+
+        vm.prank(admin);
+        (uint256 syOut, uint256 ptOut) = market.removeLiquidity(lpBal, 0, 0, admin);
+
+        assertEq(ptOut, 0, "post-expiry LP exit returns SY only");
+        assertGt(syOut, 0);
+        assertEq(IERC20(address(sy)).balanceOf(admin), prevSy + syOut);
+        assertEq(pt.balanceOf(admin), prevPt, "LP shouldn't receive any PT post-expiry");
+    }
+
     // ───────────────────── pause ─────────────────────
 
     function test_pause_blocksEntryAllowsEscapeAndClaim() public {

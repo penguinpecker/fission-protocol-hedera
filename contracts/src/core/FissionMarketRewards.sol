@@ -234,6 +234,8 @@ contract FissionMarketRewards is
 
     /// @notice 1 SY → 1 PT + 1 YT. No fee, no AMM math.
     /// @dev    Settles caller's reward accrual BEFORE minting YT.
+    /// @dev    Pre-initialize splits are intentionally permitted; same rationale as
+    ///         FissionMarket.split (bootstrap flow needs to mint PT before initialize).
     function split(uint256 amount) external nonReentrant whenNotPaused returns (uint256) {
         if (block.timestamp >= expiry) revert MarketExpired();
         if (amount == 0) revert ZeroAmount();
@@ -372,6 +374,11 @@ contract FissionMarketRewards is
         emit LiquidityAdded(msg.sender, receiver, uint256(syUsed), uint256(ptUsed), lpOut);
     }
 
+    /// @notice Burn LP, return SY + PT proportional pre-expiry. Post-expiry, auto-redeem
+    ///         the PT share 1:1 to SY (exchangeRate is constant 1e18 in this Market).
+    /// @dev    H-4 audit fix (Pendle V3 fidelity): without auto-redemption, an LP could
+    ///         race ahead of post-expiry PT redeemers and dump the received PT
+    ///         externally, leaving PT-redeem txs reverting on insufficient SY backing.
     function removeLiquidity(uint256 lpIn, uint256 minSyOut, uint256 minPtOut, address receiver)
         external
         nonReentrant
@@ -384,14 +391,23 @@ contract FissionMarketRewards is
         (int256 syOutI, int256 ptOutI) = MarketMath.removeLiquidityCore(ms, int256(lpIn));
         syOut = uint256(syOutI);
         ptOut = uint256(ptOutI);
-        if (syOut < minSyOut || ptOut < minPtOut) revert InsufficientOutput();
 
         _burn(msg.sender, lpIn);
         totalSy -= syOut;
         totalPt -= ptOut;
 
+        if (block.timestamp >= expiry) {
+            // exchangeRate ≡ 1e18 → 1 PT redeems for 1 SY. Auto-redeem the LP's PT
+            // share so LP exits never compete with PT-redeemers for SY backing.
+            pt.burn(address(this), ptOut);
+            syOut += ptOut;
+            ptOut = 0;
+        }
+
+        if (syOut < minSyOut || ptOut < minPtOut) revert InsufficientOutput();
+
         IERC20(address(sy)).safeTransfer(receiver, syOut);
-        IERC20(address(pt)).safeTransfer(receiver, ptOut);
+        if (ptOut > 0) IERC20(address(pt)).safeTransfer(receiver, ptOut);
 
         emit LiquidityRemoved(msg.sender, receiver, lpIn, syOut, ptOut);
     }
@@ -428,18 +444,24 @@ contract FissionMarketRewards is
         uint256 ts = yt.totalSupply();
         if (ts == 0) return;
 
-        uint256 prev0 = IERC20(rewardToken0).balanceOf(address(this));
-        uint256 prev1 = IERC20(rewardToken1).balanceOf(address(this));
-
-        try sy.claimRewards(address(this)) returns (uint256[] memory) {
-            // ok
+        uint256[] memory amounts;
+        try sy.claimRewards(address(this)) returns (uint256[] memory a) {
+            amounts = a;
         } catch (bytes memory reason) {
             emit HarvestSkipped(reason);
             return;
         }
 
-        uint256 r0 = IERC20(rewardToken0).balanceOf(address(this)) - prev0;
-        uint256 r1 = IERC20(rewardToken1).balanceOf(address(this)) - prev1;
+        // M-NEW-1 audit fix (audit pass 2): use the SY's reported amounts as the
+        // authoritative source instead of `balance-delta`. If a future reward token
+        // were to carry a transfer hook (ERC-777, HIP-18 custom-fee callback, etc.)
+        // and re-entered Market.claimRewards mid-transfer, balance delta would be
+        // shorted by the re-entrant payout — leaving part of the harvested amount
+        // uncredited to globalRewardIndex. Using `amounts` directly is invariant
+        // under that re-entry: the SY committed to having transferred exactly that
+        // much, period. Co-holders never get diluted.
+        uint256 r0 = amounts.length > 0 ? amounts[0] : 0;
+        uint256 r1 = amounts.length > 1 ? amounts[1] : 0;
 
         if (r0 == 0 && r1 == 0) return;
 
@@ -451,8 +473,11 @@ contract FissionMarketRewards is
     /// @dev Lock in `user`'s accruable share of (globalIndex - userIndex) using their
     ///      CURRENT YT balance, then advance their userIndex. Must be called BEFORE the
     ///      YT balance moves.
+    /// @dev    L-NEW-1 audit fix: skip `address(this)` (in addition to address(0) and
+    ///         dead) so any Market-held YT (none in current code path, but defensive)
+    ///         doesn't accumulate stuck dust.
     function _settleRewards(address user) internal {
-        if (user == address(0) || user == address(0xdEaD)) return;
+        if (user == address(0) || user == address(0xdEaD) || user == address(this)) return;
         if (address(yt) == address(0)) return;
 
         uint256 bal = yt.balanceOf(user);
@@ -578,9 +603,10 @@ contract FissionMarketRewards is
     }
 
     function _loadState() internal view returns (MarketMath.MarketState memory ms) {
-        ms.totalPt = int256(totalPt);
-        ms.totalSy = int256(totalSy);
-        ms.totalLp = int256(totalSupply());
+        // L-7 audit fix: safe-cast helpers.
+        ms.totalPt = PMath.toInt(totalPt);
+        ms.totalSy = PMath.toInt(totalSy);
+        ms.totalLp = PMath.toInt(totalSupply());
         ms.expiry = expiry;
         ms.scalarRoot = scalarRoot;
         ms.lnFeeRateRoot = lnFeeRateRoot;

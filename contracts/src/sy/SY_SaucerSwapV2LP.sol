@@ -507,8 +507,11 @@ contract SY_SaucerSwapV2LP is SYBase {
 
     /// @dev Lock in `user`'s accruable share of (globalIndex - userIndex) as `accruedRewards`,
     ///      then advance their userIndex. Must be called BEFORE balance changes.
+    /// @dev    L-NEW-1 audit fix: skip `address(this)` so the SY's own internal-balance
+    ///         shares (used by Pendle's `burnFromInternalBalance` redeem path) don't
+    ///         accumulate stuck dust in `accruedRewards[address(this)]`.
     function _settleUserRewards(address user) internal {
-        if (user == address(0)) return; // mint source / burn destination
+        if (user == address(0) || user == address(this)) return; // mint source / burn destination / self
 
         uint256 bal = balanceOf(user);
         uint256 g0 = globalRewardIndex0;

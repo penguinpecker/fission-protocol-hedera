@@ -79,6 +79,12 @@ abstract contract SYBase is
 
     // ───────────────────── deposit / redeem ─────────────────────
 
+    /// @dev    M-1 audit fix: snapshot pre-balance and pass the actual delta to
+    ///         `_deposit`. Without this, an HTS token with HIP-18 customFees (or any
+    ///         fee-on-transfer ERC-20) would silently inflate share price — `_deposit`
+    ///         would mint shares for the requested `amountIn` while the contract only
+    ///         received `amountIn - fee`. The v1 lineup tokens (HBARX, USDC, WHBAR)
+    ///         have no such fees, but the defence covers any future SY adapter.
     function deposit(address receiver, address tokenIn, uint256 amountIn, uint256 minSharesOut)
         external
         payable
@@ -90,21 +96,23 @@ abstract contract SYBase is
         if (amountIn == 0) revert AmountZero();
         if (!isValidTokenIn(tokenIn)) revert TokenNotSupported(tokenIn);
 
-        // Pull tokens BEFORE the deposit hook so subclasses see the funds. Native HBAR
-        // arrives via `msg.value`; ERC-20 must be transferred in.
+        uint256 actualIn;
         if (tokenIn == NATIVE) {
             require(msg.value == amountIn, "SY: msg.value mismatch");
+            actualIn = msg.value;
         } else {
             require(msg.value == 0, "SY: HBAR not accepted");
+            uint256 prev = IERC20(tokenIn).balanceOf(address(this));
             IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+            actualIn = IERC20(tokenIn).balanceOf(address(this)) - prev;
         }
 
-        sharesOut = _deposit(tokenIn, amountIn);
+        sharesOut = _deposit(tokenIn, actualIn);
         if (sharesOut < minSharesOut) revert SlippageExceeded();
         if (sharesOut == 0) revert InsufficientSharesOut();
 
         _mint(receiver, sharesOut);
-        emit Deposit(msg.sender, receiver, tokenIn, amountIn, sharesOut);
+        emit Deposit(msg.sender, receiver, tokenIn, actualIn, sharesOut);
     }
 
     function redeem(

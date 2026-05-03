@@ -29,6 +29,11 @@ contract FissionFactory is AccessControlDefaultAdminRules {
 
     uint256 public constant SY_REVIEW_WINDOW = 7 days;
 
+    /// @notice Minimum market duration. L-8 audit fix: prevents accidental ultra-short
+    ///         markets (e.g., `expiry = block.timestamp + 1`) where `initialize` and a
+    ///         user's first deposit would race the expiry boundary in a single block.
+    uint256 public constant MIN_MARKET_DURATION = 7 days;
+
     /// @notice Default admin set on every newly created Market — typically the
     ///         protocol's Safe + TimelockController. Updatable by the factory's
     ///         own admin (also typically the Safe).
@@ -66,6 +71,8 @@ contract FissionFactory is AccessControlDefaultAdminRules {
     error SYAlreadyWhitelisted();
     error SYNotWhitelisted();
     error ZeroAddress();
+    error MarketDurationTooShort(uint256 given, uint256 minimum);
+    error AdminMustBeContract(address admin);
 
     constructor(address admin_, address marketAdmin_, address marketTreasury_)
         AccessControlDefaultAdminRules(0, admin_)
@@ -83,6 +90,9 @@ contract FissionFactory is AccessControlDefaultAdminRules {
 
     function setMarketAdmin(address newAdmin) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newAdmin == address(0)) revert ZeroAddress();
+        // L-11 audit fix: refuse EOA admin in production. The Safe (a contract) MUST
+        // own market admin so single-key compromise can't drain markets.
+        if (newAdmin.code.length == 0) revert AdminMustBeContract(newAdmin);
         emit MarketAdminUpdated(marketAdmin, newAdmin);
         marketAdmin = newAdmin;
     }
@@ -133,6 +143,10 @@ contract FissionFactory is AccessControlDefaultAdminRules {
         returns (uint256 marketId, address marketAddr)
     {
         if (!whitelistedSY[sy]) revert SYNotWhitelisted();
+        // L-8 audit fix: enforce minimum market duration.
+        if (expiry < block.timestamp + MIN_MARKET_DURATION) {
+            revert MarketDurationTooShort(expiry, block.timestamp + MIN_MARKET_DURATION);
+        }
 
         marketId = markets.length;
         IStandardizedYield syIface = IStandardizedYield(sy);
@@ -192,6 +206,9 @@ contract FissionFactory is AccessControlDefaultAdminRules {
         returns (uint256 marketId, address marketAddr)
     {
         if (!whitelistedSY[sy]) revert SYNotWhitelisted();
+        if (expiry < block.timestamp + MIN_MARKET_DURATION) {
+            revert MarketDurationTooShort(expiry, block.timestamp + MIN_MARKET_DURATION);
+        }
 
         marketId = markets.length;
         IStandardizedYield syIface = IStandardizedYield(sy);

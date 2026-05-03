@@ -237,6 +237,12 @@ contract FissionMarket is
     // ───────────────────── split / merge ─────────────────────
 
     /// @notice 1 SY → 1 PT + 1 YT. No fee, no AMM math.
+    /// @dev    Pre-initialize splits are intentionally permitted: the bootstrap flow
+    ///         is "admin splits a small seed amount → uses the PT to call
+    ///         `initialize`". The audit-noted L-2 sentinel collision (userIndex == 0
+    ///         vs globalIndex == 0) is harmless after the M-3 cold-start fix:
+    ///         `sy.exchangeRate()` now returns `PMath.ONE` at genesis, so the first
+    ///         `_updateGlobalIndex` call sets `globalIndex = 1e18` immediately.
     function split(uint256 amount) external nonReentrant whenNotPaused preExpiry returns (uint256) {
         if (amount == 0) revert ZeroAmount();
         if (address(pt) == address(0)) revert TokensNotSet();
@@ -376,6 +382,14 @@ contract FissionMarket is
         emit LiquidityAdded(msg.sender, receiver, uint256(syUsed), uint256(ptUsed), lpOut);
     }
 
+    /// @notice Burn LP, return SY + PT proportional pre-expiry. Post-expiry, auto-redeem
+    ///         the PT share to SY at the frozen rate so LP exits don't compete with PT
+    ///         redeemers for the SY backing.
+    /// @dev    H-4 audit fix (Pendle V3 fidelity): without this, post-expiry an LP could
+    ///         race ahead of `redeemAfterExpiry` callers, drain `totalSy`, and dump the
+    ///         received PT in a secondary market — leaving PT-redeemers' txs reverting
+    ///         on safeTransfer when SY backing fell short. Auto-redeem at the frozen
+    ///         globalIndex makes this impossible.
     function removeLiquidity(uint256 lpIn, uint256 minSyOut, uint256 minPtOut, address receiver)
         external
         nonReentrant
@@ -388,14 +402,28 @@ contract FissionMarket is
         (int256 syOutI, int256 ptOutI) = MarketMath.removeLiquidityCore(ms, int256(lpIn));
         syOut = uint256(syOutI);
         ptOut = uint256(ptOutI);
-        if (syOut < minSyOut || ptOut < minPtOut) revert InsufficientOutput();
 
         _burn(msg.sender, lpIn);
         totalSy -= syOut;
         totalPt -= ptOut;
 
+        if (block.timestamp >= expiry) {
+            // Freeze the global index if not yet frozen, then auto-redeem the PT share
+            // to SY at the frozen rate. LP receives SY only.
+            _updateGlobalIndex();
+            uint256 ptToSy = (ptOut * PMath.ONE) / globalIndex;
+            // Burn the PT slice we just allocated to the LP — it never leaves the contract.
+            // (We didn't `safeTransfer` it out yet, so it's still in the market's PT
+            // balance from past splits / past trades.)
+            pt.burn(address(this), ptOut);
+            syOut += ptToSy;
+            ptOut = 0;
+        }
+
+        if (syOut < minSyOut || ptOut < minPtOut) revert InsufficientOutput();
+
         IERC20(address(sy)).safeTransfer(receiver, syOut);
-        IERC20(address(pt)).safeTransfer(receiver, ptOut);
+        if (ptOut > 0) IERC20(address(pt)).safeTransfer(receiver, ptOut);
 
         emit LiquidityRemoved(msg.sender, receiver, lpIn, syOut, ptOut);
     }
@@ -549,9 +577,11 @@ contract FissionMarket is
     }
 
     function _loadState() internal view returns (MarketMath.MarketState memory ms) {
-        ms.totalPt = int256(totalPt);
-        ms.totalSy = int256(totalSy);
-        ms.totalLp = int256(totalSupply());
+        // L-7 audit fix: PMath.toInt reverts on uint256→int256 overflow rather than
+        // silently wrapping to a negative value (which would corrupt the AMM math).
+        ms.totalPt = PMath.toInt(totalPt);
+        ms.totalSy = PMath.toInt(totalSy);
+        ms.totalLp = PMath.toInt(totalSupply());
         ms.expiry = expiry;
         ms.scalarRoot = scalarRoot;
         ms.lnFeeRateRoot = lnFeeRateRoot;

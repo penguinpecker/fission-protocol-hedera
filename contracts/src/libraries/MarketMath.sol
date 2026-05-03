@@ -210,6 +210,11 @@ library MarketMath {
         returns (int256 netLpToAccount, int256 syUsed, int256 ptUsed, int256 netSyToReserve)
     {
         if (syDesired <= 0 || ptDesired <= 0) revert InsufficientLiquidity();
+        // M-4 audit fix: cap inputs at int128 max so the first-add `syDesired * ptDesired`
+        // multiplication can't overflow uint256 (each factor fits in 128 bits → product
+        // fits in 256). Practical Pendle markets never seed beyond this; the guard is
+        // pure safety.
+        if (syDesired > type(int128).max || ptDesired > type(int128).max) revert InsufficientLiquidity();
 
         if (market.totalLp == 0) {
             // First-add: LP = sqrt(syDesired · ptDesired) − MINIMUM_LIQUIDITY

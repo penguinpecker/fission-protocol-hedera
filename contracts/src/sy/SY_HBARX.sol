@@ -226,8 +226,13 @@ contract SY_HBARX is SYBase {
         }
 
         uint256 newTwap = _median(count);
-        emit RatePosted(idx, n > 0 ? _medianExcludingNewest() : newRate, newRate, newTwap);
-        emit ExchangeRateUpdated(n > 0 ? _medianExcludingNewest() : 0, newTwap);
+        // L-4 audit fix: only call _medianExcludingNewest when there's at least one
+        // prior observation to exclude (i.e. n > 1). Otherwise the prior median is
+        // simply newRate (single-sample TWAP).
+        uint256 priorTwap = n > 1 ? _medianExcludingNewest() : newRate;
+        uint256 priorEmit = n > 1 ? priorTwap : 0;
+        emit RatePosted(idx, priorTwap, newRate, newTwap);
+        emit ExchangeRateUpdated(priorEmit, newTwap);
     }
 
     // ───────────────────── internal helpers ─────────────────────
