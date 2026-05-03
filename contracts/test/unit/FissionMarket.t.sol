@@ -378,7 +378,7 @@ contract FissionMarketTest is Test {
     function test_setFee_revertsAboveMaxReservePercent() public {
         uint256 over = market.MAX_RESERVE_FEE_PERCENT() + 1;
         vm.prank(admin);
-        vm.expectRevert(FissionMarket.InsufficientLiquidity.selector);
+        vm.expectRevert(abi.encodeWithSelector(FissionMarket.ReserveFeeTooHigh.selector, over, 100));
         market.setFee(LN_FEE_ROOT, over);
     }
 }

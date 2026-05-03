@@ -97,6 +97,8 @@ contract FissionMarket is
     error InsufficientLiquidity();
     error ZeroAmount();
     error ZeroAddress();
+    error ReserveFeeTooHigh(uint256 given, uint256 max);
+    error SYRateBelowOne(uint256 syRate);
 
     // ───────────────────── events ─────────────────────
 
@@ -197,8 +199,14 @@ contract FissionMarket is
         if (address(pt) == address(0)) revert TokensNotSet();
         if (totalSupply() != 0) revert AlreadyInitialized();
         if (syIn == 0 || ptIn == 0) revert ZeroAmount();
-        if (reserveFeePercent_ > MAX_RESERVE_FEE_PERCENT) revert InsufficientLiquidity();
+        if (reserveFeePercent_ > MAX_RESERVE_FEE_PERCENT) revert ReserveFeeTooHigh(reserveFeePercent_, MAX_RESERVE_FEE_PERCENT);
         MarketMath.validateLnFeeRateRoot(lnFeeRateRoot_);
+
+        // Compute initial SY rate up-front so we can floor-check it BEFORE pulling
+        // funds. (H-1 audit fix.) An SY rate < 1e18 at init would cause PT redemption
+        // post-expiry to pay > 1 SY per PT, draining backing and breaking solvency.
+        uint256 syIndexU = sy.exchangeRate();
+        if (syIndexU < PMath.ONE) revert SYRateBelowOne(syIndexU);
 
         IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), syIn);
         IERC20(address(pt)).safeTransferFrom(msg.sender, address(this), ptIn);
@@ -217,7 +225,7 @@ contract FissionMarket is
 
         // Compute and persist initial implied rate.
         MarketMath.MarketState memory ms = _loadState();
-        int256 syIndex = int256(sy.exchangeRate());
+        int256 syIndex = int256(syIndexU);
         lastLnImpliedRate = MarketMath.setInitialLnImpliedRate(ms, syIndex, initialAnchor, block.timestamp);
 
         // Initialize global yield index.
@@ -395,17 +403,19 @@ contract FissionMarket is
     // ───────────────────── yield accrual ─────────────────────
 
     /// @notice Bring the global yield index up to the current SY rate, but freeze it at expiry.
+    /// @dev    H-1 defence: the index is also floored at 1e18, so a buggy/manipulated SY
+    ///         that briefly returns < 1e18 cannot cause PT to redeem for > 1 SY.
     function _updateGlobalIndex() internal {
         if (expiryIndexFrozen) return;
         if (block.timestamp >= expiry) {
-            // First post-expiry call freezes the index permanently. Use the *current*
-            // sy.exchangeRate as the freeze value; this is the rate PT redeems against.
             uint256 cur = sy.exchangeRate();
+            if (cur < PMath.ONE) cur = PMath.ONE;
             if (cur > globalIndex) globalIndex = cur;
             expiryIndexFrozen = true;
             return;
         }
         uint256 c = sy.exchangeRate();
+        if (c < PMath.ONE) c = PMath.ONE;
         if (c > globalIndex) globalIndex = c;
     }
 
@@ -513,7 +523,7 @@ contract FissionMarket is
 
     function setFee(int256 lnFeeRateRoot_, uint256 reserveFeePercent_) external onlyRole(ADMIN_ROLE) {
         MarketMath.validateLnFeeRateRoot(lnFeeRateRoot_);
-        if (reserveFeePercent_ > MAX_RESERVE_FEE_PERCENT) revert InsufficientLiquidity();
+        if (reserveFeePercent_ > MAX_RESERVE_FEE_PERCENT) revert ReserveFeeTooHigh(reserveFeePercent_, MAX_RESERVE_FEE_PERCENT);
         lnFeeRateRoot = lnFeeRateRoot_;
         reserveFeePercent = reserveFeePercent_;
         emit FeeUpdated(lnFeeRateRoot_, reserveFeePercent_);

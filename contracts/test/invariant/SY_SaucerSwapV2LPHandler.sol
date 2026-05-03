@@ -59,7 +59,7 @@ contract SY_SaucerSwapV2LPHandler is CommonBase, StdCheats, StdUtils {
         token1.mint(a, amount1);
 
         vm.prank(a);
-        try sy.depositLiquidity(amount0, amount1, a, 0) {
+        try sy.depositLiquidity(amount0, amount1, 0, 0, a, 0) {
             depositCount++;
         } catch {
             // Bounded rejections (paused etc.) are tolerated.

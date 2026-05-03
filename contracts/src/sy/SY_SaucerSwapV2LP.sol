@@ -210,11 +210,18 @@ contract SY_SaucerSwapV2LP is SYBase {
     ///         liquidity added. Excess of either token is refunded.
     /// @param amount0Desired max token0 the caller commits.
     /// @param amount1Desired max token1 the caller commits.
+    /// @param amount0Min minimum token0 actually used; protects against tick-skew sandwich.
+    /// @param amount1Min minimum token1 actually used; protects against tick-skew sandwich.
     /// @param receiver who gets the SY shares.
     /// @param minLiquidity slippage protection — revert if minted liquidity is below this.
+    /// @dev    L-6 audit fix: symmetric to `redeemLiquidity`'s slippage params. Without
+    ///         these, a sandwich attacker can move the V3 tick to mint very little
+    ///         liquidity for the user's funded amounts, then arbitrage back.
     function depositLiquidity(
         uint256 amount0Desired,
         uint256 amount1Desired,
+        uint256 amount0Min,
+        uint256 amount1Min,
         address receiver,
         uint128 minLiquidity
     ) external nonReentrant whenNotPaused returns (uint128 liquidity) {
@@ -245,8 +252,8 @@ contract SY_SaucerSwapV2LP is SYBase {
                 tickUpper: tickUpper,
                 amount0Desired: amount0Desired,
                 amount1Desired: amount1Desired,
-                amount0Min: 0,
-                amount1Min: 0,
+                amount0Min: amount0Min,
+                amount1Min: amount1Min,
                 recipient: address(this),
                 deadline: block.timestamp
             });
@@ -265,8 +272,8 @@ contract SY_SaucerSwapV2LP is SYBase {
                     tokenId: positionTokenId,
                     amount0Desired: amount0Desired,
                     amount1Desired: amount1Desired,
-                    amount0Min: 0,
-                    amount1Min: 0,
+                    amount0Min: amount0Min,
+                    amount1Min: amount1Min,
                     deadline: block.timestamp
                 });
             (liquidity, amount0Used, amount1Used) = npm.increaseLiquidity(ip);
@@ -469,8 +476,17 @@ contract SY_SaucerSwapV2LP is SYBase {
 
     /// @dev Internal harvest — must be called BEFORE any share-set change so the global
     ///      index is up-to-date when the new shareholder set takes effect.
+    /// @dev    H-3 audit defence: when `totalSupply() == 0` we do NOT pull fees from
+    ///         the V3 position. Pulling them would orphan the tokens in this contract
+    ///         (next harvest snapshots them as `prev`, so they're never credited to any
+    ///         shareholder). With this guard, the V3 position keeps the fees in
+    ///         `feeGrowthInside` until the first SY shareholder exists; the next harvest
+    ///         then collects everything correctly.
     function _harvest() internal {
         if (positionTokenId == 0) return;
+
+        uint256 ts = totalSupply();
+        if (ts == 0) return;
 
         (uint256 c0, uint256 c1) = npm.collect(IUniswapV3PositionManager.CollectParams({
             tokenId: positionTokenId,
@@ -480,14 +496,6 @@ contract SY_SaucerSwapV2LP is SYBase {
         }));
 
         if (c0 == 0 && c1 == 0) return;
-
-        uint256 ts = totalSupply();
-        if (ts == 0) {
-            // No shares to receive. Funds sit in this contract; admin can sweep later
-            // via a dedicated rescue path (intentionally not added here — keep surface tight).
-            emit Harvested(c0, c1);
-            return;
-        }
 
         if (c0 > 0) globalRewardIndex0 += (c0 * REWARD_SCALE) / ts;
         if (c1 > 0) globalRewardIndex1 += (c1 * REWARD_SCALE) / ts;

@@ -57,7 +57,7 @@ contract FissionMarketRewardsInvariantTest is Test {
         token1.mint(address(this), 5_000_000e6);
         token0.approve(address(sy), type(uint256).max);
         token1.approve(address(sy), type(uint256).max);
-        sy.depositLiquidity(1_000_000e6, 1_000_000e6, address(this), 0);
+        sy.depositLiquidity(1_000_000e6, 1_000_000e6, 0, 0, address(this), 0);
 
         uint256 expiry_ = block.timestamp + 90 days;
         market = new FissionMarketRewards(

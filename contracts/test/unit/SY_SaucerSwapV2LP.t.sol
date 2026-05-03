@@ -134,7 +134,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_firstDeposit_mintsPositionAndShares() public {
         vm.prank(alice);
-        uint128 liq = sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        uint128 liq = sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
 
         // 1:1 mock: liquidity = (a0+a1) * 1e18 / 1e18 = 2_000e6
         assertEq(uint256(liq), 2_000e6);
@@ -146,31 +146,31 @@ contract SY_SaucerSwapV2LPTest is Test {
     function test_firstDeposit_zeroAmountsRevert() public {
         vm.prank(alice);
         vm.expectRevert(SYBase.AmountZero.selector);
-        sy.depositLiquidity(0, 0, alice, 0);
+        sy.depositLiquidity(0, 0, 0, 0, alice, 0);
     }
 
     function test_firstDeposit_zeroReceiverReverts() public {
         vm.prank(alice);
         vm.expectRevert(SY_SaucerSwapV2LP.ZeroAddress.selector);
-        sy.depositLiquidity(1e6, 1e6, address(0), 0);
+        sy.depositLiquidity(1e6, 1e6, 0, 0, address(0), 0);
     }
 
     function test_firstDeposit_singleSidedToken0() public {
         vm.prank(alice);
-        uint128 liq = sy.depositLiquidity(1_000e6, 0, alice, 0);
+        uint128 liq = sy.depositLiquidity(1_000e6, 0, 0, 0, alice, 0);
         assertEq(uint256(liq), 1_000e6);
     }
 
     function test_firstDeposit_singleSidedToken1() public {
         vm.prank(alice);
-        uint128 liq = sy.depositLiquidity(0, 1_000e6, alice, 0);
+        uint128 liq = sy.depositLiquidity(0, 1_000e6, 0, 0, alice, 0);
         assertEq(uint256(liq), 1_000e6);
     }
 
     function test_firstDeposit_minLiquidityNotMetReverts() public {
         vm.prank(alice);
         vm.expectRevert(SY_SaucerSwapV2LP.InsufficientLiquidityOut.selector);
-        sy.depositLiquidity(1e6, 1e6, alice, type(uint128).max);
+        sy.depositLiquidity(1e6, 1e6, 0, 0, alice, type(uint128).max);
     }
 
     function test_firstDeposit_refundsUnusedTokens() public {
@@ -179,7 +179,7 @@ contract SY_SaucerSwapV2LPTest is Test {
         uint256 prevBal0 = token0.balanceOf(alice);
 
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
 
         // alice should have spent 500e6 token0 (used) + 0 refund missing = total 500e6 spent.
         assertEq(token0.balanceOf(alice), prevBal0 - 500e6);
@@ -189,11 +189,11 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_subsequentDeposit_addsLiquidityToSamePosition() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
         uint256 tokenId = sy.positionTokenId();
 
         vm.prank(bob);
-        uint128 liq2 = sy.depositLiquidity(500e6, 500e6, bob, 0);
+        uint128 liq2 = sy.depositLiquidity(500e6, 500e6, 0, 0, bob, 0);
 
         assertEq(uint256(liq2), 1_000e6);
         assertEq(sy.positionTokenId(), tokenId, "tokenId must not change");
@@ -205,7 +205,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_redeem_partialReturnsProportionalAmounts() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
 
         uint256 prevBal0 = token0.balanceOf(alice);
         uint256 prevBal1 = token1.balanceOf(alice);
@@ -222,7 +222,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_redeem_fullEmptiesAlice() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
 
         vm.prank(alice);
         sy.redeemLiquidity(2_000e6, 0, 0, alice);
@@ -239,7 +239,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_redeem_zeroAmountReverts() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
         vm.prank(alice);
         vm.expectRevert(SYBase.AmountZero.selector);
         sy.redeemLiquidity(0, 0, 0, alice);
@@ -247,7 +247,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_redeem_zeroReceiverReverts() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
         vm.prank(alice);
         vm.expectRevert(SY_SaucerSwapV2LP.ZeroAddress.selector);
         sy.redeemLiquidity(100, 0, 0, address(0));
@@ -257,7 +257,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_harvest_noFeesIsNoOp() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
 
         sy.harvest();
         assertEq(sy.globalRewardIndex0(), 0);
@@ -266,7 +266,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_harvest_token0FeesUpdateOnlyIndex0() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
         // Total supply = 2_000e6.
 
         // Inject 100e6 token0 fees into the position.
@@ -282,7 +282,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_harvest_bothTokensFees() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
 
         token0.mint(address(this), 200e6);
         token1.mint(address(this), 100e6);
@@ -299,7 +299,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_singleHolder_claimGetsAllFees() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
 
         _injectFees(100e6, 50e6);
 
@@ -318,9 +318,9 @@ contract SY_SaucerSwapV2LPTest is Test {
     function test_twoHolders_proRataDistribution() public {
         // alice 75%, bob 25% of supply.
         vm.prank(alice);
-        sy.depositLiquidity(1_500e6, 1_500e6, alice, 0); // 3_000e6 liq
+        sy.depositLiquidity(1_500e6, 1_500e6, 0, 0, alice, 0); // 3_000e6 liq
         vm.prank(bob);
-        sy.depositLiquidity(500e6, 500e6, bob, 0); // 1_000e6 liq
+        sy.depositLiquidity(500e6, 500e6, 0, 0, bob, 0); // 1_000e6 liq
         // Total 4_000e6.
 
         _injectFees(400e6, 0);
@@ -339,14 +339,14 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_lateJoiner_doesNotEarnPastFees() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0); // 2_000e6 liq
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0); // 2_000e6 liq
 
         _injectFees(100e6, 0); // alice's era
         // Note: harvest happens implicitly inside the next deposit because position
         // already exists.
 
         vm.prank(bob);
-        sy.depositLiquidity(1_000e6, 1_000e6, bob, 0); // 2_000e6 liq
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, bob, 0); // 2_000e6 liq
         // Total now 4_000e6.
 
         _injectFees(80e6, 0); // post-bob era
@@ -364,7 +364,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_transfer_settlesRewardsForBothSides() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0); // 2_000e6 liq
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0); // 2_000e6 liq
 
         _injectFees(100e6, 0);
         sy.harvest();
@@ -389,7 +389,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_redeem_settlesRewardsBeforeBurn() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0); // 2_000e6 liq
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0); // 2_000e6 liq
 
         _injectFees(100e6, 50e6);
 
@@ -413,7 +413,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_accruedRewards_view_matchesClaim() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
         _injectFees(123e6, 77e6);
         sy.harvest();
 
@@ -455,7 +455,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_pause_blocksDepositButAllowsRedeemAndClaim() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
         _injectFees(100e6, 0);
 
         vm.prank(admin);
@@ -463,7 +463,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSignature("EnforcedPause()"));
-        sy.depositLiquidity(1e6, 1e6, bob, 0);
+        sy.depositLiquidity(1e6, 1e6, 0, 0, bob, 0);
 
         // Redeem still works (escape hatch).
         vm.prank(alice);
@@ -482,7 +482,7 @@ contract SY_SaucerSwapV2LPTest is Test {
     ///      bob would inherit those fees pro-rata to his post-transfer balance.
     function test_transfer_harvestsBeforeSettling() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0); // alice 2_000e6 SY
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0); // alice 2_000e6 SY
 
         // Fees accrue in the V3 position but are NOT yet pulled into the SY.
         _injectFees(100e6, 0);
@@ -507,7 +507,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_redeem_revertsBelowAmount0Min() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
 
         // Redeem 1_000e6 = half supply → mock returns 500e6 of each. Demand 600e6 → revert.
         vm.prank(alice);
@@ -517,7 +517,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_redeem_revertsBelowAmount1Min() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
 
         vm.prank(alice);
         vm.expectRevert(bytes("slip1"));
@@ -526,7 +526,7 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     function test_redeem_succeedsAtExactMin() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, alice, 0);
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
 
         vm.prank(alice);
         (uint256 a0, uint256 a1) = sy.redeemLiquidity(1_000e6, 500e6, 500e6, alice);

@@ -171,9 +171,10 @@ contract SY_HBARX_Test is Test {
 
     // ───────────────────── exchangeRate / TWAP median ─────────────────────
 
-    function test_exchangeRate_revertsWithNoObservations() public {
-        vm.expectRevert(SY_HBARX.NoObservationsYet.selector);
-        sy.exchangeRate();
+    function test_exchangeRate_returnsOneAtColdStart() public view {
+        // M-3 audit fix: pre-keeper-post cold start returns PMath.ONE rather than reverting,
+        // so dependent contracts (FissionMarket entry points, escape hatches) don't brick.
+        assertEq(sy.exchangeRate(), 1e18);
     }
 
     function test_twap_medianOfSixIsMiddle() public {

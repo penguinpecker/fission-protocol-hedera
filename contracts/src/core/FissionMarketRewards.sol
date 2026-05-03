@@ -113,6 +113,9 @@ contract FissionMarketRewards is
     error ZeroAmount();
     error ZeroAddress();
     error WrongRewardTokenCount();
+    error ReserveFeeTooHigh(uint256 given, uint256 max);
+    error SYRateBelowOne(uint256 syRate);
+    error YTBurnNotPermitted();
 
     // ───────────────────── events ─────────────────────
 
@@ -125,6 +128,7 @@ contract FissionMarketRewards is
     event Swap(address indexed user, address indexed receiver, int256 ptDelta, int256 syDelta, int256 syFee, int256 syToReserve);
     event RewardsHarvested(uint256 amount0, uint256 amount1);
     event RewardsClaimed(address indexed user, address indexed receiver, uint256 amount0, uint256 amount1);
+    event HarvestSkipped(bytes reason);
     event RedeemedAfterExpiry(address indexed user, address indexed receiver, uint256 ptIn, uint256 ytIn, uint256 syOut);
     event TreasuryUpdated(address indexed prev, address indexed next);
     event FeeUpdated(int256 lnFeeRateRoot, uint256 reserveFeePercent);
@@ -194,8 +198,14 @@ contract FissionMarketRewards is
         if (address(pt) == address(0)) revert TokensNotSet();
         if (totalSupply() != 0) revert AlreadyInitialized();
         if (syIn == 0 || ptIn == 0) revert ZeroAmount();
-        if (reserveFeePercent_ > MAX_RESERVE_FEE_PERCENT) revert InsufficientLiquidity();
+        if (reserveFeePercent_ > MAX_RESERVE_FEE_PERCENT) revert ReserveFeeTooHigh(reserveFeePercent_, MAX_RESERVE_FEE_PERCENT);
         MarketMath.validateLnFeeRateRoot(lnFeeRateRoot_);
+
+        // For SY_SaucerSwapV2LP, exchangeRate is constant 1e18 by design — but enforce
+        // the floor anyway as defence-in-depth for any future SY adapter wired through
+        // the rewards-bearing path. (H-1 audit fix.)
+        uint256 syIndexU = sy.exchangeRate();
+        if (syIndexU < PMath.ONE) revert SYRateBelowOne(syIndexU);
 
         IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), syIn);
         IERC20(address(pt)).safeTransferFrom(msg.sender, address(this), ptIn);
@@ -403,27 +413,35 @@ contract FissionMarketRewards is
     ///         where pre-expiry-accrued-but-not-yet-harvested fees would be forfeited
     ///         by the last harvester. Users should redeem at expiry to free their YT
     ///         and stop subsidising late harvests, but the protocol does NOT force it.
+    /// @dev    H-2 audit defence: `sy.claimRewards` is wrapped in try/catch. If the SY
+    ///         (or its underlying V3 NPM) ever bricks the claim path, YT transfers /
+    ///         mints / burns must STILL succeed — otherwise users cannot escape via
+    ///         merge / redeemAfterExpiry. We skip this harvest cycle and keep going.
+    /// @dev    H-3 audit defence: when `yt.totalSupply() == 0` we do NOT pull rewards
+    ///         from the SY. Pulling them would orphan them in this contract permanently
+    ///         (next harvest snapshots them as `prev`, so they're never credited to any
+    ///         shareholder). With this guard, the SY keeps holding them until the first
+    ///         YT actually exists and a future harvest credits them naturally.
     function _harvestRewards() internal {
         if (address(yt) == address(0)) return;
+
+        uint256 ts = yt.totalSupply();
+        if (ts == 0) return;
 
         uint256 prev0 = IERC20(rewardToken0).balanceOf(address(this));
         uint256 prev1 = IERC20(rewardToken1).balanceOf(address(this));
 
-        sy.claimRewards(address(this));
+        try sy.claimRewards(address(this)) returns (uint256[] memory) {
+            // ok
+        } catch (bytes memory reason) {
+            emit HarvestSkipped(reason);
+            return;
+        }
 
         uint256 r0 = IERC20(rewardToken0).balanceOf(address(this)) - prev0;
         uint256 r1 = IERC20(rewardToken1).balanceOf(address(this)) - prev1;
 
         if (r0 == 0 && r1 == 0) return;
-
-        uint256 ts = yt.totalSupply();
-        if (ts == 0) {
-            // No YT yet. Funds remain in the Market; the first split() that follows
-            // sees the accrued balance but the new YT holder's userIndex starts
-            // current, so they earn from FUTURE rewards only. The pre-existence
-            // harvest is forfeit — same trade-off the SY adapter makes.
-            return;
-        }
 
         if (r0 > 0) globalRewardIndex0 += (r0 * REWARD_SCALE) / ts;
         if (r1 > 0) globalRewardIndex1 += (r1 * REWARD_SCALE) / ts;
@@ -500,10 +518,14 @@ contract FissionMarketRewards is
 
     // ───────────────────── post-expiry redemption ─────────────────────
 
-    /// @notice Burn PT (and/or YT) at expiry; receive SY 1:1 with PT burned.
-    /// @dev    PT redeems 1:1 with SY because `exchangeRate ≡ 1e18`. YT post-expiry has
-    ///         no SY redemption value — its yield is collected separately via
-    ///         `claimRewards`.
+    /// @notice Burn PT at expiry; receive SY 1:1.
+    /// @dev    PT redeems 1:1 with SY because `exchangeRate ≡ 1e18`.
+    /// @dev    M-2 audit fix: YT burn is intentionally NOT supported here. In a
+    ///         reward-bearing market, rewards keep flowing to YT holders forever; a
+    ///         user who burns YT permanently destroys that future income stream. To
+    ///         prevent the footgun we reject any `ytIn > 0`. If a user truly wants to
+    ///         dispose of YT, they can transfer it to a sink address — but they should
+    ///         continue to claim rewards while they hold it.
     function redeemAfterExpiry(uint256 ptIn, uint256 ytIn, address receiver)
         external
         nonReentrant
@@ -511,24 +533,17 @@ contract FissionMarketRewards is
     {
         if (block.timestamp < expiry) revert MarketNotExpired();
         if (receiver == address(0)) revert ZeroAddress();
-        if (ptIn == 0 && ytIn == 0) revert ZeroAmount();
+        if (ytIn != 0) revert YTBurnNotPermitted();
+        if (ptIn == 0) revert ZeroAmount();
 
-        // Settle the caller's pending rewards before the YT burn moves their balance.
+        // Settle the caller's pending rewards before any state change.
         _harvestRewards();
         _settleRewards(msg.sender);
 
-        if (ptIn > 0) {
-            pt.burn(msg.sender, ptIn);
-            syOut = ptIn; // 1:1 — exchangeRate is constant 1
-        }
-        if (ytIn > 0) {
-            yt.burn(msg.sender, ytIn);
-            // YT itself has no SY claim; rewards are claimed separately.
-        }
+        pt.burn(msg.sender, ptIn);
+        syOut = ptIn; // 1:1 — exchangeRate is constant 1
 
-        if (syOut > 0) {
-            IERC20(address(sy)).safeTransfer(receiver, syOut);
-        }
+        IERC20(address(sy)).safeTransfer(receiver, syOut);
         emit RedeemedAfterExpiry(msg.sender, receiver, ptIn, ytIn, syOut);
     }
 
@@ -542,7 +557,7 @@ contract FissionMarketRewards is
 
     function setFee(int256 lnFeeRateRoot_, uint256 reserveFeePercent_) external onlyRole(ADMIN_ROLE) {
         MarketMath.validateLnFeeRateRoot(lnFeeRateRoot_);
-        if (reserveFeePercent_ > MAX_RESERVE_FEE_PERCENT) revert InsufficientLiquidity();
+        if (reserveFeePercent_ > MAX_RESERVE_FEE_PERCENT) revert ReserveFeeTooHigh(reserveFeePercent_, MAX_RESERVE_FEE_PERCENT);
         lnFeeRateRoot = lnFeeRateRoot_;
         reserveFeePercent = reserveFeePercent_;
         emit FeeUpdated(lnFeeRateRoot_, reserveFeePercent_);

@@ -57,7 +57,7 @@ contract FissionMarketRewardsTest is Test {
         token1.mint(address(this), 5_000_000e6);
         token0.approve(address(sy), type(uint256).max);
         token1.approve(address(sy), type(uint256).max);
-        sy.depositLiquidity(1_000_000e6, 1_000_000e6, address(this), 0);
+        sy.depositLiquidity(1_000_000e6, 1_000_000e6, 0, 0, address(this), 0);
         // Test contract now holds 2_000_000e6 SY shares.
 
         expiry = block.timestamp + 90 days;
@@ -284,8 +284,10 @@ contract FissionMarketRewardsTest is Test {
         vm.warp(expiry + 1);
         uint256 prevSy = IERC20(address(sy)).balanceOf(alice);
 
+        // YT-burn is now rejected (M-2 audit fix). Pass ytIn=0; alice retains YT and
+        // can keep claiming future rewards.
         vm.prank(alice);
-        uint256 syOut = market.redeemAfterExpiry(50_000e6, 50_000e6, alice);
+        uint256 syOut = market.redeemAfterExpiry(50_000e6, 0, alice);
 
         assertEq(syOut, 50_000e6, "PT redeems 1:1 with SY");
         assertEq(IERC20(address(sy)).balanceOf(alice), prevSy + 50_000e6);
@@ -294,6 +296,17 @@ contract FissionMarketRewardsTest is Test {
         (uint256 r0, uint256 r1) = market.claimRewards(alice);
         assertApproxEqAbs(r0, expected0, 1);
         assertApproxEqAbs(r1, expected1, 1);
+    }
+
+    function test_redeemAfterExpiry_revertsOnYTBurn() public {
+        _absorbAdminYT(alice);
+        vm.prank(alice);
+        market.split(1_000e6);
+        vm.warp(expiry + 1);
+        // M-2 audit fix: passing ytIn > 0 is rejected — would forfeit future rewards.
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.YTBurnNotPermitted.selector);
+        market.redeemAfterExpiry(1_000e6, 1, alice);
     }
 
     // ───────────────────── pause ─────────────────────

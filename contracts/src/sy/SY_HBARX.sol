@@ -164,9 +164,15 @@ contract SY_HBARX is SYBase {
     /// @notice Current protocol-safe exchange rate: median of populated observations.
     /// @dev    Median is more robust to a single bad post than mean. With TWAP_LEN=6
     ///         the median tolerates up to 2 rogue observations before drifting.
+    /// @dev    M-3 audit fix: at genesis (no keeper post yet) we return `PMath.ONE`
+    ///         instead of reverting. A revert would brick every dependent contract:
+    ///         FissionMarket.initialize, swap, _accrue (called from merge / claimYield /
+    ///         redeemAfterExpiry escape paths) all read this. A keeper outage at the
+    ///         wrong time would otherwise trap users. `PMath.ONE` (1.0 HBAR/HBARX) is
+    ///         the minimum economically correct rate (HBARX ≥ HBAR, never less).
     function exchangeRate() public view override returns (uint256) {
         uint256 n = count;
-        if (n == 0) revert NoObservationsYet();
+        if (n == 0) return PMath.ONE;
         return _median(n);
     }
 
