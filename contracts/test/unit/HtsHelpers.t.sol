@@ -1,0 +1,178 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {Test} from "forge-std/Test.sol";
+
+import {HtsHelpers} from "../../src/libraries/HtsHelpers.sol";
+import {IHederaTokenService} from "../../src/interfaces/IHederaTokenService.sol";
+import {HederaResponseCodes} from "../../src/interfaces/IHederaResponseCodes.sol";
+import {MockHederaTokenService} from "../mocks/MockHederaTokenService.sol";
+
+/// @dev External wrapper so vm.expectRevert can catch reverts from library calls
+///      cleanly (library internals inline into the caller, breaking depth-strict
+///      expectRevert; calling through this contract makes the revert external).
+contract HtsLibCaller {
+    function mint(address t, uint256 amt) external returns (uint256) {
+        return HtsHelpers.mintToTreasury(t, amt);
+    }
+    function transfer(address t, address from, address to, uint256 amt) external {
+        HtsHelpers.transfer(t, from, to, amt);
+    }
+    function freeze(address t, address acc) external {
+        HtsHelpers.freeze(t, acc);
+    }
+}
+
+/// @notice Smoke test for the HTS foundation: mock at 0x167, library wraps with
+///         revert-on-failure, every code path round-trips correctly.
+contract HtsHelpersTest is Test {
+    address constant PRECOMPILE = address(0x167);
+    address constant TREASURY = address(0xBEEF);
+    address constant ALICE = address(0xA11CE);
+    address constant BOB = address(0xB0B);
+
+    function setUp() public {
+        // Install the mock at the canonical precompile address. revm sees the same
+        // bytecode the real Hedera precompile would expose to a Solidity caller.
+        bytes memory mockCode = type(MockHederaTokenService).runtimeCode;
+        vm.etch(PRECOMPILE, mockCode);
+    }
+
+    function _deployToken(bool freezeDefault, bool withWipe, address keyHolder)
+        internal
+        returns (address htsToken)
+    {
+        // Build keys: SUPPLY (16) + FREEZE (4) + optionally WIPE (8), all → keyHolder.
+        uint256 mask = 16 | 4 | (withWipe ? 8 : 0);
+        IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](1);
+        keys[0] = HtsHelpers.makeKey(mask, keyHolder);
+
+        IHederaTokenService.HederaToken memory spec = IHederaTokenService.HederaToken({
+            name: "Test Token",
+            symbol: "TEST",
+            treasury: keyHolder, // treasury == this contract (the supply contract)
+            memo: "",
+            tokenSupplyType: false,
+            maxSupply: 0,
+            freezeDefault: freezeDefault,
+            tokenKeys: keys,
+            expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: keyHolder, autoRenewPeriod: 7776000})
+        });
+
+        htsToken = HtsHelpers.createFungible(spec, 8);
+    }
+
+    function test_create_returnsToken() public {
+        address t = _deployToken(false, false, address(this));
+        assertGt(uint160(t), 0);
+        // Test contract is the supply key holder per `_deployToken`.
+        assertEq(MockHederaTokenService(PRECOMPILE).supplyKey(t), address(this));
+    }
+
+    function test_mintToTreasury_increasesSupply() public {
+        address t = _deployToken(false, false, address(this));
+        HtsHelpers.mintToTreasury(t, 1_000e8);
+        assertEq(MockHederaTokenService(PRECOMPILE).totalSupply(t), 1_000e8);
+        assertEq(MockHederaTokenService(PRECOMPILE).balanceOf(t, address(this)), 1_000e8);
+    }
+
+    function test_burnFromTreasury_decreasesSupply() public {
+        address t = _deployToken(false, false, address(this));
+        HtsHelpers.mintToTreasury(t, 1_000e8);
+        HtsHelpers.burnFromTreasury(t, 400e8);
+        assertEq(MockHederaTokenService(PRECOMPILE).totalSupply(t), 600e8);
+    }
+
+    function test_transfer_unfrozenAccountsSucceed() public {
+        address t = _deployToken(false, false, address(this));
+        HtsHelpers.mintToTreasury(t, 1_000e8);
+        // Treasury → ALICE: ALICE auto-associates on first receive (mock behaviour).
+        HtsHelpers.transfer(t, address(this), ALICE, 100e8);
+        assertEq(MockHederaTokenService(PRECOMPILE).balanceOf(t, ALICE), 100e8);
+    }
+
+    function test_transferFromTreasury_freezeDefaultBlocksReceiver() public {
+        // freezeDefault=true means ALICE is auto-frozen on first receive → mock returns ACCOUNT_FROZEN_FOR_TOKEN.
+        address t = _deployToken(true, true, address(this));
+        HtsHelpers.mintToTreasury(t, 1_000e8);
+        // Direct precompile call to inspect the response code without library revert wrapping.
+        (bool ok, bytes memory data) = address(0x167).call(
+            abi.encodeWithSignature("transferToken(address,address,address,int64)", t, address(this), ALICE, int64(100e8))
+        );
+        assertTrue(ok); // call itself succeeds; we inspect the returned code
+        int32 code = abi.decode(data, (int32));
+        assertEq(code, HederaResponseCodes.ACCOUNT_FROZEN_FOR_TOKEN);
+    }
+
+    function test_transferThroughFreeze_succeedsWithFreezeDefault() public {
+        // Use the unfreeze→transfer→freeze atomic helper to deliver YT-style tokens.
+        address t = _deployToken(true, true, address(this));
+        HtsHelpers.mintToTreasury(t, 1_000e8);
+
+        // First we need ALICE associated; transferThroughFreeze assumes she's already
+        // associated. Trigger association via a no-op pre-call: explicitly associate.
+        HtsHelpers.associate(ALICE, t);
+        // After associate, ALICE has freezeDefault → frozen.
+        assertTrue(MockHederaTokenService(PRECOMPILE).isFrozen(t, ALICE));
+
+        HtsHelpers.transferThroughFreeze(t, address(this), ALICE, 100e8);
+        // Post-transfer, ALICE is back to frozen.
+        assertEq(MockHederaTokenService(PRECOMPILE).balanceOf(t, ALICE), 100e8);
+        assertTrue(MockHederaTokenService(PRECOMPILE).isFrozen(t, ALICE));
+    }
+
+    function test_wipe_bypassesFreeze() public {
+        address t = _deployToken(true, true, address(this));
+        HtsHelpers.mintToTreasury(t, 1_000e8);
+        HtsHelpers.associate(ALICE, t);
+        HtsHelpers.transferThroughFreeze(t, address(this), ALICE, 200e8);
+
+        assertTrue(MockHederaTokenService(PRECOMPILE).isFrozen(t, ALICE));
+        // Wipe ALICE's balance without unfreezing — works because of wipeKey.
+        HtsHelpers.wipeFrom(t, ALICE, 200e8);
+        assertEq(MockHederaTokenService(PRECOMPILE).balanceOf(t, ALICE), 0);
+        assertEq(MockHederaTokenService(PRECOMPILE).totalSupply(t), 800e8);
+    }
+
+    function test_amountOverflow_revertsBeforePrecompile() public {
+        address t = _deployToken(false, false, address(this));
+        uint256 over = uint256(uint64(type(int64).max)) + 1;
+        HtsLibCaller caller = new HtsLibCaller();
+        // Caller doesn't have supplyKey, but the overflow check fires first inside _toInt64.
+        vm.expectRevert(abi.encodeWithSelector(HtsHelpers.AmountOverflowsInt64.selector, over));
+        caller.mint(t, over);
+    }
+
+    function test_mintWithoutSupplyKey_returnsWrongKeyCode() public {
+        // Deploy with this contract as supply key.
+        address t = _deployToken(false, false, address(this));
+        // Direct precompile call as ALICE (no rights) — returns the response code.
+        vm.prank(ALICE);
+        (bool ok, bytes memory data) = address(0x167).call(
+            abi.encodeWithSignature("mintToken(address,int64,bytes[])", t, int64(100e8), new bytes[](0))
+        );
+        assertTrue(ok);
+        (int32 code, , ) = abi.decode(data, (int32, int64, int64[]));
+        assertEq(code, HederaResponseCodes.TOKEN_HAS_NO_SUPPLY_KEY);
+    }
+
+    function test_freezeWithoutKey_returnsCode() public {
+        // Deploy with NO freeze key (use mask=16 supply only).
+        IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](1);
+        keys[0] = HtsHelpers.makeKey(16, address(this));
+        IHederaTokenService.HederaToken memory spec = IHederaTokenService.HederaToken({
+            name: "X", symbol: "X", treasury: address(this), memo: "",
+            tokenSupplyType: false, maxSupply: 0, freezeDefault: false,
+            tokenKeys: keys,
+            expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: address(this), autoRenewPeriod: 7776000})
+        });
+        address t = HtsHelpers.createFungible(spec, 8);
+
+        (bool ok, bytes memory data) = address(0x167).call(
+            abi.encodeWithSignature("freezeToken(address,address)", t, ALICE)
+        );
+        assertTrue(ok);
+        int32 code = abi.decode(data, (int32));
+        assertEq(code, HederaResponseCodes.TOKEN_HAS_NO_FREEZE_KEY);
+    }
+}
