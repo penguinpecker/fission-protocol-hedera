@@ -27,11 +27,9 @@ contract SY_HBARX_ForkTest is Test {
     address constant HBARX = 0x00000000000000000000000000000000000cbA44;
 
     /// @notice Stader staking contract that publishes `getExchangeRate()`.
-    /// @dev    Address is captured here for transparency; if Stader migrates we update
-    ///         this constant in the same PR that updates production deployment scripts.
-    ///         [UNCONFIRMED until verified on hashscan.io] — fork test will revert if
-    ///         the address does not match an EVM contract exposing the expected ABI.
-    address constant STADER_ORACLE = 0x00000000000000000000000000000000000fb084;
+    /// @dev    Verified 2026-05-02: Hedera `0.0.1412503` / EVM `0x...158d97`. Selector
+    ///         `getExchangeRate() = 0xe6aa216c`, returns uint256 scaled to 8 decimals.
+    address constant STADER_ORACLE = 0x0000000000000000000000000000000000158d97;
 
     address admin = address(0xAD);
     address keeper = address(0xCAFE);
@@ -54,10 +52,11 @@ contract SY_HBARX_ForkTest is Test {
     }
 
     /// @notice Read the live Stader rate; sanity-check it sits in a plausible band.
+    /// @dev    Live verification 2026-05-02 returned 1400809589212691785 ≈ 1.4e18.
+    ///         Stader's `getExchangeRate()` is scaled to 18 decimals (1e18 = 1.0 HBAR
+    ///         per HBARX), NOT 8 as an earlier memo erroneously claimed.
     function test_fork_staderRateInRange() public view {
         uint256 rate = IStaderHBARX(STADER_ORACLE).getExchangeRate();
-        // HBARX has been live since 2022 with ~5% APR. By May 2026 the rate should be
-        // somewhere in [1.10, 1.40] HBAR-per-HBARX. Allow generous slack.
         assertGt(rate, 1.05e18, "Stader rate suspiciously low");
         assertLt(rate, 2.00e18, "Stader rate suspiciously high");
     }

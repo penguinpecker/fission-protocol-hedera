@@ -9,13 +9,25 @@
 
 These MUST be satisfied before running any broadcast tx.
 
-- [ ] All 188 tests passing on `main` (`forge test`).
-- [ ] Slither baseline clean (`.slither-baseline.md` — 0 high, 0 medium).
-- [ ] Coverage baseline met (`.coverage-baseline.md`).
+- [ ] All **269 tests** passing on `main` + 7 fork tests against live RPC (`forge test` + `forge test --match-path 'test/fork/**' --fork-url $HEDERA_MAINNET_RPC`).
+- [ ] **Two internal audit passes complete** (`audits/internal/SECURITY_REVIEW_2026-05-02.md` + `-pass2.md`); 0 open H/M findings; all Lows accepted/documented.
+- [ ] Slither + Aderyn re-baselined post-fixes; flags classified.
+- [ ] Branch coverage: FissionMarket 73%, FissionMarketRewards 70%, ActionRouter 82%, FissionFactory 60%. Below those thresholds → audit firm pre-review will reject.
 - [ ] **External audit** report committed under `audits/`. Until then this is
       tagged "experimental — operator risk".
 - [ ] Safe (multisig) deployed at `multisig.hedera.foundation` and recorded.
 - [ ] OZ TimelockController deployed and Safe is its admin.
+- [ ] **HIP-1217 verification:** every privileged role address (`FACTORY_ADMIN`,
+      `MARKET_ADMIN`, `SY_ADMIN`, `MARKET_TREASURY`, `KEEPER_ADDRESS`) is either
+      a contract or an EVM-aliased ECDSA account — **NOT a long-zero ECDSA alias**.
+      Since HIP-1217 (active 2026), HTS calls to long-zero ECDSA aliases revert.
+      Verify each address has either nonzero `code.length` (contract / Safe) or
+      shows a non-`0x000…XXX` form on HashScan.
+- [ ] **HIP-904 reliance:** all token-holding contracts (SY adapters, Markets,
+      Router) rely on Hedera's auto-association default. Contracts deployed in
+      2024+ get `maxAutomaticTokenAssociations = -1` automatically. If you ever
+      target a Hedera version where this default differs, add explicit
+      `IHRC.associate(token)` calls.
 - [ ] Keeper account funded with HBAR for gas (HBARX market only — V2 LP needs no keeper).
 - [ ] Deployer EOA funded with HBAR for the ~5 contract creates (~50 HBAR
       should be plenty).
@@ -25,6 +37,48 @@ These MUST be satisfied before running any broadcast tx.
       Override via `SAUCER_V2_TICK_LOWER` / `SAUCER_V2_TICK_UPPER` env vars.
       The choice is **immutable per-deployment** — picking a new range later
       means deploying a new SY.
+
+## Audit fixes baked into the deploy
+
+Every fix from `audits/internal/SECURITY_REVIEW_2026-05-02*.md` is shipping in
+this deploy. Operators should be aware of the runtime behavior changes:
+
+- **H-1 (SY rate floor at 1e18).** `FissionMarket.initialize` and
+  `FissionMarketRewards.initialize` revert with `SYRateBelowOne(syRate)` if the
+  SY's `exchangeRate()` returns < 1e18 at deploy time. `_updateGlobalIndex` also
+  floors at 1e18 mid-life. Implication: if SY_HBARX has had no keeper post yet
+  at initialize-time, the cold-start fallback returns exactly `PMath.ONE` (M-3),
+  passing the floor.
+- **H-2 (try/catch around `sy.claimRewards`).** A reverting SY no longer bricks
+  YT mint/transfer/burn in `FissionMarketRewards`. The Market emits
+  `HarvestSkipped(reason)` and continues. Implication: keep an eye on the event
+  in the indexer — recurring `HarvestSkipped` signals an underlying SY problem.
+- **H-3 (no-pull-on-empty).** `_harvestRewards` and the SY's `_harvest()`
+  early-return when `totalSupply() == 0`, preventing orphaned-reward forfeit.
+  Implication: don't expect rewards to accrue between SY-deploy and the first
+  user split — the V3 position holds them in `feeGrowthInside` until then.
+- **H-4 (auto-redeem-LP-PT-share at expiry).** `removeLiquidity` post-expiry
+  returns `ptOut == 0` and pays the LP only SY (PT redeemed at the frozen
+  `globalIndex` rate in FissionMarket, 1:1 in FissionMarketRewards). LP exits
+  no longer race PT redeemers for the SY backing.
+- **M-1 (fee-on-transfer guard).** `SYBase.deposit` snapshots pre-balance and
+  passes the actual delta to `_deposit`. Fee-on-transfer HTS tokens won't
+  inflate share price.
+- **M-2 (YT burn rejected in FissionMarketRewards).** `redeemAfterExpiry`
+  reverts with `YTBurnNotPermitted` if `ytIn != 0`. Frontend must NOT pass
+  ytIn when calling redeemAfterExpiry on a rewards-bearing market.
+- **M-3 (SY_HBARX cold-start).** `exchangeRate()` returns `PMath.ONE` before
+  the first keeper post (rather than reverting). Dependent contracts always
+  see a sane value.
+- **M-NEW-1 (harvest reentrancy).** `_harvestRewards` uses `sy.claimRewards`'s
+  return value (not balance-delta) so a future hook-bearing reward token can't
+  short the index update.
+- **L-6 (deposit slippage).** `SY_SaucerSwapV2LP.depositLiquidity` now takes
+  `(amount0Min, amount1Min)` symmetric to `redeemLiquidity`. Frontend must
+  set these for sandwich protection.
+- **L-8 (MIN_MARKET_DURATION).** Factory rejects markets with `expiry <
+  block.timestamp + 7 days`.
+- **L-11 (admin must be contract).** `setMarketAdmin` rejects EOAs.
 
 ## Address pinning
 
@@ -41,14 +95,19 @@ Fixed addresses live in `contracts/script/MainnetAddresses.sol`. Verified
 | SaucerSwap V2 NPM (NonFungiblePositionManager) | **TBD** | **set via `SAUCER_V2_NPM` env var**       |
 
 The **Stader contract's `getExchangeRate()` ABI is verified** (selector
-`0xe6aa216c`, returns uint256 scaled to 8 decimals). 30-day strict monotonicity
-confirmed via 721 hourly samples; ~5.79% APY. Preflight still ABI-pings to
-catch any contract upgrade between research and deploy.
+`0xe6aa216c`, returns uint256 scaled to **18 decimals**, not 8 — corrected
+via live fork test 2026-05-02; live value `1.40e18`). 30-day strict
+monotonicity confirmed via 721 hourly samples; ~5.79% APY. Preflight still
+ABI-pings to catch any contract upgrade between research and deploy.
 
-**The SaucerSwap V2 NPM address is not statically pinned** — pull the current
-canonical address from <https://docs.saucerswap.finance/developerx/contract-deployments>
-and pass via `SAUCER_V2_NPM` env var. Preflight calls `positions(uint256)` on it
-and verifies the V3 tuple shape comes back.
+The **SaucerSwap V2 NPM is now pinned**: Hedera `0.0.4053945` / EVM
+`0x00000000000000000000000000000000003DDbb9`. LP NFT collection HTS
+`0.0.4054027`. `SAUCER_V2_NPM` env var is optional (falls back to constant).
+
+The SaucerSwap V2 NPM is statically pinned in `MainnetAddresses.sol`. Live
+fork test (`test/fork/SY_SaucerSwapV2LP.fork.t.sol`) verifies the NPM exposes
+`positions(uint256)` with the expected V3 tuple and the WHBAR-USDC pool has
+bytecode. Run that fork test before broadcast as the final ABI sanity check.
 
 **v1 lineup decisions (see `memory/research_hedera_sy_underlyings.md`):**
 - Bonzo USDC: dropped (user direction).
@@ -73,10 +132,9 @@ export SY_ADMIN="0x..."              # Safe
 # Operational
 export KEEPER_ADDRESS="0x..."        # Hot key, gets KEEPER_ROLE on SY_HBARX only
 
-# SaucerSwap V2 wiring (mandatory)
-export SAUCER_V2_NPM="0x..."         # NonFungiblePositionManager (from saucerswap docs)
-# Optional V2 overrides
-# export SAUCER_V2_POOL="0x..."        # defaults to WHBAR-USDC 0.15% in MainnetAddresses
+# SaucerSwap V2 wiring (all optional — defaults pinned in MainnetAddresses.sol)
+# export SAUCER_V2_NPM="0x..."           # default 0x...3DDbb9 (Hedera 0.0.4053945)
+# export SAUCER_V2_POOL="0x..."          # default WHBAR-USDC 0.15%
 # export SAUCER_V2_TICK_LOWER="-887220"  # full-range default; tighten for higher APR
 # export SAUCER_V2_TICK_UPPER="887220"
 ```
