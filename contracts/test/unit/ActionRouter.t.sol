@@ -270,4 +270,80 @@ contract ActionRouterTest is Test {
         router.depositAndSplit(market, address(underlying), 1_000e18, 0, address(0), 0);
         vm.stopPrank();
     }
+
+    // ───── revert-path coverage (per-function guard tests) ─────
+
+    function test_swapExactSyForPt_revertsZeroAmounts() public {
+        vm.prank(alice);
+        vm.expectRevert(ActionRouter.ZeroAmount.selector);
+        router.swapExactSyForPt(market, 0, 1, alice, 0);
+    }
+
+    function test_swapExactSyForPt_revertsZeroReceiver() public {
+        vm.prank(alice);
+        vm.expectRevert(ActionRouter.ZeroAddress.selector);
+        router.swapExactSyForPt(market, 1, 1, address(0), 0);
+    }
+
+    function test_swapExactPtForSy_revertsZeroAmount() public {
+        vm.prank(alice);
+        vm.expectRevert(ActionRouter.ZeroAmount.selector);
+        router.swapExactPtForSy(market, 0, 0, alice, 0);
+    }
+
+    function test_swapExactPtForSy_revertsZeroReceiver() public {
+        vm.prank(alice);
+        vm.expectRevert(ActionRouter.ZeroAddress.selector);
+        router.swapExactPtForSy(market, 1, 0, address(0), 0);
+    }
+
+    function test_buyYT_revertsZeroBudget() public {
+        vm.prank(alice);
+        vm.expectRevert(ActionRouter.ZeroAmount.selector);
+        router.buyYT(market, 0, 0, alice, 0);
+    }
+
+    function test_buyYT_revertsZeroReceiver() public {
+        vm.prank(alice);
+        vm.expectRevert(ActionRouter.ZeroAddress.selector);
+        router.buyYT(market, 1, 0, address(0), 0);
+    }
+
+    function test_addLiquidity_revertsZero() public {
+        vm.prank(alice);
+        vm.expectRevert(ActionRouter.ZeroAmount.selector);
+        router.addLiquidityProportional(market, 0, 1, 0, alice, 0);
+    }
+
+    function test_addLiquidity_revertsZeroReceiver() public {
+        vm.prank(alice);
+        vm.expectRevert(ActionRouter.ZeroAddress.selector);
+        router.addLiquidityProportional(market, 1, 1, 0, address(0), 0);
+    }
+
+    function test_removeLiquidityProp_revertsZero() public {
+        vm.prank(alice);
+        vm.expectRevert(ActionRouter.ZeroAmount.selector);
+        router.removeLiquidityProportional(market, 0, 0, 0, alice, 0);
+    }
+
+    function test_removeLiquidityProp_revertsZeroReceiver() public {
+        vm.prank(alice);
+        vm.expectRevert(ActionRouter.ZeroAddress.selector);
+        router.removeLiquidityProportional(market, 1, 0, 0, address(0), 0);
+    }
+
+    function test_redeemAfterExpiry_revertsZeroAmounts() public {
+        vm.warp(market.expiry() + 1);
+        vm.prank(alice);
+        vm.expectRevert(ActionRouter.ZeroAmount.selector);
+        router.redeemAfterExpiryAndUnwrap(market, 0, 0, address(underlying), 0, alice, 0);
+    }
+
+    function test_redeemAfterExpiry_revertsZeroReceiver() public {
+        vm.warp(market.expiry() + 1);
+        vm.prank(alice);
+        vm.expectRevert(ActionRouter.ZeroAddress.selector);
+        router.redeemAfterExpiryAndUnwrap(market, 1, 0, address(underlying), 0, address(0), 0);
+    }
 }

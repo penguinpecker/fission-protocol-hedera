@@ -9,6 +9,7 @@ import {PrincipalToken} from "../../src/core/PrincipalToken.sol";
 import {YieldToken} from "../../src/core/YieldToken.sol";
 import {SY_SaucerSwapV2LP} from "../../src/sy/SY_SaucerSwapV2LP.sol";
 import {MarketMath} from "../../src/libraries/MarketMath.sol";
+import {IFissionMarket} from "../../src/interfaces/IFissionMarket.sol";
 import {MockUniswapV3PositionManager} from "../mocks/MockUniswapV3PositionManager.sol";
 import {MockERC20} from "../mocks/MockSY.sol";
 
@@ -126,6 +127,264 @@ contract FissionMarketRewardsTest is Test {
         BadRewardSY bad = new BadRewardSY();
         vm.expectRevert(FissionMarketRewards.WrongRewardTokenCount.selector);
         new FissionMarketRewards(address(bad), expiry, SCALAR_ROOT, admin, treasury, 18, "x", "x");
+    }
+
+    function test_constructor_revertsOnZeroSy() public {
+        vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
+        new FissionMarketRewards(address(0), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x");
+    }
+
+    function test_constructor_revertsOnZeroAdmin() public {
+        // OZ AccessControlDefaultAdminRules rejects zero admin BEFORE our ZeroAddress check fires.
+        vm.expectRevert(abi.encodeWithSignature("AccessControlInvalidDefaultAdmin(address)", address(0)));
+        new FissionMarketRewards(address(sy), block.timestamp + 90 days, SCALAR_ROOT, address(0), treasury, 18, "x", "x");
+    }
+
+    function test_constructor_revertsOnZeroTreasury() public {
+        vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
+        new FissionMarketRewards(address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, address(0), 18, "x", "x");
+    }
+
+    function test_constructor_revertsOnPastExpiry() public {
+        vm.warp(1000);
+        vm.expectRevert(FissionMarketRewards.MarketExpired.selector);
+        new FissionMarketRewards(address(sy), 999, SCALAR_ROOT, admin, treasury, 18, "x", "x");
+    }
+
+    function test_constructor_revertsOnZeroScalarRoot() public {
+        vm.expectRevert();
+        new FissionMarketRewards(address(sy), block.timestamp + 90 days, 0, admin, treasury, 18, "x", "x");
+    }
+
+    // ───────────────────── revert paths ─────────────────────
+
+    function test_setTokens_revertsIfNotFactory() public {
+        FissionMarketRewards mkt = new FissionMarketRewards(
+            address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
+        );
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.OnlyFactory.selector);
+        mkt.setTokens(address(0x1), address(0x2));
+    }
+
+    function test_setTokens_revertsIfAlreadySet() public {
+        // setUp already called setTokens
+        vm.expectRevert(FissionMarketRewards.TokensAlreadySet.selector);
+        market.setTokens(address(0x1), address(0x2));
+    }
+
+    function test_setTokens_revertsOnZeroPt() public {
+        FissionMarketRewards mkt = new FissionMarketRewards(
+            address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
+        );
+        vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
+        mkt.setTokens(address(0), address(0x2));
+    }
+
+    function test_initialize_revertsIfTokensNotSet() public {
+        FissionMarketRewards mkt = new FissionMarketRewards(
+            address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
+        );
+        vm.prank(admin);
+        vm.expectRevert(FissionMarketRewards.TokensNotSet.selector);
+        mkt.initialize(1, 1, INITIAL_ANCHOR, LN_FEE_ROOT, RESERVE_PCT);
+    }
+
+    function test_initialize_revertsIfAlreadyInitialized() public {
+        // setUp already initialized
+        vm.prank(admin);
+        vm.expectRevert(FissionMarketRewards.AlreadyInitialized.selector);
+        market.initialize(1, 1, INITIAL_ANCHOR, LN_FEE_ROOT, RESERVE_PCT);
+    }
+
+    function test_initialize_revertsOnZeroAmounts() public {
+        FissionMarketRewards mkt = new FissionMarketRewards(
+            address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
+        );
+        // Need PT/YT set up first
+        PrincipalToken p = new PrincipalToken("p", "p", address(sy), mkt.expiry(), address(mkt), 18);
+        YieldToken y = new YieldToken("y", "y", address(sy), mkt.expiry(), address(mkt), 18);
+        mkt.setTokens(address(p), address(y));
+
+        vm.prank(admin);
+        vm.expectRevert(FissionMarketRewards.ZeroAmount.selector);
+        mkt.initialize(0, 1, INITIAL_ANCHOR, LN_FEE_ROOT, RESERVE_PCT);
+    }
+
+    function test_initialize_revertsOnReserveFeeTooHigh() public {
+        FissionMarketRewards mkt = new FissionMarketRewards(
+            address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
+        );
+        PrincipalToken p = new PrincipalToken("p", "p", address(sy), mkt.expiry(), address(mkt), 18);
+        YieldToken y = new YieldToken("y", "y", address(sy), mkt.expiry(), address(mkt), 18);
+        mkt.setTokens(address(p), address(y));
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(FissionMarketRewards.ReserveFeeTooHigh.selector, 101, 100));
+        mkt.initialize(1e18, 1e18, INITIAL_ANCHOR, LN_FEE_ROOT, 101);
+    }
+
+    function test_split_revertsOnZeroAmount() public {
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.ZeroAmount.selector);
+        market.split(0);
+    }
+
+    function test_split_revertsPostExpiry() public {
+        vm.warp(expiry + 1);
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.MarketExpired.selector);
+        market.split(1e6);
+    }
+
+    function test_merge_revertsOnZeroAmount() public {
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.ZeroAmount.selector);
+        market.merge(0);
+    }
+
+    function test_merge_revertsPostExpiry() public {
+        vm.warp(expiry + 1);
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.MarketExpired.selector);
+        market.merge(1e6);
+    }
+
+    function test_swapPtForSy_revertsOnZeroAmount() public {
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.ZeroAmount.selector);
+        market.swapExactPtForSy(0, 0, alice);
+    }
+
+    function test_swapPtForSy_revertsOnZeroReceiver() public {
+        vm.prank(alice);
+        market.split(1_000e6);
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
+        market.swapExactPtForSy(100e6, 0, address(0));
+    }
+
+    function test_swapPtForSy_revertsBelowMinOut() public {
+        vm.prank(alice);
+        market.split(1_000e6);
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.InsufficientOutput.selector);
+        market.swapExactPtForSy(10e6, type(uint256).max, alice);
+    }
+
+    function test_swapSyForPt_revertsOnZeroAmount() public {
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.ZeroAmount.selector);
+        market.swapExactSyForPt(0, 0, alice);
+    }
+
+    function test_swapSyForPt_revertsAboveMaxIn() public {
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.InsufficientOutput.selector);
+        market.swapExactSyForPt(1, 100e6, alice);
+    }
+
+    function test_addLiquidity_revertsOnZero() public {
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.ZeroAmount.selector);
+        market.addLiquidity(0, 1, 0, alice);
+    }
+
+    function test_addLiquidity_revertsZeroReceiver() public {
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
+        market.addLiquidity(1, 1, 0, address(0));
+    }
+
+    function test_removeLiquidity_revertsOnZero() public {
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.ZeroAmount.selector);
+        market.removeLiquidity(0, 0, 0, alice);
+    }
+
+    function test_removeLiquidity_revertsZeroReceiver() public {
+        vm.prank(admin);
+        vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
+        market.removeLiquidity(1, 0, 0, address(0));
+    }
+
+    function test_redeemAfterExpiry_revertsPreExpiry() public {
+        vm.prank(alice);
+        market.split(1e6);
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.MarketNotExpired.selector);
+        market.redeemAfterExpiry(1, 0, alice);
+    }
+
+    function test_redeemAfterExpiry_revertsZeroReceiver() public {
+        vm.warp(expiry + 1);
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
+        market.redeemAfterExpiry(1, 0, address(0));
+    }
+
+    function test_redeemAfterExpiry_revertsOnZeroPt() public {
+        vm.warp(expiry + 1);
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.ZeroAmount.selector);
+        market.redeemAfterExpiry(0, 0, alice);
+    }
+
+    function test_claimRewards_revertsZeroReceiver() public {
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
+        market.claimRewards(address(0));
+    }
+
+    function test_setTreasury_revertsZero() public {
+        vm.prank(admin);
+        vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
+        market.setTreasury(address(0));
+    }
+
+    function test_setTreasury_unauthorizedReverts() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        market.setTreasury(address(0xBABE));
+    }
+
+    function test_setFee_revertsAboveMax() public {
+        uint256 over = market.MAX_RESERVE_FEE_PERCENT() + 1;
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(FissionMarketRewards.ReserveFeeTooHigh.selector, over, 100));
+        market.setFee(LN_FEE_ROOT, over);
+    }
+
+    function test_setFee_unauthorizedReverts() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        market.setFee(LN_FEE_ROOT, 80);
+    }
+
+    function test_pause_unauthorizedReverts() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        market.pause();
+    }
+
+    function test_unpause_unauthorizedReverts() public {
+        vm.prank(admin);
+        market.pause();
+        // PAUSER_ROLE can pause but only DEFAULT_ADMIN_ROLE can unpause; alice has neither.
+        vm.prank(alice);
+        vm.expectRevert();
+        market.unpause();
+    }
+
+    function test_onYTBalanceChange_onlyYTReverts() public {
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.OnlyYT.selector);
+        market.onYTBalanceChange(alice, bob);
+    }
+
+    function test_supportsInterface_returnsTrueForIFissionMarket() public view {
+        // Smoke test for ERC-165
+        assertTrue(market.supportsInterface(type(IFissionMarket).interfaceId));
     }
 
     // ───────────────────── basic flows ─────────────────────

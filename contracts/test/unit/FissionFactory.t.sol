@@ -202,7 +202,89 @@ contract FissionFactoryTest is Test {
         assertEq(page[1], factory.markets(2));
     }
 
-    // ───── helpers ─────
+        // ───── revert-path coverage ─────
+
+    function test_constructor_revertsZeroAdmin() public {
+        // OZ checks AccessControlInvalidDefaultAdmin first
+        vm.expectRevert(abi.encodeWithSignature("AccessControlInvalidDefaultAdmin(address)", address(0)));
+        new FissionFactory(address(0), marketAdmin, treasury);
+    }
+
+    function test_constructor_revertsZeroMarketAdmin() public {
+        vm.expectRevert(FissionFactory.ZeroAddress.selector);
+        new FissionFactory(admin, address(0), treasury);
+    }
+
+    function test_constructor_revertsZeroTreasury() public {
+        vm.expectRevert(FissionFactory.ZeroAddress.selector);
+        new FissionFactory(admin, marketAdmin, address(0));
+    }
+
+    function test_setMarketAdmin_revertsEOA() public {
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(FissionFactory.AdminMustBeContract.selector, address(0xEEE)));
+        factory.setMarketAdmin(address(0xEEE));
+    }
+
+    function test_setMarketAdmin_succeedsWithContract() public {
+        vm.prank(admin);
+        factory.setMarketAdmin(address(factory));
+        assertEq(factory.marketAdmin(), address(factory));
+    }
+
+    function test_setMarketAdmin_unauthorizedReverts() public {
+        vm.prank(attacker);
+        vm.expectRevert();
+        factory.setMarketAdmin(address(factory));
+    }
+
+    function test_setMarketTreasury_unauthorizedReverts() public {
+        vm.prank(attacker);
+        vm.expectRevert();
+        factory.setMarketTreasury(address(0xBABE));
+    }
+
+    function test_confirmSY_unauthorizedReverts() public {
+        vm.prank(reviewer);
+        factory.proposeSY(address(sy));
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(attacker);
+        vm.expectRevert();
+        factory.confirmSY(address(sy));
+    }
+
+    function test_createMarket_revertsTooShortDuration() public {
+        _whitelistSy();
+        vm.prank(admin);
+        vm.expectRevert();
+        factory.createMarket(address(sy), block.timestamp + 1, 75e18, "x");
+    }
+
+    function test_createMarket_unauthorizedReverts() public {
+        _whitelistSy();
+        vm.prank(attacker);
+        vm.expectRevert();
+        factory.createMarket(address(sy), block.timestamp + 90 days, 75e18, "x");
+    }
+
+    function test_createRewardsMarket_revertsIfNotWhitelisted() public {
+        vm.prank(admin);
+        vm.expectRevert(FissionFactory.SYNotWhitelisted.selector);
+        factory.createRewardsMarket(address(sy), block.timestamp + 90 days, 75e18, "x");
+    }
+
+    function test_createRewardsMarket_revertsTooShortDuration() public {
+        _whitelistSy();
+        // MockSY returns assetInfo's third arg as decimals — but MockSY's getRewardTokens
+        // returns []; the createRewardsMarket call would fail at FissionMarketRewards
+        // constructor (WrongRewardTokenCount). We're testing the duration check, so it
+        // reverts BEFORE that on the duration guard.
+        vm.prank(admin);
+        vm.expectRevert();
+        factory.createRewardsMarket(address(sy), block.timestamp + 1, 75e18, "x");
+    }
+
+// ───── helpers ─────
 
     function _whitelistSy() internal {
         vm.prank(reviewer);
