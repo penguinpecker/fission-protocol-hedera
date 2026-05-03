@@ -9,44 +9,53 @@
 
 These MUST be satisfied before running any broadcast tx.
 
-- [ ] All 128 tests passing on `main` (`forge test`).
+- [ ] All 188 tests passing on `main` (`forge test`).
 - [ ] Slither baseline clean (`.slither-baseline.md` — 0 high, 0 medium).
 - [ ] Coverage baseline met (`.coverage-baseline.md`).
 - [ ] **External audit** report committed under `audits/`. Until then this is
       tagged "experimental — operator risk".
 - [ ] Safe (multisig) deployed at `multisig.hedera.foundation` and recorded.
 - [ ] OZ TimelockController deployed and Safe is its admin.
-- [ ] Keeper account funded with HBAR for gas.
-- [ ] Deployer EOA funded with HBAR for the ~6 contract creates (~50 HBAR
+- [ ] Keeper account funded with HBAR for gas (HBARX market only — V2 LP needs no keeper).
+- [ ] Deployer EOA funded with HBAR for the ~5 contract creates (~50 HBAR
       should be plenty).
+- [ ] **Tick range chosen for the SaucerSwap V2 LP SY.** Defaults to full range
+      (`-887220..887220`, ~1.84% APR, never out-of-range). Tighter ranges earn
+      more but go to zero yield when price exits — there is no rebalance.
+      Override via `SAUCER_V2_TICK_LOWER` / `SAUCER_V2_TICK_UPPER` env vars.
+      The choice is **immutable per-deployment** — picking a new range later
+      means deploying a new SY.
 
 ## Address pinning
 
 Fixed addresses live in `contracts/script/MainnetAddresses.sol`. Verified
-2026-05-02 via Mirror Node + Bonzo docs:
+2026-05-02 via Mirror Node + GeckoTerminal:
 
-| Token / contract           | Hedera ID    | EVM address                                    |
-|----------------------------|--------------|------------------------------------------------|
-| HBARX                      | 0.0.834116   | `0x00000000000000000000000000000000000cba44`   |
-| Stader staking (supply key)| 0.0.1412503  | `0x0000000000000000000000000000000000158d97`   |
-| USDC                       | 0.0.456858   | `0x000000000000000000000000000000000006f89a`   |
-| Bonzo LendingPool          | 0.0.7308459  | `0x236897c518996163e7b313ad21d1c9fcc7ba1afc`   |
-| Bonzo bUSDC                | 0.0.7308496  | `0xb7687538c7f4cad022d5e97cc778d0b46457c5db`   |
-| SaucerSwap V1 HBAR-USDC LP | **TBD**      | **set via `SAUCER_V1_LP` env var**             |
+| Token / contract                     | Hedera ID    | EVM address                                    |
+|--------------------------------------|--------------|------------------------------------------------|
+| HBARX                                | 0.0.834116   | `0x00000000000000000000000000000000000cba44`   |
+| Stader staking (supply key)          | 0.0.1412503  | `0x0000000000000000000000000000000000158d97`   |
+| USDC                                 | 0.0.456858   | `0x000000000000000000000000000000000006f89a`   |
+| WHBAR (wrapped, ERC-20 facade)       | 0.0.1456986  | `0x0000000000000000000000000000000000163b5a`   |
+| SaucerSwap V2 WHBAR-USDC 0.15% pool  |              | `0xc5b707348da504e9be1bd4e21525459830e7b11d`   |
+| SaucerSwap V2 NPM (NonFungiblePositionManager) | **TBD** | **set via `SAUCER_V2_NPM` env var**       |
 
-The **Stader contract's `getExchangeRate()` ABI is unverified** —
-`script/PreFlight.s.sol` ABI-pings it before broadcast and fails closed if the
-selector doesn't return a sensible 1e18 rate. If preflight fails on Stader,
-options are:
-1. Find the correct function selector via HashScan + update `IStaderHBARX`.
-2. Switch to a keeper that fetches from Stader's REST API; remove the on-chain
-   circuit breaker in `SY_HBARX` for that branch.
+The **Stader contract's `getExchangeRate()` ABI is verified** (selector
+`0xe6aa216c`, returns uint256 scaled to 8 decimals). 30-day strict monotonicity
+confirmed via 721 hourly samples; ~5.79% APY. Preflight still ABI-pings to
+catch any contract upgrade between research and deploy.
 
-**The SaucerSwap V1 LP token address is not pinned** — confirm via SaucerSwap's
-subgraph or the V1 frontend, then pass via `SAUCER_V1_LP` env var. Preflight
-checks the ABI shape (Uniswap V2 pair with non-zero reserves and totalSupply).
-Do NOT use `0xc5b707348da504e9be1bd4e21525459830e7b11d` — that's the V2 pool
-(Uni V3 NFT fork), incompatible with `SY_SaucerSwapV1LP`.
+**The SaucerSwap V2 NPM address is not statically pinned** — pull the current
+canonical address from <https://docs.saucerswap.finance/developerx/contract-deployments>
+and pass via `SAUCER_V2_NPM` env var. Preflight calls `positions(uint256)` on it
+and verifies the V3 tuple shape comes back.
+
+**v1 lineup decisions (see `memory/research_hedera_sy_underlyings.md`):**
+- Bonzo USDC: dropped (user direction).
+- SaucerSwap V1 LP: dropped (low TVL/volume on the WHBAR-USDC pair).
+- ICHI vault: rejected (rebalance step changes break SY monotonicity).
+- SaucerSwap V2 NFT: integrated via Pendle-Kyber pattern (one fixed-range NFT,
+  `exchangeRate=1`, fees as reward tokens through `FissionMarketRewards`).
 
 ## Step 1 — env
 
@@ -62,10 +71,14 @@ export MARKET_TREASURY="0x..."       # Safe
 export SY_ADMIN="0x..."              # Safe
 
 # Operational
-export KEEPER_ADDRESS="0x..."        # Hot key, gets KEEPER_ROLE only
+export KEEPER_ADDRESS="0x..."        # Hot key, gets KEEPER_ROLE on SY_HBARX only
 
-# Optional adapter wiring
-export SAUCER_V1_LP="0x..."          # Set if deploying the SaucerSwap adapter
+# SaucerSwap V2 wiring (mandatory)
+export SAUCER_V2_NPM="0x..."         # NonFungiblePositionManager (from saucerswap docs)
+# Optional V2 overrides
+# export SAUCER_V2_POOL="0x..."        # defaults to WHBAR-USDC 0.15% in MainnetAddresses
+# export SAUCER_V2_TICK_LOWER="-887220"  # full-range default; tighten for higher APR
+# export SAUCER_V2_TICK_UPPER="887220"
 ```
 
 The `MainnetDeploy` script **refuses to deploy** if any privileged role address
@@ -116,8 +129,14 @@ factory.createMarket(syAddress, expiry, scalarRoot, suffix)
 ```
 
 Recommended initial markets:
-- HBARX market: scalarRoot = 50e18 (slow-moving rate, gentle curve), maturity = +90 days.
-- Bonzo USDC market: scalarRoot = 80e18 (medium volatility), maturity = +90 days.
+- **HBARX market** — `factory.createMarket(sy_hbarx, expiry, 50e18, "HBARX-90D")`.
+  Rate-growth pattern (FissionMarket). scalarRoot 50e18 = slow-moving curve fits
+  the ~5.79% APY HBARX rate. Maturity = +90 days.
+- **SaucerSwap V2 LP market** — `factory.createRewardsMarket(sy_saucer_v2_lp, expiry, 75e18, "SS-V2-90D")`.
+  Reward-token pattern (FissionMarketRewards). scalarRoot 75e18 = medium curve.
+  Maturity = +90 days.
+  **Use `createRewardsMarket`, NOT `createMarket`** — sending a reward-bearing
+  SY through `createMarket` produces a market whose YT yield path never fires.
 
 Then seed liquidity:
 
@@ -127,7 +146,8 @@ market.initialize(syIn, ptIn, initialAnchor, lnFeeRateRoot, reserveFeePercent)
 
 # Recommended initial values:
 #   syIn / ptIn:        equal — splits a "neutral" position
-#   initialAnchor:      1.05e18 (5% implied yield curve start)
+#   initialAnchor:      1.05e18 (5% implied yield curve start) for HBARX
+#                       1.02e18 (2% implied yield) for V2 LP (full-range ~1.84% APR)
 #   lnFeeRateRoot:      0.0003e18 (~0.03% trade fee at curve center)
 #   reserveFeePercent:  80 (Pendle default)
 ```
@@ -145,12 +165,16 @@ forge verify-contract <addr> <Contract> \
 
 ## Step 6 — keeper
 
+The keeper only runs for SY_HBARX (postRate of TWAP-bounded Stader rate). The
+SaucerSwap V2 LP SY needs no keeper — fees flow through the public `harvest()`
+path, callable by any user (and triggered automatically via the Market's reward
+forwarding on every YT balance change).
+
 ```sh
 docker run -d --restart=always \
   -e KEEPER_PRIVATE_KEY=0x... \
   -e KEEPER_ADAPTER_HBARX_SY=$(jq -r .sy_hbarx deployments/295.json) \
   -e KEEPER_ADAPTER_HBARX_STADER=0x0000000000000000000000000000000000158d97 \
-  -e KEEPER_ADAPTER_SAUCER_SY=$(jq -r .sy_saucer_v1_lp deployments/295.json) \
   -e HEDERA_MAINNET_RPC=$HEDERA_MAINNET_RPC \
   -p 8080:8080 \
   fission-keeper
@@ -203,9 +227,9 @@ cast call $factory "hasRole(bytes32,address)(bool)" \
 If something goes wrong post-deploy but pre-funding:
 
 - Pause every SY: `sy.pause()` (PAUSER_ROLE) — blocks deposit/redeem.
-- Pause every market: not currently exposed (TODO Phase 9b — add per-market
-  pause to FissionMarket; today the only kill-switch is to revoke KEEPER_ROLE
-  so rates freeze).
+- Pause every market: `market.pause()` (PAUSER_ROLE) — blocks split/swap/
+  addLiquidity. Escape paths (merge / removeLiquidity / claimYield /
+  claimRewards / redeemAfterExpiry) remain callable so users are never trapped.
 
 If users have already deposited:
 

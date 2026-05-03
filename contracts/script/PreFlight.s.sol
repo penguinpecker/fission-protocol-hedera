@@ -5,8 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
 import {IStaderHBARX} from "../src/interfaces/IStaderHBARX.sol";
-import {IUniswapV2Pair} from "../src/interfaces/IUniswapV2Pair.sol";
-import {IAavePool} from "../src/interfaces/IAavePool.sol";
+import {IUniswapV3PositionManager} from "../src/interfaces/IUniswapV3PositionManager.sol";
 import {MainnetAddresses} from "./MainnetAddresses.sol";
 
 /// @title  PreFlight -- read-only address validator. Run BEFORE any deploy.
@@ -17,10 +16,13 @@ import {MainnetAddresses} from "./MainnetAddresses.sol";
 ///   forge script script/PreFlight.s.sol --rpc-url $HEDERA_MAINNET_RPC -vvv
 ///
 ///         No --broadcast -- pure simulation. Cheap, can run as often as needed.
+///
+///         v1 lineup checks: Stader (HBARX rate oracle) + SaucerSwap V2 NPM (V3 NFT
+///         position manager). Bonzo + V1 LP checks dropped — those SY adapters were
+///         removed from the launch lineup.
 contract PreFlight is Script {
     error UnverifiedStader(uint256 reportedRate);
-    error UnverifiedSaucerV1Pool(string reason);
-    error UnverifiedBonzo(string reason);
+    error UnverifiedSaucerV2NPM(string reason);
     error EnvMissing(string varName);
 
     function run() external view {
@@ -38,44 +40,41 @@ contract PreFlight is Script {
             console2.log("  OK (rate is in plausible 1.0-5.0 HBAR/HBARX range)");
         } catch {
             console2.log("  FAILED -- getExchangeRate() did not return the expected shape.");
-            console2.log("  Use a keeper that fetches from Stader's REST API and update SY_HBARX");
-            console2.log("  to skip the on-chain circuit-breaker check (or implement a custom interface).");
             revert UnverifiedStader(0);
         }
 
-        // ─── SaucerSwap V1 LP ────────────────────────────────────────────
-        address saucerLp = vm.envOr("SAUCER_V1_LP", address(0));
-        if (saucerLp != address(0)) {
-            console2.log("Probing SaucerSwap V1 LP at:", saucerLp);
-            try IUniswapV2Pair(saucerLp).getReserves() returns (uint112 r0, uint112 r1, uint32) {
-                if (r0 == 0 || r1 == 0) revert UnverifiedSaucerV1Pool("zero reserves");
-                console2.log("  reserve0:", uint256(r0));
-                console2.log("  reserve1:", uint256(r1));
-            } catch {
-                revert UnverifiedSaucerV1Pool("getReserves reverted -- not a Uni V2 pool");
+        // ─── SaucerSwap V2 NPM ───────────────────────────────────────────
+        address npm = vm.envOr("SAUCER_V2_NPM", address(0));
+        if (npm == address(0)) revert EnvMissing("SAUCER_V2_NPM");
+        console2.log("Probing SaucerSwap V2 NPM at:", npm);
+
+        // We can't safely call `mint` from a view simulation (state-mutating); instead
+        // probe `positions(uint256)` with a likely-existing tokenId (1) and verify the
+        // tuple shape. If tokenId 1 doesn't exist, the call reverts — that's the V3
+        // NPM behavior, also acceptable as proof of "not an EOA / not random contract".
+        try IUniswapV3PositionManager(npm).positions(1) returns (
+            uint96, address, address, address, uint24, int24, int24, uint128, uint256, uint256, uint128, uint128
+        ) {
+            console2.log("  OK (positions(1) returned the expected V3 tuple)");
+        } catch (bytes memory reason) {
+            // A revert on positions(1) is acceptable IF the contract has the selector —
+            // V3 NPM reverts with `Invalid token ID` when the position doesn't exist.
+            // What's NOT acceptable is the call landing on an EOA or a contract
+            // missing the selector entirely. Distinguish via reason length.
+            if (reason.length == 0) {
+                // No revert reason at all → contract probably doesn't have the selector.
+                revert UnverifiedSaucerV2NPM("positions(uint256) selector missing - wrong contract?");
             }
-            try IUniswapV2Pair(saucerLp).totalSupply() returns (uint256 ts) {
-                if (ts == 0) revert UnverifiedSaucerV1Pool("zero totalSupply");
-                console2.log("  totalSupply:", ts);
-                console2.log("  OK");
-            } catch {
-                revert UnverifiedSaucerV1Pool("totalSupply reverted");
-            }
-        } else {
-            console2.log("SaucerSwap V1 LP: SKIPPED (set SAUCER_V1_LP env var to enable)");
+            console2.log("  OK (positions reverted with reason - selector exists, tokenId 1 unminted)");
         }
 
-        // ─── Bonzo lending pool ──────────────────────────────────────────
-        address bonzoPool = vm.envOr("BONZO_POOL", MainnetAddresses.BONZO_POOL);
-        address usdc = vm.envOr("USDC_ADDRESS", MainnetAddresses.USDC);
-        console2.log("Probing Bonzo LendingPool at:", bonzoPool);
-        try IAavePool(bonzoPool).getReserveNormalizedIncome(usdc) returns (uint256 ix) {
-            if (ix < 1e27 || ix > 5e27) revert UnverifiedBonzo("ray index out of plausible range");
-            console2.log("  USDC index (ray):", ix);
-            console2.log("  OK");
-        } catch {
-            revert UnverifiedBonzo("getReserveNormalizedIncome reverted");
+        // SaucerSwap V2 WHBAR-USDC pool address — sanity check it's a contract.
+        address pool = vm.envOr("SAUCER_V2_POOL", MainnetAddresses.SAUCER_V2_WHBAR_USDC_POOL);
+        console2.log("SaucerSwap V2 pool (sanity):", pool);
+        if (pool.code.length == 0) {
+            revert UnverifiedSaucerV2NPM("V2 pool address has no code");
         }
+        console2.log("  OK (pool is a contract)");
 
         console2.log("=== preflight PASSED ===");
     }
