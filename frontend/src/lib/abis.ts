@@ -38,10 +38,17 @@ export const factoryAbi = [
   },
 ] as const;
 
+// Post-HTS-migration: PT, YT, and LP are HTS-native fungible tokens. Market is no
+// longer the LP token itself — `market.lp()` returns the HTS LP address. ERC-20
+// reads (name/symbol/decimals/balanceOf/totalSupply) on PT/YT/LP go through their
+// HTS facades — use `erc20Abi` against the address from `pt()` / `yt()` / `lp()`.
 export const marketAbi = [
   { type: "function", name: "sy", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "pt", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "yt", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "lp", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "ptAddr", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "ytAddr", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "expiry", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "scalarRoot", stateMutability: "view", inputs: [], outputs: [{ type: "int256" }] },
   { type: "function", name: "totalSy", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
@@ -55,13 +62,11 @@ export const marketAbi = [
   },
   {
     type: "function",
-    name: "totalSupply",
+    name: "assetDecimals",
     stateMutability: "view",
     inputs: [],
-    outputs: [{ type: "uint256" }],
+    outputs: [{ type: "uint8" }],
   },
-  { type: "function", name: "name", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
-  { type: "function", name: "symbol", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
   {
     type: "function",
     name: "globalIndex",

@@ -63,6 +63,65 @@ export const routerAbi = [
       { name: "syRefund", type: "uint256" },
     ],
   },
+  {
+    type: "function",
+    name: "addLiquidityProportional",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "syIn", type: "uint256" },
+      { name: "ptIn", type: "uint256" },
+      { name: "minLpOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "lpOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "removeLiquidityProportional",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "lpIn", type: "uint256" },
+      { name: "minSyOut", type: "uint256" },
+      { name: "minPtOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [
+      { name: "syOut", type: "uint256" },
+      { name: "ptOut", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "redeemAfterExpiryAndUnwrap",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "ptIn", type: "uint256" },
+      { name: "tokenOut", type: "address" },
+      { name: "minTokenOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "amountOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "unwrapSY",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "sy", type: "address" },
+      { name: "shares", type: "uint256" },
+      { name: "tokenOut", type: "address" },
+      { name: "minTokenOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "amountOut", type: "uint256" }],
+  },
 ] as const;
 
 export const erc20WriteAbi = [
