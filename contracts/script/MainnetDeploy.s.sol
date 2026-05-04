@@ -89,6 +89,13 @@ contract MainnetDeploy is Script {
         console2.log("  tickLower      =", int256(tickLower));
         console2.log("  tickUpper      =", int256(tickUpper));
 
+        // HTS createFungibleToken precompile fee — paid in HBAR via msg.value at the
+        // SY constructor. Hedera mainnet charges roughly 1 HBAR per createFungible;
+        // we attach 2 HBAR per SY as a safety margin for future fee bumps. Excess
+        // stays inside the SY contract and can be reclaimed by admin via a sweep
+        // helper if ever added.
+        uint256 SY_CREATE_FEE = 2 ether; // 2 HBAR
+
         vm.startBroadcast();
 
         // ── Core ──
@@ -96,11 +103,11 @@ contract MainnetDeploy is Script {
         ActionRouter router = new ActionRouter();
 
         // ── SY_HBARX (rate-growth) ──
-        SY_HBARX syHbarx = new SY_HBARX(MainnetAddresses.HBARX, stader, syAdmin, 0);
+        SY_HBARX syHbarx = new SY_HBARX{value: SY_CREATE_FEE}(MainnetAddresses.HBARX, stader, syAdmin, 0);
         syHbarx.grantRole(syHbarx.KEEPER_ROLE(), keeper);
 
         // ── SY_SaucerSwapV2LP (Pendle-Kyber pattern, no keeper) ──
-        SY_SaucerSwapV2LP sySaucerV2 = new SY_SaucerSwapV2LP(
+        SY_SaucerSwapV2LP sySaucerV2 = new SY_SaucerSwapV2LP{value: SY_CREATE_FEE}(
             "Fission SY-SaucerV2LP",
             "fSY-SS-V2",
             t0,

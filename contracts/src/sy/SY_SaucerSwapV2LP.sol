@@ -134,6 +134,7 @@ contract SY_SaucerSwapV2LP is SYBase {
         address admin_,
         uint48 adminTransferDelay_
     )
+        payable
         SYBase(
             name_,
             symbol_,

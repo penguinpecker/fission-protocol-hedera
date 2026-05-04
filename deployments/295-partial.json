@@ -1,0 +1,29 @@
+{
+  "chainId": 295,
+  "network": "mainnet",
+  "deployedAt": "2026-05-04T18:30:00.000Z",
+  "status": "PARTIAL — only Router deployed; SY adapters + Factory blocked on Hedera msg.value-to-precompile-from-constructor issue (see notes)",
+  "router": {
+    "id": "0.0.10464662",
+    "evm": "0x00000000000000000000000000000000009fad96"
+  },
+  "deployer": {
+    "id": "0.0.10463169",
+    "evm": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90"
+  },
+  "factoryAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
+  "marketAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
+  "marketTreasury": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
+  "syAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
+  "blocker": {
+    "issue": "SYBase.constructor calls HtsHelpers.createFungible(spec, decimals) which forwards msg.value to the 0x167 precompile. On Hedera mainnet (both via Hashio Ethereum-tx adapter AND via @hashgraph/sdk ContractCreate+setInitialBalance), the child TOKENCREATION transaction spawned by the precompile call has max_fee=0 → INSUFFICIENT_TX_FEE → CONTRACT_REVERT_EXECUTED.",
+    "evidence": [
+      "tx 0.0.10463169-1777917105-555205975 (SDK, setInitialBalance=10 HBAR): TOKENCREATION max_fee=0",
+      "tx 0.0.995584-1777917303-019174269 (Hashio ETHEREUMTRANSACTION, tx.value=2 HBAR): TOKENCREATION max_fee=0"
+    ],
+    "rootCause": "msg.value forwarded to a precompile call doesn't fund the spawned child HAPI tx. This pattern works in the local revm tests (mock 0x167 doesn't spawn HAPI children) but breaks on real Hedera consensus.",
+    "fix": "Refactor SYBase to defer HTS token creation out of the constructor. Two paths: (a) two-step init — constructor stores name/symbol, separate `initShareToken()` payable function creates HTS post-deploy; (b) `SYDeployer` contract that holds HBAR balance and orchestrates SY + HTS token in one external call. Either requires test updates."
+  },
+  "spentSoFar": "~114 HBAR on failed deploys (Factory 2× attempts, SY 3× attempts)",
+  "remaining": "353 HBAR — sufficient once the SYBase refactor lands"
+}
