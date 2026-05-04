@@ -276,3 +276,62 @@ ChainSecurity is the strongest candidate for primary because they audited Pendle
 
 **Last commit:** `b3a8fc6` (Mainnet deploy: preflight + deploy script + runbook).
 **Last log update:** 2026-05-02.
+
+---
+
+## 10. Update — 2026-05-04
+
+Two days after the §9 snapshot. Test count more than doubled (128 → 284). Below is the delta only — earlier sections are still accurate where they're not overridden here.
+
+### 10.1 What landed
+
+| Commit | Summary |
+|---|---|
+| `7c04b8c` | Per-market pause + follow-ups from the internal review (closes the gap §7 flagged before mainnet). |
+| `5406438` | `SY_SaucerSwapV2LP` — Pendle-Kyber-style adapter for V3-fork concentrated LP. Uses SaucerSwap V2 NPM (the user revisited V1-vs-V2 and chose V2 with constant-rate + reward-token semantics). Replaces the Phase 6a V1 LP plan. |
+| `8e5f36c` | `FissionMarketRewards` — sister Market for reward-bearing SYs whose `exchangeRate ≡ 1e18`. Same AMM/split/merge surface as `FissionMarket`; yield delivered to YT holders as token0/token1 swap fees, not via SY rate. |
+| `0d615ed` | Drop dead Bonzo + V1 LP code; pin SaucerSwap V2 NPM mainnet address. |
+| `da85cb7` | Mainnet deploy rewired to the v1 lineup: **HBARX + SaucerSwap V2 LP** (Bonzo dropped per user). |
+| `a0eea5c` | SaucerSwap V2 stack: fix transfer-time harvest + redeem slippage; document expiry. |
+| `a7f75e5` | Internal security review: 3 High + 4 Medium fixes documented in `audits/internal/SECURITY_REVIEW_2026-05-02.md`. |
+| `0addef8` | Audit pass 2: close H-4 + M-1/M-4/M-5 + Lows + Hedera-aware findings. |
+| `e8b6ab8` | Branch-coverage uplift: +93 revert-path tests (largely closes §7's "branch coverage at 43%" item). |
+| `1c53474` | Fork tests against live Hedera mainnet + audit-aware runbook refresh. Stader `getExchangeRate()` confirmed 18-decimal (the §7-flagged unverified ABI). |
+| `85dca96` | Frontend: multi-wallet picker (HashPack / Blade / MetaMask / generic injected) + accurate pre-launch copy. |
+| `7731fd6`, `fbb4aef` | **HTS foundation, Phases 1 + 1.5.** Minimal precompile interface, typed `HtsHelpers` library wrapping the `0x167` precompile with safe int64 casts + reverts, `MockHederaTokenService` simulator at the precompile slot for unit tests, ERC-20 facade mock so `IERC20(htsToken)` calls work in Foundry. 12 smoke tests. **Foundation only — no production contract uses HTS yet.** |
+| `437cfa6` | `IFissionMarketCommon` interface + `ActionRouter` parameterized on it. The router now drives both `FissionMarket` and `FissionMarketRewards`. Address-typed `ptAddr()`/`ytAddr()` helpers added (interface couldn't reuse the typed `pt()`/`yt()` auto-getters without a return-type clash). Zero math touched. |
+| `994b72b` | E2e behavioral tests proving the router actually settles trades against `FissionMarketRewards`, not just satisfies the interface structurally. |
+
+### 10.2 Stader exchange-rate ABI — confirmed
+
+Fork test against Hedera mainnet read `1400809589212691785` from `getExchangeRate()` — clean **18-decimal scaling**, ~1.40 HBARX per HBAR. The 8-decimal note in earlier docs/research was wrong; thresholds and `IStaderHBARX.sol` ABI are now correct. Closes the §7 "Stader getExchangeRate() ABI verified" blocker.
+
+### 10.3 SaucerSwap V1 LP — out, V2 LP in
+
+§7 flagged the missing V1 HBAR-USDC LP address as a deploy blocker. Resolved by pivoting away from V1: `SY_SaucerSwapV2LP` (commit `5406438`) wraps a V3-fork concentrated-LP NFT instead. This required `FissionMarketRewards` because the V2 SY's `exchangeRate` is by-design constant `1e18` (Pendle-Kyber pattern) and yield flows through reward tokens. The V1 adapter, V1 mock, and Bonzo adapter are all deleted (`0d615ed`).
+
+### 10.4 HTS architecture decision — explicitly revisited
+
+§9's table says "PT/YT as plain Solidity ERC-20 (NOT HTS-native) — HashPack visibility is a future optimization." The user re-opened this on 2026-05-04: "wait this is definately wrong, initially we had planned to make most of the tokens HTS and not erc20." Two attempts at a full atomic HTS migration (PT + YT + LP + SY → HTS-native) rolled back this session — the SY/Market/Router test cascade exceeded the careful-no-math-mistakes budget per attempt. The HTS *foundation* (commits `7731fd6` + `fbb4aef`) is solid and committed; the migration of production contracts is parked for a dedicated session whose only goal is to shepherd that cascade green.
+
+The `IFissionMarketCommon` refactor (`437cfa6`) helps the future migration: the router no longer cares which market kind it talks to, so changing PT/YT/LP token mechanics inside the markets won't ripple into router-side code.
+
+### 10.5 Tests, static analysis, doc state
+
+- **Tests:** 284 passing (was 128). 16 test suites: 11 unit, 3 invariant, 1 symbolic, 1 fork (skipped without `HEDERA_RPC_URL`).
+- **Aderyn (re-run 2026-05-04):** 2 H + 8 L. Same set as the post-cleanup baseline; the only new line is L-8 *Unused Error* in `SY_HBARX.sol` (pre-existing, unrelated to recent work). `IFissionMarketCommon` introduced **zero** new findings.
+- **Worklog rebuild:** §1's "11 source files" is now ~16 — see the §10.1 commit list. The §9 tree is also stale (`SY_SaucerSwapV2LP.sol`, `FissionMarketRewards.sol`, HTS interfaces and helpers, `IFissionMarketCommon.sol`). Treat the §9 tree as the *2026-05-02* snapshot, not current state.
+
+### 10.6 What's still open
+
+| Item | Note |
+|---|---|
+| HTS migration of production contracts (PT/YT/LP, possibly SY shares) | Foundation ready. Needs a dedicated session for the test cascade. |
+| Mutation testing | Unstarted. Vertigo-rs / Gambit; target ≥85% kill rate on `MarketMath` + `FissionMarket`. |
+| Frontend wiring for `FissionMarketRewards` paths | The router refactor unblocks this — frontend can now call the same router methods for either market kind. |
+| Doc rebuild on `IMPLEMENTATION_PLAN.md` | Phase 5+ checkboxes still say `[ ]` even though everything ships. Updated alongside this entry — see `docs/IMPLEMENTATION_PLAN.md`. |
+| Per-market pause | Landed in `7c04b8c` — close. |
+| Branch coverage 90%+ | `e8b6ab8` added 93 revert-path tests, materially closing the gap §7 named. |
+
+**Last commit at this update:** `994b72b` (ActionRouter: e2e behavioral coverage on FissionMarketRewards).
+**Last log update:** 2026-05-04.
