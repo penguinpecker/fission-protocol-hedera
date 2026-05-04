@@ -156,35 +156,81 @@ Expected output: `=== preflight PASSED ===`. Anything else, do NOT proceed.
 
 ## Step 3 — broadcast deploy
 
+**Forge can't broadcast the full lineup on Hedera mainnet.** Two reasons:
+(a) Foundry's local revm pre-simulates every tx, and HTS precompile calls
+revert there because revm has no `0x167`. (b) FissionFactory bytecode plus
+Hashio's 15M-gas-per-tx cap means even ContractCreate via JSON-RPC fails on
+contracts above ~28KB runtime. Use the Hedera-SDK-based scripts instead:
+
 ```sh
-forge script script/MainnetDeploy.s.sol \
-    --rpc-url $HEDERA_MAINNET_RPC \
-    --private-key $HEDERA_OPERATOR_KEY \
-    --broadcast --slow -vvv
+# 1) Router + both SY adapters (each <12M gas → fits Hashio).
+node scripts/deploy-mainnet.mjs
+
+# 2) Init each SY's HTS share token. The HTS createFungibleToken
+#    precompile cannot be called from a constructor on consensus
+#    (the spawned child TOKENCREATION HAPI tx ends up with max_fee=0).
+#    Two-step pattern: deploy → external `initShareToken()` payable.
+#    Payable amount must be ≥ 15 HBAR (token create + 90d auto-renew
+#    prepay) AND must go through the SDK's ContractExecuteTransaction
+#    with setPayableAmount — Hashio's EthereumTransaction relay does
+#    NOT propagate value to the child HAPI's fee budget.
+node scripts/init-sy.mjs <sy-evm-address> 15
+
+# 3) FissionFactory + the two MarketDeployer helpers via the SDK
+#    (FileCreate + FileAppend + ContractCreate, since Factory's bytecode
+#    chunks past the SDK's default 20-chunk max).
+ROUTER_ADDRESS=0x... \
+SY_HBARX_ADDRESS=0x... \
+SY_SAUCER_V2_LP_ADDRESS=0x... \
+node scripts/deploy-mainnet-sdk.mjs
 ```
 
-Hashio rate-limits aggressively; `--slow` (one tx at a time) is mandatory.
-Production deploy should be done via Validation Cloud or Arkhia for
-predictable success.
+Why two MarketDeployer contracts: FissionFactory at 71KB runtime exceeded
+Hedera's 15M gas-per-tx ContractCreate cap (G_codedeposit alone = ~14.2M
+gas). Extracted `new FissionMarket(...)` and `new FissionMarketRewards(...)`
+into `StandardMarketDeployer` + `RewardsMarketDeployer`. Factory shrunk to
+8KB. Both Market constructors take an explicit `factory_` address; the
+deployer passes it through.
+
+Operator HBAR cost (mainnet, observed):
+- Router + each SY adapter: ~3 HBAR / contract via Hashio
+- Each `initShareToken`: 15 HBAR (paid through, plus ~1 HBAR network fee)
+- Factory + 2 deployers via SDK FileService: ~30 HBAR total
+- **Total: ~80-100 HBAR** with margin.
+
+Production should run from Validation Cloud or Arkhia (Hashio is dev-only).
+For the SDK scripts, swap `Client.forMainnet()` to a custom client pointing
+at the chosen consensus node set.
 
 Addresses land in `deployments/295.json`.
 
 ## Step 4 — SY whitelist (Safe-driven, 7-day window)
 
-For each SY adapter:
+For each SY adapter, propose to start the 7-day review window:
 
 ```sh
-# From the Safe, schedule via Timelock:
-factory.proposeSY(syAddress)
+node scripts/propose-sy.mjs <factory-evm> <sy-evm-1> [<sy-evm-2> ...]
 ```
 
 Wait 7 days (contract-enforced — `factory.confirmSY` reverts before window
-elapses). Then:
+elapses). Then confirm and create markets:
 
 ```sh
-factory.confirmSY(syAddress)
-factory.createMarket(syAddress, expiry, scalarRoot, suffix)
+node scripts/confirm-sy.mjs <factory-evm> <sy-evm-1> [<sy-evm-2> ...]
+
+FACTORY_ADDRESS=0x... \
+SY_HBARX_ADDRESS=0x... \
+SY_SAUCER_V2_LP_ADDRESS=0x... \
+STD_EXPIRY=<unix>  RWD_EXPIRY=<unix> \
+STD_SCALAR_ROOT=50e18 RWD_SCALAR_ROOT=75e18 \
+STD_SUFFIX="HBARX-90D" RWD_SUFFIX="SS-V2-90D" \
+node scripts/create-markets.mjs
 ```
+
+`createMarket` sends 20 HBAR `payableAmount` per market — covers the three
+HTS createFungibleToken calls inside `setTokens` (PT, YT, LP) plus their
+90-day auto-renew prepayments. Same SDK-vs-Hashio rule as `initShareToken`:
+must use `ContractExecuteTransaction.setPayableAmount`.
 
 Recommended initial markets:
 - **HBARX market** — `factory.createMarket(sy_hbarx, expiry, 50e18, "HBARX-90D")`.
@@ -212,14 +258,20 @@ market.initialize(syIn, ptIn, initialAnchor, lnFeeRateRoot, reserveFeePercent)
 
 ## Step 5 — verify on HashScan
 
-For each contract:
-
 ```sh
 forge verify-contract <addr> <Contract> \
     --chain-id 295 \
     --verifier sourcify \
     --verifier-url https://server-verify.hashscan.io
 ```
+
+**Caveat: `foundry.toml` currently sets `bytecode_hash = "none"` and
+`cbor_metadata = false`** to keep deployed bytecode reproducible without
+the metadata-changes-per-source-comment churn. Sourcify's *full match*
+requires the metadata hash embedded in the runtime code, so without it only
+*partial match* (bytecode-equality, no source/metadata pairing) is
+possible. To get a full Sourcify match, enable metadata in `foundry.toml`,
+recompile, and redeploy from those artifacts before running the verify.
 
 ## Step 6 — keeper
 
