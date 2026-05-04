@@ -2,23 +2,25 @@
 
 Build order. Each phase has explicit exit criteria — no moving on until they're met.
 
-## Status as of 2026-05-04
+## Status as of 2026-05-05
 
 | Phase | Status | Notes |
 |---|---|---|
 | 0 — Scaffolding | **done** | Foundry + Hardhat + Slither + Aderyn + Medusa configs all green. |
 | 1 — Math (`PMath`, `MarketMath`) | **done** | Halmos-compatible specs pass; Foundry fuzz at 5K runs surfaced no issues. |
-| 2 — `SYBase`, `SY_HBARX` | **done** | Stader `getExchangeRate()` confirmed 18-decimal via mainnet fork (`1c53474`). |
-| 3 — PT, YT, Factory | **done** | PT, YT, and LP are all HTS-native (Phases 2a/2b/2c shipped 2026-05-04). YT is frozen post-receive (AMM-only). PrincipalToken/YieldToken contracts deleted. Factory ships with the Penpie-defence 7-day SY review window. |
-| 4 — `FissionMarket` | **done** | 4 invariants × 128K calls, zero reverts. Conservation invariant holds. |
-| 5 — `ActionRouter` | **done** | Now parameterized on `IFissionMarketCommon` (`437cfa6`) so it drives both yield-bearing and rewards markets. NOT UUPS — chose immutable in v1; redeploy + reapprove if changed. HBAR↔WHBAR auto-wrap deferred (no live use case yet). |
-| 6 — Second SY adapter | **scope changed** | V1 LP and Bonzo *dropped*; replaced by `SY_SaucerSwapV2LP` (V3-fork concentrated LP, Pendle-Kyber pattern with constant-rate + reward tokens). Required new sister Market `FissionMarketRewards` (`8e5f36c`). |
-| 7 — Frontend | **partial** | Next.js 15 + wagmi + viem ships; multi-wallet picker (HashPack / Blade / MetaMask / injected) lands in `85dca96`. Mirror Node historical APY chart + tx-confirmation modal gated on a live deploy. |
-| 8 — Keeper | **done** | TypeScript + viem; bps-cap + interval gate; dockerized; health/metrics on `:8080`. 7-day testnet uptime gate is operational, not a code task. |
-| 9 — Audit pipeline | **in progress** | 2 internal review passes shipped (`a7f75e5`, `0addef8`). Mutation testing not yet started. External audit not yet engaged. |
+| 2 — `SYBase`, `SY_HBARX` | **done** | Stader `getExchangeRate()` confirmed 18-decimal via mainnet fork (`1c53474`). Two-step init (`initShareToken()`) shipped — HTS createFungibleToken can't be called from a constructor on Hedera consensus. |
+| 3 — PT, YT, Factory | **done** | PT/YT/LP are HTS-native. Factory shrunk from 71KB → 8KB by extracting `new FissionMarket(...)` and `new FissionMarketRewards(...)` into `StandardMarketDeployer` + `RewardsMarketDeployer` (Hedera's 15M-gas-per-tx ContractCreate cap can't deploy 71KB). |
+| 4 — `FissionMarket` | **done** | 4 invariants × 128K calls, zero reverts. Conservation invariant holds. Constructor now takes explicit `factory_` param (with `address(0)` → `msg.sender` fallback for tests). |
+| 5 — `ActionRouter` | **done** | Parameterized on `IFissionMarketCommon` (`437cfa6`) for both standard + rewards markets. Immutable in v1. |
+| 6 — Second SY adapter | **scope changed** | V1 LP + Bonzo dropped; `SY_SaucerSwapV2LP` (Pendle-Kyber) shipped, plus sister Market `FissionMarketRewards` (`8e5f36c`). |
+| 7 — Frontend | **wired** | Mainnet `.env.local` populated with all 4 contract addresses. Markets page returns 200; `marketCount === 0n` triggers the "Factory deployed — no markets yet" state correctly. Mirror Node APY chart + tx-confirmation modal gated on first market creation post-7d window. |
+| 8 — Keeper | **done** | KEEPER_ROLE granted on SY_HBARX to operator EOA on mainnet (2026-05-05). Keeper service still needs to be pointed at the mainnet RPC and started in production. |
+| 9 — Audit pipeline | **in progress** | 2 internal review passes shipped. Mutation testing + external audit not yet engaged. |
+| 10 — **Mainnet deploy** | **live (PARTIAL — markets pending 7d window)** | Router + 2 SY adapters + 2 deployers + Factory all on chain 295. proposeSY done for both SYs at 2026-05-04T20:13Z; **confirm window opens 2026-05-11T20:13Z**. See `deployments/295.json`. |
 
-**Tests:** 265 passing across 14 suites (was 128 at the original plan's writing; 280 pre-cleanup, dropped 15 for the deleted PT.t.sol / YT.t.sol when the contracts went away).
-**Open code-side gaps:** mutation testing, frontend rewards-market wiring, external audit. **HTS-native migration: shipped.** PT/YT/LP all live on the HTS precompile.
+**Tests:** 252 passing on `main` after the deployer-extraction refactor.
+**Mainnet addresses:** see `deployments/295.json`. Operator EOA `0x32e8…ab90` / `0.0.10463169` is solo admin pending Safe + Timelock provisioning.
+**Open gaps:** mutation testing, external audit, Safe + Timelock at multisig.hedera.foundation, Sourcify full-match (currently `bytecode_hash = "none"` so only partial-match material is produced).
 
 The unchecked `[ ]` boxes below are the *original 2026-04 build plan* — preserved for historical reference. Treat the table above as the authoritative status snapshot.
 
