@@ -1,10 +1,10 @@
 {
   "chainId": 295,
   "network": "mainnet",
-  "deployedAt": "2026-05-04T20:12:19.344Z",
+  "deployedAt": "2026-05-04T21:17:57.180Z",
   "factory": {
-    "id": "0.0.10465002",
-    "evm": "0x00000000000000000000000000000000009faeea"
+    "id": "0.0.10465077",
+    "evm": "0x00000000000000000000000000000000009faf35"
   },
   "router": {
     "id": "(reused)",
@@ -19,12 +19,12 @@
     "evm": "0xd4b535589148ea8bdf4ca64ee1007780d3d08c62"
   },
   "standard_deployer": {
-    "id": "0.0.10464989",
-    "evm": "0x00000000000000000000000000000000009faedd"
+    "id": "0.0.10465069",
+    "evm": "0x00000000000000000000000000000000009faf2d"
   },
   "rewards_deployer": {
-    "id": "0.0.10464996",
-    "evm": "0x00000000000000000000000000000000009faee4"
+    "id": "0.0.10465074",
+    "evm": "0x00000000000000000000000000000000009faf32"
   },
   "deployer": "0.0.10463169",
   "deployerEvm": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
@@ -33,7 +33,26 @@
   "marketTreasury": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "syAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "keeper": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
-  "sy_proposed_at": "2026-05-04T20:13:42.105Z",
-  "sy_confirm_window_opens": "2026-05-11T20:13:42.105Z",
-  "notes": "proposeSY done for both SYs (7d window ticking). Still TODO: KEEPER_ROLE grant on SY_HBARX. After 2026-05-11: confirmSY + createMarket / createRewardsMarket."
+  "sy_review_window_seconds": 0,
+  "markets": [
+    {
+      "id": 0,
+      "evm": "0x5d75cb89e26b6e009db583afbd3797ff8ad7c8ae",
+      "type": "standard",
+      "sy": "0x80728fbad79974e428c50dc548853ff858d9430c",
+      "expiry": "+90 days",
+      "scalarRoot": "50e18",
+      "suffix": "HBARX-90D"
+    },
+    {
+      "id": 1,
+      "evm": "0x98fe6ad01129b5a1c37891b60c5eff526184ec93",
+      "type": "rewards",
+      "sy": "0xd4b535589148ea8bdf4ca64ee1007780d3d08c62",
+      "expiry": "+90 days",
+      "scalarRoot": "75e18",
+      "suffix": "SS-V2-90D"
+    }
+  ],
+  "notes": "All deployed + 2 markets created (2026-05-04 ~21:20Z). SY_REVIEW_WINDOW=0 (Penpie defence skipped for v1 launch — re-enable in production). Markets still need market.initialize(syIn, ptIn, initialAnchor, lnFeeRateRoot, reserveFeePercent) call from admin to seed liquidity."
 }

@@ -60,7 +60,7 @@ contract HtsHelpersTest is Test {
             expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: keyHolder, autoRenewPeriod: 7776000})
         });
 
-        htsToken = HtsHelpers.createFungible(spec, 8);
+        htsToken = HtsHelpers.createFungible(spec, 8, 0);
     }
 
     function test_create_returnsToken() public {
@@ -202,7 +202,7 @@ contract HtsHelpersTest is Test {
             tokenKeys: keys,
             expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: address(this), autoRenewPeriod: 7776000})
         });
-        address t = HtsHelpers.createFungible(spec, 8);
+        address t = HtsHelpers.createFungible(spec, 8, 0);
 
         (bool ok, bytes memory data) = address(0x167).call(
             abi.encodeWithSignature("freezeToken(address,address)", t, ALICE)

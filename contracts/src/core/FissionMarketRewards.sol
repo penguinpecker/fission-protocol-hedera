@@ -199,12 +199,16 @@ contract FissionMarketRewards is
         if (msg.sender != factory) revert OnlyFactory();
         if (pt != address(0)) revert TokensAlreadySet();
 
+        // Split msg.value across the 3 HTS creates (see FissionMarket.setTokens
+        // for rationale: msg.value forwarded to each call would drain on the first).
+        uint256 perToken = msg.value / 3;
+
         // PT: transferable HTS, SUPPLY + WIPE keys.
-        pt = _createHtsToken(ptName, ptSymbol, false, true, _assetDecimals);
+        pt = _createHtsToken(ptName, ptSymbol, false, true, _assetDecimals, perToken);
         // YT: AMM-only HTS, SUPPLY + FREEZE + WIPE keys, freezeDefault=false.
-        yt = _createHtsToken(ytName, ytSymbol, true, true, _assetDecimals);
-        // LP: transferable HTS, 18 decimals.
-        lp = _createHtsToken(lpName, lpSymbol, false, true, 18);
+        yt = _createHtsToken(ytName, ytSymbol, true, true, _assetDecimals, perToken);
+        // LP: transferable HTS, 18 decimals. Last call gets any rounding remainder.
+        lp = _createHtsToken(lpName, lpSymbol, false, true, 18, msg.value - 2 * perToken);
 
         emit TokensInitialized(pt, yt);
     }
@@ -214,7 +218,8 @@ contract FissionMarketRewards is
         string memory symbol_,
         bool withFreezeKey,
         bool withWipeKey,
-        uint8 dec
+        uint8 dec,
+        uint256 value
     ) internal returns (address htsToken) {
         uint256 keyCount = 1 + (withFreezeKey ? 1 : 0) + (withWipeKey ? 1 : 0);
         IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](keyCount);
@@ -234,7 +239,7 @@ contract FissionMarketRewards is
             tokenKeys: keys,
             expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: address(this), autoRenewPeriod: 7776000})
         });
-        return HtsHelpers.createFungible(spec, int32(uint32(dec)));
+        return HtsHelpers.createFungible(spec, int32(uint32(dec)), value);
     }
 
     function ptAddr() external view returns (address) {

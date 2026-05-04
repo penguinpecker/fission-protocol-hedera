@@ -62,13 +62,13 @@ contract FissionFactoryTest is Test {
         // AccessControlDefaultAdminRules' constructor reverts before our ZeroAddress check
         // when admin is zero — that's still the desired behaviour (no zero admin).
         vm.expectRevert();
-        new FissionFactory(address(0), marketAdmin, treasury, sd, rd);
+        new FissionFactory(address(0), marketAdmin, treasury, sd, rd, 7 days);
 
         // For the marketAdmin / treasury zero cases, our explicit ZeroAddress fires.
         vm.expectRevert(FissionFactory.ZeroAddress.selector);
-        new FissionFactory(admin, address(0), treasury, sd, rd);
+        new FissionFactory(admin, address(0), treasury, sd, rd, 7 days);
         vm.expectRevert(FissionFactory.ZeroAddress.selector);
-        new FissionFactory(admin, marketAdmin, address(0), sd, rd);
+        new FissionFactory(admin, marketAdmin, address(0), sd, rd, 7 days);
     }
 
     // ───── SY review window ─────
@@ -213,21 +213,21 @@ contract FissionFactoryTest is Test {
         RewardsMarketDeployer rd = new RewardsMarketDeployer();
         // OZ checks AccessControlInvalidDefaultAdmin first
         vm.expectRevert(abi.encodeWithSignature("AccessControlInvalidDefaultAdmin(address)", address(0)));
-        new FissionFactory(address(0), marketAdmin, treasury, sd, rd);
+        new FissionFactory(address(0), marketAdmin, treasury, sd, rd, 7 days);
     }
 
     function test_constructor_revertsZeroMarketAdmin() public {
         StandardMarketDeployer sd = new StandardMarketDeployer();
         RewardsMarketDeployer rd = new RewardsMarketDeployer();
         vm.expectRevert(FissionFactory.ZeroAddress.selector);
-        new FissionFactory(admin, address(0), treasury, sd, rd);
+        new FissionFactory(admin, address(0), treasury, sd, rd, 7 days);
     }
 
     function test_constructor_revertsZeroTreasury() public {
         StandardMarketDeployer sd = new StandardMarketDeployer();
         RewardsMarketDeployer rd = new RewardsMarketDeployer();
         vm.expectRevert(FissionFactory.ZeroAddress.selector);
-        new FissionFactory(admin, marketAdmin, address(0), sd, rd);
+        new FissionFactory(admin, marketAdmin, address(0), sd, rd, 7 days);
     }
 
     /// @notice Post-HTS-migration: the EOA-must-be-contract guard was dropped.

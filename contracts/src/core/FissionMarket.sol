@@ -208,13 +208,20 @@ contract FissionMarket is
     {
         if (pt != address(0)) revert TokensAlreadySet();
 
+        // Split msg.value across the 3 HTS token creates. Sending msg.value to each
+        // would attempt to drain `address(this).balance` three times — only the first
+        // call would have funds; the other two would revert. Each token (with 90d
+        // auto-renew) costs ~15 HBAR mainnet, so caller should send ≥45 HBAR.
+        uint256 perToken = msg.value / 3;
+
         // PT: transferable HTS token. SUPPLY + WIPE keys.
-        pt = _createHtsToken(ptName, ptSymbol, false, true, _assetDecimals);
+        pt = _createHtsToken(ptName, ptSymbol, false, true, _assetDecimals, perToken);
         // YT: AMM-only HTS token. SUPPLY + FREEZE + WIPE, freezeDefault=FALSE
         // (HIP-904 auto-associate race — see `yt` storage docstring).
-        yt = _createHtsToken(ytName, ytSymbol, true, true, _assetDecimals);
+        yt = _createHtsToken(ytName, ytSymbol, true, true, _assetDecimals, perToken);
         // LP: transferable HTS token, 18 decimals (independent of SY decimals).
-        lp = _createHtsToken(lpName, lpSymbol, false, true, 18);
+        // Last call gets msg.value - 2*perToken so any rounding remainder is included.
+        lp = _createHtsToken(lpName, lpSymbol, false, true, 18, msg.value - 2 * perToken);
 
         emit TokensInitialized(pt, yt);
     }
@@ -226,7 +233,8 @@ contract FissionMarket is
         string memory symbol_,
         bool withFreezeKey,
         bool withWipeKey,
-        uint8 dec
+        uint8 dec,
+        uint256 value
     ) internal returns (address htsToken) {
         uint256 keyCount = 1 + (withFreezeKey ? 1 : 0) + (withWipeKey ? 1 : 0);
         IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](keyCount);
@@ -246,7 +254,7 @@ contract FissionMarket is
             tokenKeys: keys,
             expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: address(this), autoRenewPeriod: 7776000})
         });
-        return HtsHelpers.createFungible(spec, int32(uint32(dec)));
+        return HtsHelpers.createFungible(spec, int32(uint32(dec)), value);
     }
 
     /// @notice Address-typed sibling of `pt()` — used by ActionRouter via IFissionMarketCommon.

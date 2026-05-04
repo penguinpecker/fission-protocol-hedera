@@ -37,8 +37,12 @@ contract Deploy is Script {
         vm.startBroadcast();
         StandardMarketDeployer standardDeployer = new StandardMarketDeployer();
         RewardsMarketDeployer rewardsDeployer = new RewardsMarketDeployer();
-        FissionFactory factory =
-            new FissionFactory(factoryAdmin, marketAdmin, marketTreasury, standardDeployer, rewardsDeployer);
+        // Production deploys keep the 7-day SY review window; bootstrap-only
+        // deploys can pass 0 to ship markets immediately.
+        uint256 syReviewWindow = vm.envOr("SY_REVIEW_WINDOW", uint256(7 days));
+        FissionFactory factory = new FissionFactory(
+            factoryAdmin, marketAdmin, marketTreasury, standardDeployer, rewardsDeployer, syReviewWindow
+        );
         ActionRouter router = new ActionRouter();
         vm.stopBroadcast();
 

@@ -85,15 +85,16 @@ const factoryId = ContractId.fromString((await lookup.json()).contract_id);
 
 async function callFactory(fn, args, name, payableHbar) {
   console.log(`\n→ factory.${fn}(${args.join(", ")}) with ${payableHbar} HBAR…`);
+  // SDK addUint256/addInt256 want String|Number|BigNumber, not native bigint.
   const params = new ContractFunctionParameters()
     .addAddress(args[0])
-    .addUint256(args[1])
-    .addInt256(args[2])
+    .addUint256(args[1].toString())
+    .addInt256(args[2].toString())
     .addString(args[3]);
   const tx = new ContractExecuteTransaction()
     .setContractId(factoryId)
     .setGas(15_000_000)
-    .setMaxTransactionFee(new Hbar(50))
+    .setMaxTransactionFee(new Hbar(120))
     .setPayableAmount(new Hbar(payableHbar))
     .setFunction(fn, params);
   const submit = await tx.execute(client);
@@ -102,8 +103,10 @@ async function callFactory(fn, args, name, payableHbar) {
   if (receipt.status.toString() !== "SUCCESS") process.exit(1);
 }
 
-await callFactory("createMarket",        [syHbarx,  stdExpiry, stdScalar, stdSuffix], "createMarket",        20);
-await callFactory("createRewardsMarket", [sySaucer, rwdExpiry, rwdScalar, rwdSuffix], "createRewardsMarket", 20);
+// 60 HBAR per market: 3 HTS createFungibleToken calls (PT, YT, LP) at
+// ~15 HBAR each (token + 90d auto-renew prepay), plus margin.
+await callFactory("createMarket",        [syHbarx,  stdExpiry, stdScalar, stdSuffix], "createMarket",        60);
+await callFactory("createRewardsMarket", [sySaucer, rwdExpiry, rwdScalar, rwdSuffix], "createRewardsMarket", 60);
 
 console.log(`\n✓ Both markets deployed. Read factory.markets() to see addresses, or check MarketCreated logs.`);
 client.close();

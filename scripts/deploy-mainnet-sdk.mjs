@@ -303,6 +303,10 @@ if (existingFactory) {
   console.log(`\n→ Reusing existing FissionFactory @ ${existingFactory}`);
   factory = { contractId: "(reused)", evmAddress: existingFactory };
 } else {
+  // SY_REVIEW_WINDOW: production = 7 days (604800). Bootstrap-only = 0 to skip
+  // the Penpie-defence review delay for v1 launch. Override via env.
+  // String form: SDK's addUint256 wants String|Number|BigNumber, not native bigint.
+  const syReviewWindow = (process.env.SY_REVIEW_WINDOW ?? "0").toString();
   factory = await deploy({
     name: "FissionFactory",
     bytecode: factoryBytes,
@@ -311,7 +315,8 @@ if (existingFactory) {
       .addAddress(MARKET_ADMIN)
       .addAddress(MARKET_TREASURY)
       .addAddress(standardDeployer.evmAddress)
-      .addAddress(rewardsDeployer.evmAddress),
+      .addAddress(rewardsDeployer.evmAddress)
+      .addUint256(syReviewWindow),
     gas: 8_000_000,
   });
 }

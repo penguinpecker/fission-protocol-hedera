@@ -124,7 +124,8 @@ abstract contract SYBase is
                 autoRenewPeriod: 7776000
             })
         });
-        shareToken = HtsHelpers.createFungible(spec, int32(uint32(_assetDecimals)));
+        // Single token create: send the full msg.value to the precompile.
+        shareToken = HtsHelpers.createFungible(spec, int32(uint32(_assetDecimals)), msg.value);
     }
 
     /// @dev Shared guard for entry points that mint/burn shares.

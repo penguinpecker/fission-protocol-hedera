@@ -27,7 +27,10 @@ contract FissionFactory is AccessControlDefaultAdminRules {
     bytes32 public constant SY_REVIEWER_ROLE = keccak256("SY_REVIEWER_ROLE");
     bytes32 public constant MARKET_CREATOR_ROLE = keccak256("MARKET_CREATOR_ROLE");
 
-    uint256 public constant SY_REVIEW_WINDOW = 7 days;
+    /// @notice Public review window between proposeSY and confirmSY. Set at
+    ///         construction: production deploys pass 7 days for the Penpie defence;
+    ///         a bootstrap-only deploy can pass 0 to ship markets in one block.
+    uint256 public immutable SY_REVIEW_WINDOW;
 
     /// @notice Minimum market duration. L-8 audit fix: prevents accidental ultra-short
     ///         markets (e.g., `expiry = block.timestamp + 1`) where `initialize` and a
@@ -88,7 +91,8 @@ contract FissionFactory is AccessControlDefaultAdminRules {
         address marketAdmin_,
         address marketTreasury_,
         StandardMarketDeployer standardDeployer_,
-        RewardsMarketDeployer rewardsDeployer_
+        RewardsMarketDeployer rewardsDeployer_,
+        uint256 syReviewWindow_
     ) AccessControlDefaultAdminRules(0, admin_) {
         if (
             admin_ == address(0) || marketAdmin_ == address(0) || marketTreasury_ == address(0)
@@ -96,6 +100,7 @@ contract FissionFactory is AccessControlDefaultAdminRules {
         ) {
             revert ZeroAddress();
         }
+        SY_REVIEW_WINDOW = syReviewWindow_;
         marketAdmin = marketAdmin_;
         marketTreasury = marketTreasury_;
         standardDeployer = standardDeployer_;

@@ -101,8 +101,10 @@ contract MainnetDeploy is Script {
         // ── Core ──
         StandardMarketDeployer standardDeployer = new StandardMarketDeployer();
         RewardsMarketDeployer rewardsDeployer = new RewardsMarketDeployer();
-        FissionFactory factory =
-            new FissionFactory(factoryAdmin, marketAdmin, marketTreasury, standardDeployer, rewardsDeployer);
+        uint256 syReviewWindow = vm.envOr("SY_REVIEW_WINDOW", uint256(7 days));
+        FissionFactory factory = new FissionFactory(
+            factoryAdmin, marketAdmin, marketTreasury, standardDeployer, rewardsDeployer, syReviewWindow
+        );
         ActionRouter router = new ActionRouter();
 
         // ── SY_HBARX (rate-growth) ──

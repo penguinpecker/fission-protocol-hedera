@@ -12,6 +12,7 @@ library FactoryTestHelper {
     function deploy(address admin, address marketAdmin, address treasury) internal returns (FissionFactory) {
         StandardMarketDeployer s = new StandardMarketDeployer();
         RewardsMarketDeployer r = new RewardsMarketDeployer();
-        return new FissionFactory(admin, marketAdmin, treasury, s, r);
+        // 7 days for tests so the existing window-revert tests still validate the logic.
+        return new FissionFactory(admin, marketAdmin, treasury, s, r, 7 days);
     }
 }

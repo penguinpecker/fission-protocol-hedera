@@ -58,15 +58,20 @@ library HtsHelpers {
     }
 
     /// @notice Wrapper around createFungibleToken that reverts on failure and returns
-    ///         the new HTS token address. Caller MUST attach enough HBAR to msg.value
-    ///         to cover the network fee (currently ~1 HBAR mainnet).
+    ///         the new HTS token address. Caller passes the exact HBAR amount to attach
+    ///         to this call (covers the network fee + auto-renew prepay; ~15 HBAR
+    ///         mainnet for token + 90d). Critical: when a contract creates multiple
+    ///         tokens in one tx (e.g. Market.setTokens for PT/YT/LP), msg.value must
+    ///         be split between the calls — sending msg.value to each would drain the
+    ///         contract balance on the first call.
     function createFungible(
         IHederaTokenService.HederaToken memory spec,
-        int32 decimals
+        int32 decimals,
+        uint256 value
     ) internal returns (address htsToken) {
         // initialTotalSupply = 0 always — we mint on demand via mintToken.
         (int32 code, address tokenAddress) =
-            IHederaTokenService(PRECOMPILE).createFungibleToken{value: msg.value}(spec, 0, decimals);
+            IHederaTokenService(PRECOMPILE).createFungibleToken{value: value}(spec, 0, decimals);
         _check(code);
         return tokenAddress;
     }
