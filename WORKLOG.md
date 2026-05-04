@@ -335,3 +335,51 @@ The `IFissionMarketCommon` refactor (`437cfa6`) helps the future migration: the 
 
 **Last commit at this update:** `994b72b` (ActionRouter: e2e behavioral coverage on FissionMarketRewards).
 **Last log update:** 2026-05-04.
+
+---
+
+## 11. Update — 2026-05-04 (later same day) — HTS migration shipped
+
+The HTS migration §10.4 parked is now done. **Every protocol token is HTS-native:**
+
+| Phase | Commit | What |
+|---|---|---|
+| 2a | `4a75cff` | PT becomes HTS-native. Market is treasury + supplyKey + wipeKey. PrincipalToken contract obsoleted (kept as orphan source until 2c cleanup). |
+| 2b | `f2b03ee` | YT becomes HTS-native + frozen (AMM-only). Market freezes every recipient post-mint (`_ytFrozen` map; `freezeDefault=false` because HIP-904 auto-association inherits the freeze default and would deadlock the mint). New `splitTo(amount, ptReceiver, ytReceiver)` so the router can mint YT directly to the user (router can't custody-and-forward frozen YT). New `seedBurnYt` admin helper to dispose of bootstrap-time YT residual. `redeemAfterExpiryAndUnwrap` drops its `ytIn` arg. `IFissionMarket.onYTBalanceChange` callback path is gone — yield/reward settlement is now explicit at every market entry. |
+| 2c | `350e57d` | LP becomes HTS-native. FissionMarket / FissionMarketRewards no longer inherit ERC20. New `address public lp` + `lp()` interface getter; setTokens grows to 6 args (PT name+symbol, YT name+symbol, LP name+symbol). |
+| cleanup | `5b5fb4e` | Delete vestigial `PrincipalToken.sol`, `YieldToken.sol`, `IFissionMarket.sol`, and their unit-test files (PT.t.sol/YT.t.sol). |
+| docs | `3d84348` | Frontend ABIs refreshed (drop ERC-20 LP surface, add `lp()`/`assetDecimals()`/PT-YT-LP router helpers). Aderyn 2026-05-04 baseline appended to `.slither-baseline.md` — same 2 H as post-cleanup, two new lows are documented false positives (`pt`/`yt`/`lp` zero-check would never fire because `HtsHelpers.createFungible` reverts on non-SUCCESS; "unsafe-erc20" lints don't account for HTS facade reverting at network layer). |
+
+**The yield-leakage exploit is closed at the protocol level.** The freeze-on-recipient YT design ensures a user can't sneak YT to a fresh address whose `userIndex` is stale and over-claim accrued yield.
+
+### 11.1 Decimal scale realities
+
+HTS amounts are `int64` (max 9.22e18). For tests originally written against an 18-decimal mock SY, `500_000e18 = 5e23` overflows int64. The mock-SY-driven tests were rescaled to 6 decimals (matching real Hedera tokens like USDC/HBARX which are 6/8-decimal). Math constants like `INITIAL_ANCHOR=1.05e18`, `SCALAR_ROOT=75e18`, `LN_FEE_ROOT=0.0003e18` stay 1e18-scaled (they're rates, not balances).
+
+### 11.2 Trust model
+
+| Token | Keys held by Market | Why |
+|---|---|---|
+| PT | SUPPLY, WIPE | Mint at split (treasury → user), wipe at merge / redeemAfterExpiry (burn from any account, replaces pre-HTS `_burn(from, amt)` under `onlyMarket`). |
+| YT | SUPPLY, FREEZE, WIPE | Same as PT plus FREEZE. Market freezes every recipient post-receive so user-to-user transfers revert. Wipe lets `merge`/`redeemAfterExpiry` burn from frozen accounts (wipe bypasses freeze). |
+| LP | SUPPLY, WIPE | Same as PT (transferable; no freeze — pausing trading would strand secondary-market holders). |
+
+No ADMIN key, no PAUSE key on any token. The token configs are immutable post-create. Market is the auto-renew account on all three.
+
+### 11.3 Tests / static analysis
+
+- **Tests:** 265/265 passing (was 280 pre-cleanup; -15 from deleted PT.t.sol/YT.t.sol). All four invariants still hold under 128K random calls each.
+- **Aderyn 2026-05-04:** 2 H + 10 L. No new real findings. See `.slither-baseline.md` for the post-migration appendix.
+- **Frontend ABIs:** updated. `marketAbi` no longer has ERC-20 LP reads (they go through `IERC20(market.lp())` via `erc20Abi`). `routerAbi` covers all six router entry points.
+
+### 11.4 Open items
+
+| Item | Note |
+|---|---|
+| Mutation testing | Still unstarted. Vertigo-rs / Gambit; target ≥85% kill rate on `MarketMath` + `FissionMarket`. |
+| Frontend wiring for rewards-market paths | Router now drives both market kinds; UI work to surface the V2-LP market in the markets list + trade view. |
+| Hedera mainnet `createFungible` HBAR cost | Each market now creates THREE HTS tokens (was zero). Factory's `createMarket` is `payable` and forwards `msg.value`. Provisioning step: ensure deployer/Safe holds ~3 HBAR per market deployment. |
+| External audit | Same recommendation as §8. The HTS migration adds new surface (token key model, freeze pattern, HIP-904 interaction) — worth flagging to the auditor as a focus area. |
+
+**Last commit at this update:** `3d84348` (Frontend ABIs + slither baseline doc post-HTS migration).
+**Last log update:** 2026-05-04 (HTS migration completed in this session).

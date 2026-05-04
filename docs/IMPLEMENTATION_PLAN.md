@@ -9,7 +9,7 @@ Build order. Each phase has explicit exit criteria — no moving on until they'r
 | 0 — Scaffolding | **done** | Foundry + Hardhat + Slither + Aderyn + Medusa configs all green. |
 | 1 — Math (`PMath`, `MarketMath`) | **done** | Halmos-compatible specs pass; Foundry fuzz at 5K runs surfaced no issues. |
 | 2 — `SYBase`, `SY_HBARX` | **done** | Stader `getExchangeRate()` confirmed 18-decimal via mainnet fork (`1c53474`). |
-| 3 — PT, YT, Factory | **partial** | PT/YT ship as plain Solidity ERC-20 (NOT HTS yet — see WORKLOG §10.4). HTS foundation is in (`7731fd6` + `fbb4aef`); production migration parked. Factory ships with the Penpie-defence 7-day SY review window. |
+| 3 — PT, YT, Factory | **done** | PT, YT, and LP are all HTS-native (Phases 2a/2b/2c shipped 2026-05-04). YT is frozen post-receive (AMM-only). PrincipalToken/YieldToken contracts deleted. Factory ships with the Penpie-defence 7-day SY review window. |
 | 4 — `FissionMarket` | **done** | 4 invariants × 128K calls, zero reverts. Conservation invariant holds. |
 | 5 — `ActionRouter` | **done** | Now parameterized on `IFissionMarketCommon` (`437cfa6`) so it drives both yield-bearing and rewards markets. NOT UUPS — chose immutable in v1; redeploy + reapprove if changed. HBAR↔WHBAR auto-wrap deferred (no live use case yet). |
 | 6 — Second SY adapter | **scope changed** | V1 LP and Bonzo *dropped*; replaced by `SY_SaucerSwapV2LP` (V3-fork concentrated LP, Pendle-Kyber pattern with constant-rate + reward tokens). Required new sister Market `FissionMarketRewards` (`8e5f36c`). |
@@ -17,8 +17,8 @@ Build order. Each phase has explicit exit criteria — no moving on until they'r
 | 8 — Keeper | **done** | TypeScript + viem; bps-cap + interval gate; dockerized; health/metrics on `:8080`. 7-day testnet uptime gate is operational, not a code task. |
 | 9 — Audit pipeline | **in progress** | 2 internal review passes shipped (`a7f75e5`, `0addef8`). Mutation testing not yet started. External audit not yet engaged. |
 
-**Tests:** 284 passing across 16 suites (was 128 at the original plan's writing).
-**Open code-side gaps:** mutation testing, HTS-native production migration, frontend rewards-market wiring, per-market pause UX (per-market pause logic shipped in `7c04b8c`).
+**Tests:** 265 passing across 14 suites (was 128 at the original plan's writing; 280 pre-cleanup, dropped 15 for the deleted PT.t.sol / YT.t.sol when the contracts went away).
+**Open code-side gaps:** mutation testing, frontend rewards-market wiring, external audit. **HTS-native migration: shipped.** PT/YT/LP all live on the HTS precompile.
 
 The unchecked `[ ]` boxes below are the *original 2026-04 build plan* — preserved for historical reference. Treat the table above as the authoritative status snapshot.
 
