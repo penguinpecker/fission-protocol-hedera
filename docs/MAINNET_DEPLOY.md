@@ -265,13 +265,22 @@ forge verify-contract <addr> <Contract> \
     --verifier-url https://server-verify.hashscan.io
 ```
 
-**Caveat: `foundry.toml` currently sets `bytecode_hash = "none"` and
-`cbor_metadata = false`** to keep deployed bytecode reproducible without
-the metadata-changes-per-source-comment churn. Sourcify's *full match*
-requires the metadata hash embedded in the runtime code, so without it only
-*partial match* (bytecode-equality, no source/metadata pairing) is
-possible. To get a full Sourcify match, enable metadata in `foundry.toml`,
-recompile, and redeploy from those artifacts before running the verify.
+**Caveats:**
+1. `foundry.toml` currently sets `bytecode_hash = "none"` and
+   `cbor_metadata = false`. Sourcify's *full match* requires the metadata
+   hash embedded in the runtime code, so without it only *partial match*
+   (bytecode-equality, no source/metadata pairing) is possible.
+2. **Sourcify's recompile path doesn't reproduce Foundry's `via_ir = true`
+   output bit-for-bit** — even when local artifact bytecode is byte-identical
+   to the deployed runtime, Sourcify's recompiler returns
+   `"The deployed and recompiled bytecode don't match"`. See
+   `scripts/sourcify-verify.mjs` for the standard JSON input we send (works
+   end-to-end, but Sourcify still rejects the recompile result). The
+   pragmatic workarounds: (a) use HashScan's manual verification UI which
+   accepts uploaded artifacts as-is; (b) wait for the Sourcify
+   `viaIR`-stable release that pins solc's IR pipeline output; (c) drop
+   `via_ir` and recompile the entire stack with stack-optimizer pipeline
+   (will likely break the markets that need IR for `stack too deep`).
 
 ## Step 6 — keeper
 
