@@ -70,7 +70,7 @@ contract ActionRouter is ReentrancyGuardTransient {
 
         // Split with both PT and YT going directly to user. YT is HTS-frozen so the
         // router can't custody-and-forward; splitTo routes the mint past the freeze key.
-        IERC20(address(sy)).forceApprove(address(market), shares);
+        IERC20(sy.shareToken()).forceApprove(address(market), shares);
         market.splitTo(shares, receiver, receiver);
 
         ptOut = shares;
@@ -97,13 +97,13 @@ contract ActionRouter is ReentrancyGuardTransient {
         if (receiver == address(0)) revert ZeroAddress();
 
         IStandardizedYield sy = market.sy();
-        IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), syIn);
-        IERC20(address(sy)).forceApprove(address(market), syIn);
+        IERC20(sy.shareToken()).safeTransferFrom(msg.sender, address(this), syIn);
+        IERC20(sy.shareToken()).forceApprove(address(market), syIn);
 
         syUsed = market.swapExactSyForPt(syIn, ptOut, receiver);
         // syUsed <= syIn — refund the rest.
         if (syUsed < syIn) {
-            IERC20(address(sy)).safeTransfer(msg.sender, syIn - syUsed);
+            IERC20(sy.shareToken()).safeTransfer(msg.sender, syIn - syUsed);
         }
     }
 
@@ -157,12 +157,12 @@ contract ActionRouter is ReentrancyGuardTransient {
         IStandardizedYield sy = market.sy();
         IERC20 pt = IERC20(market.ptAddr());
 
-        IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), syBudget);
+        IERC20(sy.shareToken()).safeTransferFrom(msg.sender, address(this), syBudget);
 
         // Split SY → PT (to router for sale) + YT (directly to user). YT is HTS-frozen,
         // so the router can't custody-and-forward it; splitTo mints YT straight to the
         // end user via Market's freeze key.
-        IERC20(address(sy)).forceApprove(address(market), syBudget);
+        IERC20(sy.shareToken()).forceApprove(address(market), syBudget);
         market.splitTo(syBudget, address(this), receiver);
         ytOut = syBudget;
 
@@ -257,7 +257,7 @@ contract ActionRouter is ReentrancyGuardTransient {
             return 0;
         }
 
-        IERC20(address(sy)).forceApprove(address(sy), syOut);
+        IERC20(sy.shareToken()).forceApprove(address(sy), syOut);
         amountOut = sy.redeem(receiver, syOut, tokenOut, minTokenOut, false);
     }
 
@@ -281,8 +281,8 @@ contract ActionRouter is ReentrancyGuardTransient {
         if (shares == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
 
-        IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), shares);
-        IERC20(address(sy)).forceApprove(address(sy), shares);
+        IERC20(sy.shareToken()).safeTransferFrom(msg.sender, address(this), shares);
+        IERC20(sy.shareToken()).forceApprove(address(sy), shares);
         amountOut = sy.redeem(receiver, shares, tokenOut, minTokenOut, false);
     }
 }

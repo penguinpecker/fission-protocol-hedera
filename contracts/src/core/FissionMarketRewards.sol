@@ -323,7 +323,7 @@ contract FissionMarketRewards is
         uint256 syIndexU = sy.exchangeRate();
         if (syIndexU < PMath.ONE) revert SYRateBelowOne(syIndexU);
 
-        IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), syIn);
+        IERC20(sy.shareToken()).safeTransferFrom(msg.sender, address(this), syIn);
         IERC20(pt).safeTransferFrom(msg.sender, address(this), ptIn);
 
         uint256 lpRaw = PMath.sqrt(syIn * ptIn);
@@ -378,7 +378,7 @@ contract FissionMarketRewards is
         _harvestRewards();
         _settleRewards(ytReceiver);
 
-        IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), amount);
+        IERC20(sy.shareToken()).safeTransferFrom(msg.sender, address(this), amount);
         _mintPt(ptReceiver, amount);
         _mintYt(ytReceiver, amount);
 
@@ -397,7 +397,7 @@ contract FissionMarketRewards is
 
         _burnPt(msg.sender, amount);
         _burnYt(msg.sender, amount);
-        IERC20(address(sy)).safeTransfer(msg.sender, amount);
+        IERC20(sy.shareToken()).safeTransfer(msg.sender, amount);
 
         emit Merge(msg.sender, amount);
         return amount;
@@ -432,9 +432,9 @@ contract FissionMarketRewards is
         totalSy -= syOut;
         lastLnImpliedRate = newRate;
 
-        IERC20(address(sy)).safeTransfer(receiver, syOut);
+        IERC20(sy.shareToken()).safeTransfer(receiver, syOut);
         if (netSyToReserve > 0) {
-            IERC20(address(sy)).safeTransfer(treasury, uint256(netSyToReserve));
+            IERC20(sy.shareToken()).safeTransfer(treasury, uint256(netSyToReserve));
             totalSy -= uint256(netSyToReserve);
         }
 
@@ -462,7 +462,7 @@ contract FissionMarketRewards is
         syIn = uint256(-netSy);
         if (syIn > syInMax) revert InsufficientOutput();
 
-        IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), syIn);
+        IERC20(sy.shareToken()).safeTransferFrom(msg.sender, address(this), syIn);
         IERC20(pt).safeTransfer(receiver, ptOut);
 
         totalPt -= ptOut;
@@ -470,7 +470,7 @@ contract FissionMarketRewards is
         lastLnImpliedRate = newRate;
 
         if (netSyToReserve > 0) {
-            IERC20(address(sy)).safeTransfer(treasury, uint256(netSyToReserve));
+            IERC20(sy.shareToken()).safeTransfer(treasury, uint256(netSyToReserve));
             totalSy -= uint256(netSyToReserve);
         }
 
@@ -497,7 +497,7 @@ contract FissionMarketRewards is
         lpOut = uint256(lpToMint);
         if (lpOut < minLpOut) revert InsufficientOutput();
 
-        IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), uint256(syUsed));
+        IERC20(sy.shareToken()).safeTransferFrom(msg.sender, address(this), uint256(syUsed));
         IERC20(pt).safeTransferFrom(msg.sender, address(this), uint256(ptUsed));
 
         totalSy += uint256(syUsed);
@@ -539,7 +539,7 @@ contract FissionMarketRewards is
 
         if (syOut < minSyOut || ptOut < minPtOut) revert InsufficientOutput();
 
-        IERC20(address(sy)).safeTransfer(receiver, syOut);
+        IERC20(sy.shareToken()).safeTransfer(receiver, syOut);
         if (ptOut > 0) IERC20(pt).safeTransfer(receiver, ptOut);
 
         emit LiquidityRemoved(msg.sender, receiver, lpIn, syOut, ptOut);
@@ -693,7 +693,7 @@ contract FissionMarketRewards is
         _burnPt(msg.sender, ptIn);
         syOut = ptIn; // 1:1 — exchangeRate is constant 1
 
-        IERC20(address(sy)).safeTransfer(receiver, syOut);
+        IERC20(sy.shareToken()).safeTransfer(receiver, syOut);
         emit RedeemedAfterExpiry(msg.sender, receiver, ptIn, ytIn, syOut);
     }
 

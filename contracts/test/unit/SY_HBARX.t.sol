@@ -3,11 +3,13 @@ pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 import {SY_HBARX} from "../../src/sy/SY_HBARX.sol";
 import {IStandardizedYield} from "../../src/interfaces/IStandardizedYield.sol";
 import {IStaderHBARX} from "../../src/interfaces/IStaderHBARX.sol";
+import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
 
 // ───────────────────── mocks ─────────────────────
 
@@ -47,6 +49,7 @@ contract SY_HBARX_Test is Test {
     MockHBARX hbarx;
     MockStaderOracle stader;
     SY_HBARX sy;
+    address syShare;  // cached sy.shareToken() — vm.prank-safe
 
     address admin = address(0xAD);
     address keeper = address(0xCAFE);
@@ -56,11 +59,14 @@ contract SY_HBARX_Test is Test {
     uint256 constant ONE = 1e18;
 
     function setUp() public {
+        HtsTestHelper.installHtsPrecompile();
+
         hbarx = new MockHBARX();
         // initial Stader rate: 1.05 HBAR per HBARX (5% accrued)
         stader = new MockStaderOracle(1.05e18);
 
         sy = new SY_HBARX(address(hbarx), address(stader), admin, 0);
+        syShare = sy.shareToken();
 
         bytes32 keeperRole = sy.KEEPER_ROLE();
         vm.prank(admin);
@@ -221,7 +227,7 @@ contract SY_HBARX_Test is Test {
 
         // shares = amount * 1e18 / rate = 100e8 * 1e18 / 1.05e18 ≈ 95.238e8
         assertEq(shares, (uint256(amount) * 1e18) / 1.05e18);
-        assertEq(sy.balanceOf(alice), shares);
+        assertEq(IERC20(sy.shareToken()).balanceOf(alice), shares);
         assertEq(hbarx.balanceOf(address(sy)), amount);
     }
 

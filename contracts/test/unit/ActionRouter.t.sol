@@ -13,6 +13,7 @@ import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
 contract ActionRouterTest is Test {
     MockERC20 underlying;
     MockSY sy;
+    address syShare;  // cached sy.shareToken() — vm.prank-safe
     FissionMarket market;
     address pt;
     address yt;
@@ -27,6 +28,7 @@ contract ActionRouterTest is Test {
 
         underlying = new MockERC20("USD", "USD", 18);
         sy = new MockSY(address(underlying), 18);
+        syShare = sy.shareToken();
 
         market = new FissionMarket(
             address(sy), block.timestamp + 90 days, 75e18, admin, treasury, 18
@@ -37,13 +39,13 @@ contract ActionRouterTest is Test {
 
         // Seed pool. Test contract is the deployer.
         sy.mint(address(this), 1_000_000e6);
-        IERC20(address(sy)).approve(address(market), type(uint256).max);
+        IERC20(syShare).approve(address(market), type(uint256).max);
         market.split(500_000e6);
-        IERC20(address(sy)).transfer(admin, 200_000e6);
+        IERC20(syShare).transfer(admin, 200_000e6);
         IERC20(pt).transfer(admin, 200_000e6);
 
         vm.startPrank(admin);
-        IERC20(address(sy)).approve(address(market), 100_000e6);
+        IERC20(syShare).approve(address(market), 100_000e6);
         IERC20(pt).approve(address(market), 100_000e6);
         market.initialize(100_000e6, 100_000e6, 1.05e18, 0.0003e18, 80);
         vm.stopPrank();
@@ -90,7 +92,7 @@ contract ActionRouterTest is Test {
         assertEq(IERC20(pt).balanceOf(alice), 1_000e6);
         assertEq(IERC20(yt).balanceOf(alice), 1_000e6);
         // Router holds nothing.
-        assertEq(IERC20(address(sy)).balanceOf(address(router)), 0);
+        assertEq(IERC20(syShare).balanceOf(address(router)), 0);
         assertEq(IERC20(pt).balanceOf(address(router)), 0);
         assertEq(IERC20(yt).balanceOf(address(router)), 0);
     }
@@ -115,7 +117,7 @@ contract ActionRouterTest is Test {
         underlying.approve(address(sy), 5_000e6);
         sy.deposit(alice, address(underlying), 5_000e6, 0);
 
-        IERC20(address(sy)).approve(address(router), 5_000e6);
+        IERC20(syShare).approve(address(router), 5_000e6);
         uint256 ptBefore = IERC20(pt).balanceOf(alice);
         uint256 ptDesired = 1_000e6;
         uint256 syUsed = router.swapExactSyForPt(market, 5_000e6, ptDesired, alice, 0);
@@ -125,8 +127,8 @@ contract ActionRouterTest is Test {
         assertEq(ptAfter - ptBefore, ptDesired);
         assertGt(syUsed, 0);
         assertLt(syUsed, 5_000e6);
-        // Refund returned to alice (sy.balanceOf(router) == 0 invariant).
-        assertEq(IERC20(address(sy)).balanceOf(address(router)), 0);
+        // Refund returned to alice (IERC20(syShare).balanceOf(router) == 0 invariant).
+        assertEq(IERC20(syShare).balanceOf(address(router)), 0);
     }
 
     // ───── buyYT (long yield) ─────
@@ -137,10 +139,10 @@ contract ActionRouterTest is Test {
         sy.deposit(alice, address(underlying), 10_000e6, 0);
         // Alice has 10000 SY now.
 
-        IERC20(address(sy)).approve(address(router), 5_000e6);
-        uint256 syBefore = IERC20(address(sy)).balanceOf(alice);
+        IERC20(syShare).approve(address(router), 5_000e6);
+        uint256 syBefore = IERC20(syShare).balanceOf(alice);
         (uint256 ytOut, uint256 syRefund) = router.buyYT(market, 5_000e6, 0, alice, 0);
-        uint256 syAfter = IERC20(address(sy)).balanceOf(alice);
+        uint256 syAfter = IERC20(syShare).balanceOf(alice);
         vm.stopPrank();
 
         // ytOut = 5_000 (split is 1:1). syRefund = SY received from PT sale.
@@ -159,7 +161,7 @@ contract ActionRouterTest is Test {
         underlying.approve(address(sy), 5_000e6);
         sy.deposit(alice, address(underlying), 5_000e6, 0);
 
-        IERC20(address(sy)).approve(address(router), 5_000e6);
+        IERC20(syShare).approve(address(router), 5_000e6);
         // Demand impossible-high min SY out from PT sale; should revert in market.
         vm.expectRevert();
         router.buyYT(market, 5_000e6, 5_000e6, alice, 0);
@@ -177,7 +179,7 @@ contract ActionRouterTest is Test {
         underlying.approve(address(sy), 5_000e6);
         sy.deposit(alice, address(underlying), 5_000e6, 0);
 
-        IERC20(address(sy)).approve(address(router), 5_000e6);
+        IERC20(syShare).approve(address(router), 5_000e6);
         IERC20(pt).approve(address(router), 5_000e6);
         uint256 lpBefore = IERC20(market.lp()).balanceOf(alice);
         uint256 lpOut = router.addLiquidityProportional(market, 5_000e6, 5_000e6, 0, alice, 0);
@@ -206,7 +208,7 @@ contract ActionRouterTest is Test {
         assertGt(syOut, 0);
         assertGt(ptOut, 0);
         // Router holds nothing afterwards.
-        assertEq(IERC20(address(sy)).balanceOf(address(router)), 0);
+        assertEq(IERC20(syShare).balanceOf(address(router)), 0);
         assertEq(IERC20(pt).balanceOf(address(router)), 0);
     }
 
@@ -249,7 +251,7 @@ contract ActionRouterTest is Test {
         underlying.approve(address(sy), 500e6);
         sy.deposit(alice, address(underlying), 500e6, 0);
 
-        IERC20(address(sy)).approve(address(router), 500e6);
+        IERC20(syShare).approve(address(router), 500e6);
         uint256 underBefore = underlying.balanceOf(alice);
         uint256 amountOut = router.unwrapSY(sy, 500e6, address(underlying), 0, alice, 0);
         uint256 underAfter = underlying.balanceOf(alice);

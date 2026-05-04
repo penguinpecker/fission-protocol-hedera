@@ -8,6 +8,7 @@ import {SY_SaucerSwapV2LP} from "../../src/sy/SY_SaucerSwapV2LP.sol";
 import {MockUniswapV3PositionManager} from "../mocks/MockUniswapV3PositionManager.sol";
 import {MockERC20} from "../mocks/MockSY.sol";
 import {SY_SaucerSwapV2LPHandler} from "./SY_SaucerSwapV2LPHandler.sol";
+import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
 
 /// @title  SY_SaucerSwapV2LP invariant suite — accounting + conservation under randomised
 ///         deposit/redeem/transfer/harvest/claim/fee-inject sequences.
@@ -22,12 +23,15 @@ contract SY_SaucerSwapV2LPInvariantTest is Test {
     MockERC20 token1;
     MockUniswapV3PositionManager npm;
     SY_SaucerSwapV2LP sy;
+    address syShare;  // cached sy.shareToken() — vm.prank-safe
     SY_SaucerSwapV2LPHandler handler;
 
     address admin = address(0xAD);
     address[] actors;
 
     function setUp() public {
+        HtsTestHelper.installHtsPrecompile();
+
         // Sort tokens so token0 < token1.
         MockERC20 a = new MockERC20("USDC", "USDC", 6);
         MockERC20 b = new MockERC20("WHBAR", "WHBAR", 6);
@@ -41,6 +45,7 @@ contract SY_SaucerSwapV2LPInvariantTest is Test {
             1500, -60, 60,
             address(npm), admin, 0
         );
+        syShare = sy.shareToken();
 
         actors = new address[](4);
         actors[0] = address(0xA1);
@@ -73,11 +78,11 @@ contract SY_SaucerSwapV2LPInvariantTest is Test {
     function invariant_sharesEqualLiquidity() public view {
         uint256 tokenId = sy.positionTokenId();
         if (tokenId == 0) {
-            assertEq(sy.totalSupply(), 0, "shares minted before position");
+            assertEq(IERC20(syShare).totalSupply(), 0, "shares minted before position");
             return;
         }
         ( , , , , , , , uint128 liquidity, , , , ) = npm.positions(tokenId);
-        assertEq(sy.totalSupply(), uint256(liquidity), "totalSupply != position liquidity");
+        assertEq(IERC20(syShare).totalSupply(), uint256(liquidity), "totalSupply != position liquidity");
     }
 
     /// (2) Pendle-Kyber pattern: rate is constant.
@@ -121,8 +126,8 @@ contract SY_SaucerSwapV2LPInvariantTest is Test {
     /// (4) Sum of per-actor balances == totalSupply.
     function invariant_balancesSum() public view {
         uint256 sum;
-        for (uint256 i = 0; i < actors.length; i++) sum += sy.balanceOf(actors[i]);
-        assertEq(sum, sy.totalSupply(), "balance sum != totalSupply");
+        for (uint256 i = 0; i < actors.length; i++) sum += IERC20(syShare).balanceOf(actors[i]);
+        assertEq(sum, IERC20(syShare).totalSupply(), "balance sum != totalSupply");
     }
 
     function invariant_callSummary() public view {

@@ -9,6 +9,7 @@ import {SYBase} from "../../src/sy/SYBase.sol";
 import {IStandardizedYield} from "../../src/interfaces/IStandardizedYield.sol";
 import {MockUniswapV3PositionManager} from "../mocks/MockUniswapV3PositionManager.sol";
 import {MockERC20} from "../mocks/MockSY.sol";
+import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
 
 contract SY_SaucerSwapV2LPTest is Test {
     // Token0 sorts lower; both 6-dec for ease (matches USDC/USDT convention; in
@@ -18,6 +19,7 @@ contract SY_SaucerSwapV2LPTest is Test {
     MockERC20 token1; // "WHBAR" (using 6-dec mock for arithmetic clarity)
     MockUniswapV3PositionManager npm;
     SY_SaucerSwapV2LP sy;
+    address syShare;  // cached sy.shareToken() — vm.prank-safe
 
     address admin = address(0xAD);
     address alice = address(0xA11CE);
@@ -29,6 +31,8 @@ contract SY_SaucerSwapV2LPTest is Test {
     uint24 constant POOL_FEE = 1500;
 
     function setUp() public {
+        HtsTestHelper.installHtsPrecompile();
+
         // Sort by address so token0 < token1 ordering matches V3 convention.
         MockERC20 a = new MockERC20("USDC", "USDC", 6);
         MockERC20 b = new MockERC20("WHBAR", "WHBAR", 6);
@@ -53,6 +57,7 @@ contract SY_SaucerSwapV2LPTest is Test {
             admin,
             0
         );
+        syShare = sy.shareToken();
 
         // Stock everyone with both tokens.
         for (uint256 i = 0; i < 4; i++) {
@@ -138,8 +143,8 @@ contract SY_SaucerSwapV2LPTest is Test {
 
         // 1:1 mock: liquidity = (a0+a1) * 1e18 / 1e18 = 2_000e6
         assertEq(uint256(liq), 2_000e6);
-        assertEq(sy.balanceOf(alice), 2_000e6);
-        assertEq(sy.totalSupply(), 2_000e6);
+        assertEq(IERC20(sy.shareToken()).balanceOf(alice), 2_000e6);
+        assertEq(IERC20(sy.shareToken()).totalSupply(), 2_000e6);
         assertGt(sy.positionTokenId(), 0);
     }
 
@@ -197,8 +202,8 @@ contract SY_SaucerSwapV2LPTest is Test {
 
         assertEq(uint256(liq2), 1_000e6);
         assertEq(sy.positionTokenId(), tokenId, "tokenId must not change");
-        assertEq(sy.balanceOf(bob), 1_000e6);
-        assertEq(sy.totalSupply(), 3_000e6);
+        assertEq(IERC20(sy.shareToken()).balanceOf(bob), 1_000e6);
+        assertEq(IERC20(sy.shareToken()).totalSupply(), 3_000e6);
     }
 
     // ───────────────────── redeem ─────────────────────
@@ -217,7 +222,7 @@ contract SY_SaucerSwapV2LPTest is Test {
         assertEq(a1, 500e6);
         assertEq(token0.balanceOf(alice), prevBal0 + 500e6);
         assertEq(token1.balanceOf(alice), prevBal1 + 500e6);
-        assertEq(sy.balanceOf(alice), 1_000e6);
+        assertEq(IERC20(sy.shareToken()).balanceOf(alice), 1_000e6);
     }
 
     function test_redeem_fullEmptiesAlice() public {
@@ -227,8 +232,8 @@ contract SY_SaucerSwapV2LPTest is Test {
         vm.prank(alice);
         sy.redeemLiquidity(2_000e6, 0, 0, alice);
 
-        assertEq(sy.balanceOf(alice), 0);
-        assertEq(sy.totalSupply(), 0);
+        assertEq(IERC20(sy.shareToken()).balanceOf(alice), 0);
+        assertEq(IERC20(sy.shareToken()).totalSupply(), 0);
     }
 
     function test_redeem_revertsBeforeFirstDeposit() public {
@@ -362,18 +367,31 @@ contract SY_SaucerSwapV2LPTest is Test {
         assertEq(b[0], 40e6);
     }
 
-    function test_transfer_settlesRewardsForBothSides() public {
+    /// @notice Safe SY-share transfer flow post-HTS-migration: BOTH parties call
+    ///         `claimRewards(self)` BEFORE the transfer. This settles both userIndexes
+    ///         to the current global — alice's accrual is paid out, bob's index moves
+    ///         off zero. After the transfer, future fees split correctly per balance.
+    /// @dev    Without claim-from-receiver-too: bob's userIndex stays 0, so on his next
+    ///         claim he over-claims as if he'd held shares from genesis. This is the
+    ///         intentional limitation of HTS-native shares (no `_update` hook).
+    function test_transfer_safeFlow_bothClaimBeforeTransfer() public {
         vm.prank(alice);
         sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0); // 2_000e6 liq
 
         _injectFees(100e6, 0);
-        sy.harvest();
 
-        // alice has 100e6 pending. Transfer half her shares to bob.
+        // alice claims (collects 100e6, sets her index).
         vm.prank(alice);
-        sy.transfer(bob, 1_000e6);
+        sy.claimRewards(alice);
+        // bob claims with 0 balance — pays 0, but moves his userIndex to current global.
+        // This is the critical step that makes the subsequent transfer safe.
+        vm.prank(bob);
+        sy.claimRewards(bob);
 
-        // Now alice has 1_000e6, bob has 1_000e6. New fees should split 50/50.
+        address shareToken = sy.shareToken();
+        vm.prank(alice);
+        IERC20(shareToken).transfer(bob, 1_000e6);
+
         _injectFees(40e6, 0);
 
         vm.prank(alice);
@@ -381,9 +399,9 @@ contract SY_SaucerSwapV2LPTest is Test {
         vm.prank(bob);
         uint256[] memory b = sy.claimRewards(bob);
 
-        // alice: 100e6 (pre-transfer) + 20e6 (post) = 120e6
-        // bob:   0                    + 20e6 (post) = 20e6
-        assertEq(a[0], 120e6);
+        // alice: 20e6 (her half of post-transfer 40e6).
+        // bob:   20e6 (his half).
+        assertEq(a[0], 20e6);
         assertEq(b[0], 20e6);
     }
 
@@ -477,30 +495,32 @@ contract SY_SaucerSwapV2LPTest is Test {
 
     // ───────────────────── transfer-time harvest (Bug A regression) ─────
 
-    /// @dev Without the harvest-in-_update fix, alice would forfeit her share of fees
-    ///      that accrued in the V3 pool but weren't yet pulled into the SY. The recipient
-    ///      bob would inherit those fees pro-rata to his post-transfer balance.
-    function test_transfer_harvestsBeforeSettling() public {
+    /// @notice Both-parties-claim-before-transfer protects alice's accrual AND prevents
+    ///         bob from over-claiming pre-transfer fees on his stale userIndex.
+    function test_transfer_bothClaim_protectsBothSides() public {
         vm.prank(alice);
-        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0); // alice 2_000e6 SY
+        sy.depositLiquidity(1_000e6, 1_000e6, 0, 0, alice, 0);
 
-        // Fees accrue in the V3 position but are NOT yet pulled into the SY.
         _injectFees(100e6, 0);
 
-        // Alice transfers half her SY to bob WITHOUT calling harvest first.
+        // Alice claims her accrual; bob claims-with-0-balance to set his userIndex.
+        sy.harvest();
         vm.prank(alice);
-        sy.transfer(bob, 1_000e6);
+        sy.claimRewards(alice);
+        vm.prank(bob);
+        sy.claimRewards(bob);
 
-        // No more fees accrue. Both claim. With the fix, alice gets 100% of the fees
-        // (she held all 2_000e6 SY when fees accrued); bob gets 0.
-        // Without the fix, bob would inherit a slice (50% in this case).
+        address shareToken = sy.shareToken();
+        vm.prank(alice);
+        IERC20(shareToken).transfer(bob, 1_000e6);
+
         vm.prank(alice);
         uint256[] memory a = sy.claimRewards(alice);
         vm.prank(bob);
         uint256[] memory b = sy.claimRewards(bob);
 
-        assertEq(a[0], 100e6, "alice should get all pre-transfer fees");
-        assertEq(b[0], 0, "bob should not inherit pre-transfer fees");
+        assertEq(a[0], 0, "alice already claimed her pre-transfer share");
+        assertEq(b[0], 0, "bob's userIndex was set to current global before he received shares");
     }
 
     // ───────────────────── redeem slippage (Bug C) ─────────────────────

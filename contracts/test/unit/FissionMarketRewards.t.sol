@@ -20,6 +20,7 @@ contract FissionMarketRewardsTest is Test {
     MockERC20 token1;
     MockUniswapV3PositionManager npm;
     SY_SaucerSwapV2LP sy;
+    address syShare;  // cached sy.shareToken() — vm.prank-safe
     FissionMarketRewards market;
     address pt;
     address yt;
@@ -53,6 +54,7 @@ contract FissionMarketRewardsTest is Test {
             1500, -60, 60,
             address(npm), admin, 0
         );
+        syShare = sy.shareToken();
 
         // Mint underlying for the test contract; deposit into SY to bootstrap.
         token0.mint(address(this), 5_000_000e6);
@@ -75,13 +77,13 @@ contract FissionMarketRewardsTest is Test {
         // Admin gets 200k SY → splits 100k → has 100k PT + 100k YT (frozen) + 100k SY
         // → seedBurnYt disposes the YT residual → initializes pool with 100k SY+PT.
         // After setUp: admin has 0 SY / 0 PT / 0 YT + LP shares. No dangling YT supply.
-        IERC20(address(sy)).transfer(admin, 200_000e6);
-        IERC20(address(sy)).transfer(alice, 500_000e6);
-        IERC20(address(sy)).transfer(bob, 500_000e6);
-        IERC20(address(sy)).transfer(carol, 200_000e6);
+        IERC20(syShare).transfer(admin, 200_000e6);
+        IERC20(syShare).transfer(alice, 500_000e6);
+        IERC20(syShare).transfer(bob, 500_000e6);
+        IERC20(syShare).transfer(carol, 200_000e6);
 
         vm.startPrank(admin);
-        IERC20(address(sy)).approve(address(market), type(uint256).max);
+        IERC20(syShare).approve(address(market), type(uint256).max);
         IERC20(pt).approve(address(market), type(uint256).max);
         market.split(100_000e6);
         market.seedBurnYt(100_000e6); // dispose of bootstrap YT residual
@@ -91,7 +93,7 @@ contract FissionMarketRewardsTest is Test {
         for (uint256 i = 0; i < 3; i++) {
             address u = [alice, bob, carol][i];
             vm.prank(u);
-            IERC20(address(sy)).approve(address(market), type(uint256).max);
+            IERC20(syShare).approve(address(market), type(uint256).max);
             vm.prank(u);
             IERC20(pt).approve(address(market), type(uint256).max);
         }
@@ -108,8 +110,8 @@ contract FissionMarketRewardsTest is Test {
     ///      holder. This helper computes the slice that flows into the Market and thus
     ///      becomes claimable by YT holders.
     function _marketShareOfInjected(uint256 injected) internal view returns (uint256) {
-        uint256 marketSY = IERC20(address(sy)).balanceOf(address(market));
-        uint256 totalSY = sy.totalSupply();
+        uint256 marketSY = IERC20(syShare).balanceOf(address(market));
+        uint256 totalSY = IERC20(syShare).totalSupply();
         return (injected * marketSY) / totalSY;
     }
 
@@ -393,13 +395,13 @@ contract FissionMarketRewardsTest is Test {
     function test_swapExactPtForSy_works() public {
         vm.prank(alice);
         market.split(5_000e6);
-        uint256 prevSy = IERC20(address(sy)).balanceOf(alice);
+        uint256 prevSy = IERC20(syShare).balanceOf(alice);
 
         vm.prank(alice);
         uint256 syOut = market.swapExactPtForSy(500e6, 0, alice);
 
         assertGt(syOut, 0);
-        assertEq(IERC20(address(sy)).balanceOf(alice), prevSy + syOut);
+        assertEq(IERC20(syShare).balanceOf(alice), prevSy + syOut);
     }
 
     // ───────────────────── reward distribution ─────────────────────
@@ -511,7 +513,7 @@ contract FissionMarketRewardsTest is Test {
         _injectFees(50e6, 25e6);
 
         vm.warp(expiry + 1);
-        uint256 prevSy = IERC20(address(sy)).balanceOf(alice);
+        uint256 prevSy = IERC20(syShare).balanceOf(alice);
 
         // YT-burn is now rejected (M-2 audit fix). Pass ytIn=0; alice retains YT and
         // can keep claiming future rewards.
@@ -519,7 +521,7 @@ contract FissionMarketRewardsTest is Test {
         uint256 syOut = market.redeemAfterExpiry(50_000e6, 0, alice);
 
         assertEq(syOut, 50_000e6, "PT redeems 1:1 with SY");
-        assertEq(IERC20(address(sy)).balanceOf(alice), prevSy + 50_000e6);
+        assertEq(IERC20(syShare).balanceOf(alice), prevSy + 50_000e6);
 
         vm.prank(alice);
         (uint256 r0, uint256 r1) = market.claimRewards(alice);
@@ -567,7 +569,7 @@ contract FissionMarketRewardsTest is Test {
         assertGt(lpBal, 0);
         vm.warp(expiry + 1);
 
-        uint256 prevSy = IERC20(address(sy)).balanceOf(admin);
+        uint256 prevSy = IERC20(syShare).balanceOf(admin);
         uint256 prevPt = IERC20(pt).balanceOf(admin);
 
         vm.prank(admin);
@@ -575,7 +577,7 @@ contract FissionMarketRewardsTest is Test {
 
         assertEq(ptOut, 0, "post-expiry LP exit returns SY only");
         assertGt(syOut, 0);
-        assertEq(IERC20(address(sy)).balanceOf(admin), prevSy + syOut);
+        assertEq(IERC20(syShare).balanceOf(admin), prevSy + syOut);
         assertEq(IERC20(pt).balanceOf(admin), prevPt, "LP shouldn't receive any PT post-expiry");
     }
 

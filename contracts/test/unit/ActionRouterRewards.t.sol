@@ -21,6 +21,7 @@ contract ActionRouterRewardsTest is Test {
     MockERC20 token1;
     MockUniswapV3PositionManager npm;
     SY_SaucerSwapV2LP sy;
+    address syShare;  // cached sy.shareToken() — vm.prank-safe
     FissionMarketRewards market;
     address pt;
     address yt;
@@ -52,6 +53,7 @@ contract ActionRouterRewardsTest is Test {
             1500, -60, 60,
             address(npm), admin, 0
         );
+        syShare = sy.shareToken();
 
         // Bootstrap: this contract seeds the SY with 2_000_000 shares.
         token0.mint(address(this), 5_000_000e6);
@@ -70,12 +72,12 @@ contract ActionRouterRewardsTest is Test {
         yt = market.yt();
 
         // Admin gets SY to bootstrap the pool.
-        IERC20(address(sy)).transfer(admin, 200_000e6);
+        IERC20(syShare).transfer(admin, 200_000e6);
         // Alice gets SY for the router-driven flow.
-        IERC20(address(sy)).transfer(alice, 200_000e6);
+        IERC20(syShare).transfer(alice, 200_000e6);
 
         vm.startPrank(admin);
-        IERC20(address(sy)).approve(address(market), type(uint256).max);
+        IERC20(syShare).approve(address(market), type(uint256).max);
         IERC20(pt).approve(address(market), type(uint256).max);
         market.split(100_000e6);
         market.initialize(100_000e6, 100_000e6, INITIAL_ANCHOR, LN_FEE_ROOT, RESERVE_PCT);
@@ -91,7 +93,7 @@ contract ActionRouterRewardsTest is Test {
         uint256 syBudget = 1_000e6;
 
         vm.startPrank(alice);
-        IERC20(address(sy)).approve(address(router), syBudget);
+        IERC20(syShare).approve(address(router), syBudget);
         (uint256 ytOut, uint256 syRefund) = router.buyYT(
             market, // implicit conversion to IFissionMarketCommon
             syBudget,
@@ -108,10 +110,10 @@ contract ActionRouterRewardsTest is Test {
         // PT was sold in the AMM — alice received some SY back.
         assertGt(syRefund, 0, "non-zero SY refund");
         assertLt(syRefund, syBudget, "refund < budget (PT sells below par pre-expiry)");
-        assertEq(IERC20(address(sy)).balanceOf(alice), 200_000e6 - syBudget + syRefund, "alice SY");
+        assertEq(IERC20(syShare).balanceOf(alice), 200_000e6 - syBudget + syRefund, "alice SY");
 
         // Router holds nothing.
-        assertEq(IERC20(address(sy)).balanceOf(address(router)), 0, "router SY");
+        assertEq(IERC20(syShare).balanceOf(address(router)), 0, "router SY");
         assertEq(IERC20(pt).balanceOf(address(router)), 0, "router PT");
         assertEq(IERC20(yt).balanceOf(address(router)), 0, "router YT");
     }
@@ -122,11 +124,11 @@ contract ActionRouterRewardsTest is Test {
     function test_swapExactPtForSy_routesThroughRewardsMarket() public {
         // Alice splits 5_000 SY → 5_000 PT + 5_000 YT directly.
         vm.startPrank(alice);
-        IERC20(address(sy)).approve(address(market), 5_000e6);
+        IERC20(syShare).approve(address(market), 5_000e6);
         market.split(5_000e6);
 
         // Now sell 1_000 PT via the router.
-        uint256 syBefore = IERC20(address(sy)).balanceOf(alice);
+        uint256 syBefore = IERC20(syShare).balanceOf(alice);
         IERC20(pt).approve(address(router), 1_000e6);
         uint256 syOut = router.swapExactPtForSy(
             market, // implicit conversion to IFissionMarketCommon
@@ -140,7 +142,7 @@ contract ActionRouterRewardsTest is Test {
         assertGt(syOut, 0, "non-zero SY out");
         assertLt(syOut, 1_000e6, "PT sells below par pre-expiry");
         assertEq(
-            IERC20(address(sy)).balanceOf(alice),
+            IERC20(syShare).balanceOf(alice),
             syBefore + syOut,
             "alice SY credited"
         );

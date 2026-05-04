@@ -18,6 +18,7 @@ import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
 contract FissionMarketInvariantTest is Test {
     MockERC20 underlying;
     MockSY sy;
+    address syShare;  // cached sy.shareToken() — vm.prank-safe
     FissionMarket market;
     address pt;
     address yt;
@@ -37,6 +38,7 @@ contract FissionMarketInvariantTest is Test {
 
         underlying = new MockERC20("USD", "USD", 18);
         sy = new MockSY(address(underlying), 18);
+        syShare = sy.shareToken();
 
         market = new FissionMarket(
             address(sy), block.timestamp + 90 days, 75e18, admin, treasury, 18
@@ -47,14 +49,14 @@ contract FissionMarketInvariantTest is Test {
 
         // Mint SY to this contract, split half, then admin initializes pool.
         sy.mint(address(this), 1_000_000e6);
-        IERC20(address(sy)).approve(address(market), type(uint256).max);
+        IERC20(syShare).approve(address(market), type(uint256).max);
         market.split(500_000e6);
 
-        IERC20(address(sy)).transfer(admin, 200_000e6);
+        IERC20(syShare).transfer(admin, 200_000e6);
         IERC20(pt).transfer(admin, 200_000e6);
 
         vm.startPrank(admin);
-        IERC20(address(sy)).approve(address(market), 100_000e6);
+        IERC20(syShare).approve(address(market), 100_000e6);
         IERC20(pt).approve(address(market), 100_000e6);
         market.initialize(100_000e6, 100_000e6, 1.05e18, 0.0003e18, 80);
         vm.stopPrank();
@@ -66,7 +68,7 @@ contract FissionMarketInvariantTest is Test {
         }
         for (uint256 i = 0; i < actors.length; i++) {
             vm.startPrank(actors[i]);
-            IERC20(address(sy)).approve(address(market), type(uint256).max);
+            IERC20(syShare).approve(address(market), type(uint256).max);
             market.split(5_000e6);
             vm.stopPrank();
         }
@@ -88,7 +90,7 @@ contract FissionMarketInvariantTest is Test {
     /// @notice Solvency — the asset value of SY held by the market must always cover
     ///         the PT principal claim plus all unclaimed yield owed to actors.
     function invariant_solvency() public view {
-        uint256 marketSy = IERC20(address(sy)).balanceOf(address(market));
+        uint256 marketSy = IERC20(syShare).balanceOf(address(market));
         uint256 ptSupply = IERC20(pt).totalSupply();
         uint256 R = sy.exchangeRate();
 

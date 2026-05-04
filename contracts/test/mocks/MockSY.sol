@@ -26,6 +26,12 @@ contract MockSY is ERC20, IStandardizedYield {
         return _decimals;
     }
 
+    /// @notice For the mock, the SY contract itself IS the share token (kept as ERC20
+    ///         for ease of testing). Production SYs hold an HTS-native share token.
+    function shareToken() external view override returns (address) {
+        return address(this);
+    }
+
     function setExchangeRate(uint256 r) external {
         _exchangeRate = r;
     }

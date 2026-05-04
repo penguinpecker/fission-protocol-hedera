@@ -24,6 +24,7 @@ contract FissionMarketRewardsHandler is CommonBase, StdCheats, StdUtils {
     address public immutable yt;
     /// @dev HTS-native PT — `pt` is the HTS token address. Use `IERC20(pt).balanceOf(...)`.
     address public immutable pt;
+    address public immutable syShare;
     address[] public actors;
 
     uint256 public totalInjected0;
@@ -46,6 +47,7 @@ contract FissionMarketRewardsHandler is CommonBase, StdCheats, StdUtils {
         token1 = t1;
         yt = market_.yt();
         pt = market_.pt();
+        syShare = sy_.shareToken();
         actors = actors_;
     }
 
@@ -55,7 +57,7 @@ contract FissionMarketRewardsHandler is CommonBase, StdCheats, StdUtils {
 
     function split(uint256 actorSeed, uint256 amtSeed) external {
         address a = _actor(actorSeed);
-        uint256 syBal = IERC20(address(sy)).balanceOf(a);
+        uint256 syBal = IERC20(syShare).balanceOf(a);
         if (syBal == 0) return;
         uint256 amount = bound(amtSeed, 1, syBal);
 

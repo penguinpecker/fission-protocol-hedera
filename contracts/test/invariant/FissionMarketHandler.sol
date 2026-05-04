@@ -20,6 +20,7 @@ contract FissionMarketHandler is Test {
     address public pt;
     address public yt;
     MockSY public sy;
+    address public syShare;
 
     address[] public actors;
     address public currentActor;
@@ -40,6 +41,7 @@ contract FissionMarketHandler is Test {
         pt = m.pt();
         yt = m.yt();
         sy = MockSY(address(m.sy()));
+        syShare = sy.shareToken();
         actors = _actors;
     }
 
@@ -52,12 +54,12 @@ contract FissionMarketHandler is Test {
 
     function split(uint256 amount, uint256 actorSeed) public useActor(actorSeed) {
         amount = bound(amount, 1e16, 10_000e18);
-        uint256 syBal = sy.balanceOf(currentActor);
+        uint256 syBal = IERC20(syShare).balanceOf(currentActor);
         if (amount > syBal) amount = syBal;
         if (amount < 1e16) return;
 
         vm.startPrank(currentActor);
-        IERC20(address(sy)).approve(address(market), amount);
+        IERC20(syShare).approve(address(market), amount);
         market.split(amount);
         vm.stopPrank();
 
@@ -96,13 +98,13 @@ contract FissionMarketHandler is Test {
     }
 
     function swapSyForPt(uint256 amount, uint256 actorSeed) public useActor(actorSeed) {
-        uint256 syBal = sy.balanceOf(currentActor);
+        uint256 syBal = IERC20(syShare).balanceOf(currentActor);
         if (syBal < 1e16) return;
         // Cap PT request at 5% of pool to avoid MAX_MARKET_PROPORTION.
         uint256 ptDesired = bound(amount, 1e16, market.totalPt() / 20);
 
         vm.startPrank(currentActor);
-        IERC20(address(sy)).approve(address(market), syBal);
+        IERC20(syShare).approve(address(market), syBal);
         try market.swapExactSyForPt(syBal, ptDesired, currentActor) returns (uint256 syIn) {
             ghost_totalSyDeposited += syIn;
             callCount_swapSyForPt++;

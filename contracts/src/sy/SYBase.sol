@@ -1,20 +1,26 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {AccessControlDefaultAdminRules} from
     "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
+import {ERC165} from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
 
 import {IStandardizedYield} from "../interfaces/IStandardizedYield.sol";
+import {IHederaTokenService} from "../interfaces/IHederaTokenService.sol";
+import {HtsHelpers} from "../libraries/HtsHelpers.sol";
 import {PMath} from "../libraries/PMath.sol";
 
-/// @title  SYBase — abstract ERC-5115 (Pendle superset) base.
-/// @notice Implements the deposit/redeem skeleton, share accounting, and the reward-
-///         index distribution pattern. Subclasses override:
+/// @title  SYBase — abstract ERC-5115 (Pendle superset) base, Hedera HTS-native shares.
+/// @notice Implements the deposit/redeem skeleton with HTS-native share tokens.
+///         The SY contract is the share token's treasury + supplyKey + wipeKey holder.
+///         `address(this)` is NOT the share token — call `shareToken()` for the HTS
+///         token address (`IERC20(shareToken).balanceOf(user)` etc work via Hedera's
+///         ERC-20 facade).
+/// @dev    Subclasses override:
 ///             - `_deposit(tokenIn, amountIn) -> sharesOut`
 ///             - `_redeem(receiver, tokenOut, shares) -> amountOut`
 ///             - `_previewDeposit / _previewRedeem`
@@ -22,11 +28,10 @@ import {PMath} from "../libraries/PMath.sol";
 ///             - `_getTokensIn / _getTokensOut / isValidTokenIn / isValidTokenOut`
 ///             - `_assetInfo`
 ///             - reward functions (default: no rewards)
-/// @dev    Round in the protocol's favour at every conversion. Decimals reflect the
+///         Round in the protocol's favour at every conversion. Decimals reflect the
 ///         underlying asset (per ERC-5115).
 abstract contract SYBase is
     IStandardizedYield,
-    ERC20,
     ReentrancyGuardTransient,
     Pausable,
     AccessControlDefaultAdminRules
@@ -46,13 +51,21 @@ abstract contract SYBase is
     address public immutable underlying;
 
     /// @notice Asset decimals — what `decimals()` reports per ERC-5115.
-    uint8 private immutable _assetDecimals;
+    uint8 internal immutable _assetDecimals;
+
+    /// @notice The HTS-native share token. SYBase is treasury + supplyKey + wipeKey.
+    ///         Use `IERC20(shareToken).balanceOf(...)` for ERC-20 facade reads/writes.
+    address public shareToken;
 
     error AmountZero();
     error TokenNotSupported(address token);
     error SlippageExceeded();
     error InsufficientSharesOut();
+    error ShareTokenAlreadySet();
 
+    /// @notice Constructor creates the HTS-native share token. Subclasses pass
+    ///         msg.value through; createFungible costs ~1 HBAR on mainnet.
+    /// @dev    Caller must attach enough HBAR to msg.value to cover the network fee.
     constructor(
         string memory name_,
         string memory symbol_,
@@ -60,20 +73,82 @@ abstract contract SYBase is
         uint8 decimals_,
         address admin_,
         uint48 adminTransferDelay_
-    )
-        ERC20(name_, symbol_)
-        AccessControlDefaultAdminRules(adminTransferDelay_, admin_)
-    {
+    ) AccessControlDefaultAdminRules(adminTransferDelay_, admin_) {
         underlying = underlying_;
         _assetDecimals = decimals_;
         _grantRole(PAUSER_ROLE, admin_);
+
+        // Create the HTS share token. SYBase = treasury + supplyKey + wipeKey.
+        // No freeze key — SY shares are freely transferable (unlike YT).
+        IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](2);
+        keys[0] = HtsHelpers.makeKey(16, address(this)); // SUPPLY
+        keys[1] = HtsHelpers.makeKey(8, address(this));  // WIPE — for redeem-from-arbitrary
+
+        IHederaTokenService.HederaToken memory spec = IHederaTokenService.HederaToken({
+            name: name_,
+            symbol: symbol_,
+            treasury: address(this),
+            memo: "",
+            tokenSupplyType: false,
+            maxSupply: 0,
+            freezeDefault: false,
+            tokenKeys: keys,
+            expiry: IHederaTokenService.Expiry({
+                second: 0,
+                autoRenewAccount: address(this),
+                autoRenewPeriod: 7776000
+            })
+        });
+        shareToken = HtsHelpers.createFungible(spec, int32(uint32(decimals_)));
     }
 
-    // ───────────────────── ERC-20 metadata ─────────────────────
+    // ───────────────────── share-token mint / burn helpers ─────────────────────
 
-    /// @inheritdoc ERC20
-    /// @dev Per ERC-5115: SY decimals reflect the underlying asset.
-    function decimals() public view virtual override returns (uint8) {
+    /// @dev Mint HTS shares to `to`: settle rewards FIRST (before balance changes),
+    ///      then mint to treasury and transfer out.
+    function _mintShares(address to, uint256 amount) internal {
+        _beforeShareUpdate(address(0), to);
+        HtsHelpers.mintToTreasury(shareToken, amount);
+        if (to != address(this)) {
+            HtsHelpers.transfer(shareToken, address(this), to, amount);
+        }
+    }
+
+    /// @dev Burn HTS shares. Settle rewards FIRST. Treasury via burnFromTreasury;
+    ///      arbitrary accounts via wipe. Wipe is required because `redeem` (with
+    ///      `burnFromInternalBalance = false`) burns from `msg.sender` directly —
+    ///      the equivalent of the old `_burn(from)` under unrestricted internal access.
+    function _burnShares(address from, uint256 amount) internal {
+        _beforeShareUpdate(from, address(0));
+        if (from == address(this)) {
+            HtsHelpers.burnFromTreasury(shareToken, amount);
+        } else {
+            HtsHelpers.wipeFrom(shareToken, from, amount);
+        }
+    }
+
+    /// @dev Hook for subclasses (e.g. SY_SaucerSwapV2LP) to settle per-shareholder
+    ///      reward indexes BEFORE share-balance changes. Replaces the OZ ERC-20
+    ///      `_update` hook that no longer fires (HTS shares have no contract-level
+    ///      transfer hook). Default: no-op (rate-based SYs don't need per-user
+    ///      reward indexes — yield is baked into `exchangeRate`).
+    /// @dev    LIMITATION: this hook fires on mint/burn only. Direct user-to-user HTS
+    ///         transfers of share tokens DO NOT fire any settlement and can leak
+    ///         rewards (recipient's stale userIndex over-claims). In production, all
+    ///         SY share movements are mediated by the Market — users go through
+    ///         `router.depositAndSplit` and `market.merge`, never holding raw SY
+    ///         shares for long. Direct-deposit users should `claimRewards(self)`
+    ///         BEFORE transferring shares to lock in their accrual.
+    function _beforeShareUpdate(address from, address to) internal virtual {
+        // default no-op
+    }
+
+    // ───────────────────── ERC-5115-compatible metadata ─────────────────────
+
+    /// @notice Asset decimals — per ERC-5115, this reflects the underlying asset.
+    /// @dev    The HTS share token has its own `decimals()` callable via the ERC-20
+    ///         facade (`IERC20Metadata(shareToken).decimals()`); same value.
+    function decimals() public view virtual returns (uint8) {
         return _assetDecimals;
     }
 
@@ -111,7 +186,7 @@ abstract contract SYBase is
         if (sharesOut < minSharesOut) revert SlippageExceeded();
         if (sharesOut == 0) revert InsufficientSharesOut();
 
-        _mint(receiver, sharesOut);
+        _mintShares(receiver, sharesOut);
         emit Deposit(msg.sender, receiver, tokenIn, actualIn, sharesOut);
     }
 
@@ -127,10 +202,10 @@ abstract contract SYBase is
 
         if (burnFromInternalBalance) {
             // The "internal balance" pattern from Pendle: shares are already in the SY
-            // contract (e.g. the Router transferred them in). Burn from SY's own balance.
-            _burn(address(this), shares);
+            // contract (e.g. the Router transferred them in). Burn from SY's treasury.
+            _burnShares(address(this), shares);
         } else {
-            _burn(msg.sender, shares);
+            _burnShares(msg.sender, shares);
         }
 
         amountTokenOut = _redeem(receiver, tokenOut, shares);

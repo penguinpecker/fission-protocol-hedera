@@ -12,6 +12,7 @@ import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
 contract FissionMarketTest is Test {
     MockERC20 underlying;
     MockSY sy;
+    address syShare;  // cached sy.shareToken() — vm.prank-safe
     FissionMarket market;
     /// @dev HTS-native PT — `pt` is the HTS token address. Use `IERC20(pt).balanceOf(...)`.
     address pt;
@@ -35,6 +36,7 @@ contract FissionMarketTest is Test {
 
         underlying = new MockERC20("USD", "USD", 18);
         sy = new MockSY(address(underlying), 18);
+        syShare = sy.shareToken();
         // sy.exchangeRate starts at 1e18
 
         expiry = block.timestamp + 90 days;
@@ -56,7 +58,7 @@ contract FissionMarketTest is Test {
         sy.mint(address(this), 1_000_000e6);
         // To get PT for initialize, we need to split SY first — but split mints PT/YT,
         // so we split here.
-        IERC20(address(sy)).approve(address(market), type(uint256).max);
+        IERC20(syShare).approve(address(market), type(uint256).max);
         // We can't split before initialize because split needs the pool? Let's check:
         // Actually split doesn't need the pool — it just mints PT+YT 1:1. Yes can split.
 
@@ -64,19 +66,19 @@ contract FissionMarketTest is Test {
         // some PT+SY to admin who initializes.
         market.split(500_000e6);
         // Now factory has 500_000 PT + 500_000 YT + 500_000 SY.
-        IERC20(address(sy)).transfer(admin, 200_000e6);
+        IERC20(syShare).transfer(admin, 200_000e6);
         IERC20(pt).transfer(admin, 200_000e6);
 
         // Admin initializes with (100k SY, 100k PT). Anchor at 1.05e18.
         vm.startPrank(admin);
-        IERC20(address(sy)).approve(address(market), 100_000e6);
+        IERC20(syShare).approve(address(market), 100_000e6);
         IERC20(pt).approve(address(market), 100_000e6);
         market.initialize(100_000e6, 100_000e6, INITIAL_ANCHOR, LN_FEE_ROOT, RESERVE_PCT);
         vm.stopPrank();
 
         // Distribute test balances to alice and bob.
-        IERC20(address(sy)).transfer(alice, 100_000e6);
-        IERC20(address(sy)).transfer(bob, 100_000e6);
+        IERC20(syShare).transfer(alice, 100_000e6);
+        IERC20(syShare).transfer(bob, 100_000e6);
     }
 
     // ───── construction + setup ─────
@@ -118,7 +120,7 @@ contract FissionMarketTest is Test {
 
     function test_split_mintsPtAndYt() public {
         vm.startPrank(alice);
-        IERC20(address(sy)).approve(address(market), 1_000e6);
+        IERC20(syShare).approve(address(market), 1_000e6);
         market.split(1_000e6);
         vm.stopPrank();
 
@@ -131,11 +133,11 @@ contract FissionMarketTest is Test {
 
     function test_merge_burnsAndReturnsSY() public {
         vm.startPrank(alice);
-        IERC20(address(sy)).approve(address(market), 1_000e6);
+        IERC20(syShare).approve(address(market), 1_000e6);
         market.split(1_000e6);
-        uint256 syBefore = IERC20(address(sy)).balanceOf(alice);
+        uint256 syBefore = IERC20(syShare).balanceOf(alice);
         market.merge(1_000e6);
-        uint256 syAfter = IERC20(address(sy)).balanceOf(alice);
+        uint256 syAfter = IERC20(syShare).balanceOf(alice);
         vm.stopPrank();
 
         assertEq(syAfter - syBefore, 1_000e6);
@@ -148,13 +150,13 @@ contract FissionMarketTest is Test {
     function test_swapExactPtForSy_works() public {
         // Alice needs PT first.
         vm.startPrank(alice);
-        IERC20(address(sy)).approve(address(market), 5_000e6);
+        IERC20(syShare).approve(address(market), 5_000e6);
         market.split(5_000e6);
         IERC20(pt).approve(address(market), 5_000e6);
 
-        uint256 syBefore = IERC20(address(sy)).balanceOf(alice);
+        uint256 syBefore = IERC20(syShare).balanceOf(alice);
         uint256 syOut = market.swapExactPtForSy(1_000e6, 0, alice);
-        uint256 syAfter = IERC20(address(sy)).balanceOf(alice);
+        uint256 syAfter = IERC20(syShare).balanceOf(alice);
         vm.stopPrank();
 
         assertEq(syAfter - syBefore, syOut);
@@ -165,7 +167,7 @@ contract FissionMarketTest is Test {
 
     function test_swapExactSyForPt_works() public {
         vm.startPrank(alice);
-        IERC20(address(sy)).approve(address(market), 5_000e6);
+        IERC20(syShare).approve(address(market), 5_000e6);
         uint256 ptBefore = IERC20(pt).balanceOf(alice);
         uint256 ptDesired = 500e6;
         uint256 syIn = market.swapExactSyForPt(5_000e6, ptDesired, alice);
@@ -182,7 +184,7 @@ contract FissionMarketTest is Test {
     function test_addLiquidity_proportional() public {
         // Alice splits + adds.
         vm.startPrank(alice);
-        IERC20(address(sy)).approve(address(market), type(uint256).max);
+        IERC20(syShare).approve(address(market), type(uint256).max);
         market.split(20_000e6);
         IERC20(pt).approve(address(market), type(uint256).max);
 
@@ -218,7 +220,7 @@ contract FissionMarketTest is Test {
     function test_yieldAccrual_basic() public {
         // Alice splits 1000 SY → 1000 PT + 1000 YT.
         vm.startPrank(alice);
-        IERC20(address(sy)).approve(address(market), 1_000e6);
+        IERC20(syShare).approve(address(market), 1_000e6);
         market.split(1_000e6);
         vm.stopPrank();
 
@@ -226,10 +228,10 @@ contract FissionMarketTest is Test {
         sy.setExchangeRate(1.05e18);
 
         // Alice claims yield.
-        uint256 syBefore = IERC20(address(sy)).balanceOf(alice);
+        uint256 syBefore = IERC20(syShare).balanceOf(alice);
         vm.prank(alice);
         uint256 claimed = market.claimYield(alice);
-        uint256 syAfter = IERC20(address(sy)).balanceOf(alice);
+        uint256 syAfter = IERC20(syShare).balanceOf(alice);
 
         // owed = 1000e6 * (1.05e18 - 1e18) / 1.05e18 = 1000 * 0.05 / 1.05 ≈ 47.62e18
         assertEq(syAfter - syBefore, claimed);
@@ -242,7 +244,7 @@ contract FissionMarketTest is Test {
     ///         sneak YT to a fresh address whose userIndex would be stale.
     function test_yt_frozen_userToUserTransferReverts() public {
         vm.startPrank(alice);
-        IERC20(address(sy)).approve(address(market), 1_000e6);
+        IERC20(syShare).approve(address(market), 1_000e6);
         market.split(1_000e6);
 
         // Alice now holds 1000 frozen YT. Trying to transfer to bob reverts.
@@ -256,17 +258,17 @@ contract FissionMarketTest is Test {
     function test_redeemAfterExpiry_paysProportional() public {
         // Alice splits 1000 SY → 1000 PT + 1000 YT. Rate grows to 1.05. Expiry passes.
         vm.startPrank(alice);
-        IERC20(address(sy)).approve(address(market), 1_000e6);
+        IERC20(syShare).approve(address(market), 1_000e6);
         market.split(1_000e6);
         vm.stopPrank();
 
         sy.setExchangeRate(1.05e18);
         vm.warp(expiry + 1);
 
-        uint256 syBefore = IERC20(address(sy)).balanceOf(alice);
+        uint256 syBefore = IERC20(syShare).balanceOf(alice);
         vm.prank(alice);
         uint256 syOut = market.redeemAfterExpiry(1_000e6, 1_000e6, alice);
-        uint256 syAfter = IERC20(address(sy)).balanceOf(alice);
+        uint256 syAfter = IERC20(syShare).balanceOf(alice);
 
         // PT redeems for amount * 1e18 / globalIndex (frozen at 1.05e18).
         // = 1000 * 1e18 / 1.05e18 ≈ 952.38
@@ -285,11 +287,11 @@ contract FissionMarketTest is Test {
     // ───── conservation ─────
 
     /// @dev After a sequence of ops, the solvency invariant must hold:
-    ///      sy.balanceOf(market) * R >= IERC20(pt).totalSupply() * 1e18 + sumYieldOwed * R.
+    ///      IERC20(syShare).balanceOf(market) * R >= IERC20(pt).totalSupply() * 1e18 + sumYieldOwed * R.
     function test_invariant_solvency_afterMixedOps() public {
         // Alice splits, swaps, merges, claims.
         vm.startPrank(alice);
-        IERC20(address(sy)).approve(address(market), type(uint256).max);
+        IERC20(syShare).approve(address(market), type(uint256).max);
         IERC20(pt).approve(address(market), type(uint256).max);
 
         market.split(5_000e6);
@@ -300,7 +302,7 @@ contract FissionMarketTest is Test {
         vm.stopPrank();
 
         // Compute invariant terms.
-        uint256 marketSy = IERC20(address(sy)).balanceOf(address(market));
+        uint256 marketSy = IERC20(syShare).balanceOf(address(market));
         uint256 ptSupply = IERC20(pt).totalSupply();
         uint256 R = sy.exchangeRate();
 
@@ -319,7 +321,7 @@ contract FissionMarketTest is Test {
     function test_pause_blocksEntryButLeavesEscapeHatchesOpen() public {
         // Alice enters before pause: splits 1_000 SY → 1_000 PT + 1_000 YT.
         vm.startPrank(alice);
-        IERC20(address(sy)).approve(address(market), type(uint256).max);
+        IERC20(syShare).approve(address(market), type(uint256).max);
         IERC20(pt).approve(address(market), type(uint256).max);
         market.split(1_000e6);
         vm.stopPrank();
@@ -457,7 +459,7 @@ contract FissionMarketTest is Test {
 
     function test_swapPtForSy_revertsZeroReceiver() public {
         vm.startPrank(alice);
-        IERC20(address(sy)).approve(address(market), 100e6);
+        IERC20(syShare).approve(address(market), 100e6);
         market.split(100e6);
         IERC20(pt).approve(address(market), 100e6);
         vm.expectRevert(FissionMarket.ZeroAddress.selector);
@@ -467,7 +469,7 @@ contract FissionMarketTest is Test {
 
     function test_swapPtForSy_revertsBelowMin() public {
         vm.startPrank(alice);
-        IERC20(address(sy)).approve(address(market), 100e6);
+        IERC20(syShare).approve(address(market), 100e6);
         market.split(100e6);
         IERC20(pt).approve(address(market), 100e6);
         vm.expectRevert(FissionMarket.InsufficientOutput.selector);

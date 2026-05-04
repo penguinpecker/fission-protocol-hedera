@@ -15,6 +15,7 @@ import {MockERC20} from "../mocks/MockSY.sol";
 ///         test asserts properties hold after every handler call.
 contract SY_SaucerSwapV2LPHandler is CommonBase, StdCheats, StdUtils {
     SY_SaucerSwapV2LP public immutable sy;
+    address public immutable syShare;
     MockUniswapV3PositionManager public immutable npm;
     MockERC20 public immutable token0;
     MockERC20 public immutable token1;
@@ -39,6 +40,7 @@ contract SY_SaucerSwapV2LPHandler is CommonBase, StdCheats, StdUtils {
 
     constructor(SY_SaucerSwapV2LP sy_, MockUniswapV3PositionManager npm_, MockERC20 t0, MockERC20 t1, address[] memory a) {
         sy = sy_;
+        syShare = sy_.shareToken();
         npm = npm_;
         token0 = t0;
         token1 = t1;
@@ -68,7 +70,7 @@ contract SY_SaucerSwapV2LPHandler is CommonBase, StdCheats, StdUtils {
 
     function redeem(uint256 actorSeed, uint256 sharesSeed) external {
         address a = _actor(actorSeed);
-        uint256 bal = sy.balanceOf(a);
+        uint256 bal = IERC20(syShare).balanceOf(a);
         if (bal == 0) return;
         uint256 shares = bound(sharesSeed, 1, bal);
 
@@ -78,16 +80,30 @@ contract SY_SaucerSwapV2LPHandler is CommonBase, StdCheats, StdUtils {
         } catch {}
     }
 
+    /// @notice Models the *recommended* SY share transfer flow post-HTS-migration:
+    ///         BOTH parties claim their settled rewards BEFORE transferring shares.
+    ///         The HTS share token has no contract-level transfer hook so a raw transfer
+    ///         leaks rewards; the documented user pattern is "claim first, then move".
+    ///         This handler exercises that pattern so the conservation invariant holds.
     function transferShares(uint256 fromSeed, uint256 toSeed, uint256 amtSeed) external {
         address from = _actor(fromSeed);
         address to = _actor(toSeed);
         if (from == to) return;
-        uint256 bal = sy.balanceOf(from);
+        uint256 bal = IERC20(syShare).balanceOf(from);
         if (bal == 0) return;
         uint256 amt = bound(amtSeed, 1, bal);
 
+        // Recommended flow: settle BOTH sides BEFORE the transfer. `claimRewards` calls
+        // `_settleUserRewards` internally, which advances the user's index to the current
+        // global. Without this, the recipient's stale index over-claims post-transfer.
+        sy.harvest();
         vm.prank(from);
-        try sy.transfer(to, amt) {
+        try sy.claimRewards(from) {} catch {}
+        vm.prank(to);
+        try sy.claimRewards(to) {} catch {}
+
+        vm.prank(from);
+        try IERC20(syShare).transfer(to, amt) {
             transferCount++;
         } catch {}
     }

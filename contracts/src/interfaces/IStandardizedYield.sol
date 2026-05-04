@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-/// @title  IStandardizedYield — ERC-5115 + Pendle V2 superset
+/// @title  IStandardizedYield — ERC-5115 + Pendle V2 superset (Hedera HTS variant)
 /// @notice Strict superset of EIP-5115. Pendle's PT/YT contracts depend on
 ///         the extensions (`assetInfo`, reward indexes, isValidTokenIn/Out),
 ///         so we implement the full interface even if downstream consumers
 ///         only need the base. References:
 ///           - https://eips.ethereum.org/EIPS/eip-5115
 ///           - https://github.com/pendle-finance/pendle-core-v2-public/blob/main/contracts/interfaces/IStandardizedYield.sol
-/// @dev    SY metadata (decimals/symbol/name) reflects the *underlying asset*,
-///         NOT the share. This is mandated by EIP-5115.
-interface IStandardizedYield is IERC20 {
+/// @dev    On Hedera the SY share is an HTS-native fungible token — not the SYBase
+///         contract itself (the contract creates and treasuries the share). Consumers
+///         that want IERC20 reads/writes should use `IERC20(sy.shareToken())` against
+///         the Hedera ERC-20 facade. Per EIP-5115, share metadata (decimals/symbol)
+///         reflects the *underlying asset*, not the share itself.
+interface IStandardizedYield {
     /// @notice TOKEN  = the asset is an ordinary ERC-20 with a market price (e.g. HBARX).
     ///         LIQUIDITY = the asset is an LP / pool position whose price has no direct
     ///         market quote (e.g. SaucerSwap V1 LP token). Downstream pricing must use
@@ -60,6 +61,11 @@ interface IStandardizedYield is IERC20 {
     function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals);
 
     function yieldToken() external view returns (address);
+
+    /// @notice The HTS-native share token created by the SY contract. Use this with
+    ///         `IERC20(...)` for ERC-20-style reads (balanceOf / totalSupply / transfer
+    ///         / approve) — the SYBase contract no longer inherits ERC-20 itself.
+    function shareToken() external view returns (address);
 
     // ───────────────────── rewards ────────────────────────────────
     /// @notice Reward tokens distributed to SY holders proportional to their share.

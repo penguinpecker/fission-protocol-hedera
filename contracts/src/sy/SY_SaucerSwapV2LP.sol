@@ -292,10 +292,10 @@ contract SY_SaucerSwapV2LP is SYBase {
             IERC20(token1).safeTransfer(msg.sender, amount1Desired - amount1Used);
         }
 
-        // _update hook (overridden below) settles `receiver`'s rewards using their
-        // pre-mint balance, then updates their userIndex to current global. Future
-        // accrual starts cleanly from the new balance.
-        _mint(receiver, uint256(liquidity));
+        // _mintShares (in SYBase) calls _beforeShareUpdate → _harvest + settle the
+        // receiver against the current globalRewardIndex BEFORE balance changes,
+        // then mints HTS shares and transfers from treasury to receiver.
+        _mintShares(receiver, uint256(liquidity));
 
         emit DepositLiquidity(msg.sender, receiver, amount0Used, amount1Used, liquidity);
     }
@@ -318,11 +318,10 @@ contract SY_SaucerSwapV2LP is SYBase {
         if (shares == 0) revert AmountZero();
         if (receiver == address(0)) revert ZeroAddress();
 
-        // Harvest first so caller's pending rewards are settled at burn time
-        // (the _update hook needs an up-to-date globalRewardIndex).
-        _harvest();
-
-        _burn(msg.sender, shares);
+        // _burnShares (in SYBase) calls _beforeShareUpdate → _harvest + settle the
+        // burner against the current globalRewardIndex BEFORE balance changes, then
+        // wipes HTS shares from msg.sender (or burns from treasury if msg.sender == self).
+        _burnShares(msg.sender, shares);
 
         IUniswapV3PositionManager.DecreaseLiquidityParams memory dp =
             IUniswapV3PositionManager.DecreaseLiquidityParams({
@@ -442,7 +441,7 @@ contract SY_SaucerSwapV2LP is SYBase {
         returns (uint256[] memory amounts)
     {
         amounts = new uint256[](2);
-        uint256 bal = balanceOf(user);
+        uint256 bal = IERC20(shareToken).balanceOf(user);
         uint256 g0 = globalRewardIndex0;
         uint256 g1 = globalRewardIndex1;
         uint256 u0 = userRewardIndex0[user];
@@ -485,7 +484,7 @@ contract SY_SaucerSwapV2LP is SYBase {
     function _harvest() internal {
         if (positionTokenId == 0) return;
 
-        uint256 ts = totalSupply();
+        uint256 ts = IERC20(shareToken).totalSupply();
         if (ts == 0) return;
 
         (uint256 c0, uint256 c1) = npm.collect(IUniswapV3PositionManager.CollectParams({
@@ -513,7 +512,7 @@ contract SY_SaucerSwapV2LP is SYBase {
     function _settleUserRewards(address user) internal {
         if (user == address(0) || user == address(this)) return; // mint source / burn destination / self
 
-        uint256 bal = balanceOf(user);
+        uint256 bal = IERC20(shareToken).balanceOf(user);
         uint256 g0 = globalRewardIndex0;
         uint256 g1 = globalRewardIndex1;
         uint256 u0 = userRewardIndex0[user];
@@ -527,20 +526,17 @@ contract SY_SaucerSwapV2LP is SYBase {
         userRewardIndex1[user] = g1;
     }
 
-    /// @dev OZ ERC20 v5 single hook — fires on every mint/burn/transfer. Harvest pending
-    ///      V3 fees FIRST so the global index is current, then settle both sides against
-    ///      that index. Without the harvest, a raw `transfer(bob, x)` would settle alice
-    ///      and bob against a stale `globalRewardIndex`, letting bob earn a slice of
-    ///      pre-transfer fees and stripping alice of her rightful share. The deposit /
-    ///      redeem / claim flows already harvest explicitly, but a vanilla SY-share
-    ///      transfer needs this safety net.
-    /// @dev    `_harvest()` is idempotent within a single tx — `collect` returns 0 the
-    ///      second time. So the explicit harvest in deposit/redeem/claim isn't redundant
-    ///      with this hook; it just makes the second call cheap (~3K gas).
-    function _update(address from, address to, uint256 value) internal override {
+    /// @dev SYBase hook — fires on mint/burn (HTS shares have no contract-level transfer
+    ///      hook on Hedera, so user-to-user transfers are NOT settled here; see SYBase
+    ///      `_beforeShareUpdate` docstring for the leakage caveat. In production, all SY
+    ///      share movement is mediated by the Market — direct transfers should `claim`
+    ///      first to lock in accrued rewards).
+    /// @dev    `_harvest()` is idempotent within a single tx (collect returns 0 the
+    ///      second time), so explicit harvests in deposit/redeem/claim are cheap when
+    ///      this hook also harvests.
+    function _beforeShareUpdate(address from, address to) internal override {
         _harvest();
         _settleUserRewards(from);
         _settleUserRewards(to);
-        super._update(from, to, value);
     }
 }

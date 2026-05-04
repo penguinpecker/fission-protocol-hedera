@@ -24,6 +24,7 @@ contract FissionMarketRewardsInvariantTest is Test {
     MockERC20 token1;
     MockUniswapV3PositionManager npm;
     SY_SaucerSwapV2LP sy;
+    address syShare;  // cached sy.shareToken() — vm.prank-safe
     FissionMarketRewards market;
     address pt;
     address yt;
@@ -53,6 +54,7 @@ contract FissionMarketRewardsInvariantTest is Test {
             1500, -60, 60,
             address(npm), admin, 0
         );
+        syShare = sy.shareToken();
 
         token0.mint(address(this), 5_000_000e6);
         token1.mint(address(this), 5_000_000e6);
@@ -74,14 +76,14 @@ contract FissionMarketRewardsInvariantTest is Test {
         actors[2] = address(0xA3);
 
         // Distribute SY to admin + actors.
-        IERC20(address(sy)).transfer(admin, 200_000e6);
+        IERC20(syShare).transfer(admin, 200_000e6);
         for (uint256 i = 0; i < actors.length; i++) {
-            IERC20(address(sy)).transfer(actors[i], 200_000e6);
+            IERC20(syShare).transfer(actors[i], 200_000e6);
         }
 
         // Admin splits + initializes.
         vm.startPrank(admin);
-        IERC20(address(sy)).approve(address(market), type(uint256).max);
+        IERC20(syShare).approve(address(market), type(uint256).max);
         IERC20(pt).approve(address(market), type(uint256).max);
         market.split(100_000e6);
         market.initialize(100_000e6, 100_000e6, INITIAL_ANCHOR, LN_FEE_ROOT, RESERVE_PCT);
@@ -90,7 +92,7 @@ contract FissionMarketRewardsInvariantTest is Test {
         // Actors approve.
         for (uint256 i = 0; i < actors.length; i++) {
             vm.prank(actors[i]);
-            IERC20(address(sy)).approve(address(market), type(uint256).max);
+            IERC20(syShare).approve(address(market), type(uint256).max);
             vm.prank(actors[i]);
             IERC20(pt).approve(address(market), type(uint256).max);
         }
@@ -110,7 +112,7 @@ contract FissionMarketRewardsInvariantTest is Test {
 
     /// (1) Solvency — market always holds enough SY to redeem every PT 1:1.
     function invariant_solvency() public view {
-        uint256 marketSY = IERC20(address(sy)).balanceOf(address(market));
+        uint256 marketSY = IERC20(syShare).balanceOf(address(market));
         assertGe(marketSY, IERC20(pt).totalSupply(), "solvency violated");
     }
 
