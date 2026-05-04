@@ -218,16 +218,26 @@ contract FissionFactoryTest is Test {
         new FissionFactory(admin, marketAdmin, address(0));
     }
 
-    function test_setMarketAdmin_revertsEOA() public {
+    /// @notice Post-HTS-migration: the EOA-must-be-contract guard was dropped.
+    ///         On Hedera, native ThresholdKey accounts are consensus-enforced multi-sig
+    ///         but their EVM aliases have no bytecode — the old check would have
+    ///         rejected exactly the kind of HTS-native multisig the protocol wants.
+    ///         Any non-zero address is now accepted; the operator picks a security
+    ///         model (ThresholdKey, EVM Safe, EOA-with-rotation-plan).
+    function test_setMarketAdmin_acceptsAnyNonZeroAddress() public {
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(FissionFactory.AdminMustBeContract.selector, address(0xEEE)));
-        factory.setMarketAdmin(address(0xEEE));
+        factory.setMarketAdmin(address(0xEEE)); // EOA — accepted post-HTS-migration
+        assertEq(factory.marketAdmin(), address(0xEEE));
+
+        vm.prank(admin);
+        factory.setMarketAdmin(address(factory)); // contract — also accepted
+        assertEq(factory.marketAdmin(), address(factory));
     }
 
-    function test_setMarketAdmin_succeedsWithContract() public {
+    function test_setMarketAdmin_revertsZero() public {
         vm.prank(admin);
-        factory.setMarketAdmin(address(factory));
-        assertEq(factory.marketAdmin(), address(factory));
+        vm.expectRevert(FissionFactory.ZeroAddress.selector);
+        factory.setMarketAdmin(address(0));
     }
 
     function test_setMarketAdmin_unauthorizedReverts() public {

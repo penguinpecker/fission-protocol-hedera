@@ -43,11 +43,18 @@ contract MainnetDeploy is Script {
         address syAdmin = vm.envAddress("SY_ADMIN");
         address keeper = vm.envAddress("KEEPER_ADDRESS");
 
-        // Refuse to deploy if any privileged role is the deployer EOA — the Safe +
-        // Timelock should already exist; the deployer just hands off.
-        require(factoryAdmin != deployer, "deployer should not own factory in prod");
-        require(marketAdmin != deployer, "deployer should not own markets in prod");
-        require(syAdmin != deployer, "deployer should not own SY in prod");
+        // By default, refuse if any privileged role is the deployer EOA — the Safe or
+        // Hedera ThresholdKey account should already exist and the deployer just hands
+        // off. Bypass with `ALLOW_DEPLOYER_ADMIN=1` for a deliberate solo deploy where
+        // the operator accepts the single-key-rotation-later model. Make sure you set
+        // it ONLY when you mean it; admin transfer is two-step + delayed via OZ
+        // AccessControlDefaultAdminRules so rotation is recoverable.
+        bool allowDeployerAdmin = vm.envOr("ALLOW_DEPLOYER_ADMIN", uint256(0)) == 1;
+        if (!allowDeployerAdmin) {
+            require(factoryAdmin != deployer, "deployer should not own factory in prod (ALLOW_DEPLOYER_ADMIN=1 to override)");
+            require(marketAdmin != deployer, "deployer should not own markets in prod (ALLOW_DEPLOYER_ADMIN=1 to override)");
+            require(syAdmin != deployer, "deployer should not own SY in prod (ALLOW_DEPLOYER_ADMIN=1 to override)");
+        }
 
         address stader = vm.envOr("STADER_ORACLE_ADDRESS", MainnetAddresses.STADER_STAKING);
         address npm = vm.envOr("SAUCER_V2_NPM", MainnetAddresses.SAUCER_V2_NPM);

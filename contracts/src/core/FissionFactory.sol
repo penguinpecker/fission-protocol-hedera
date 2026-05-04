@@ -70,6 +70,9 @@ contract FissionFactory is AccessControlDefaultAdminRules {
     error SYNotWhitelisted();
     error ZeroAddress();
     error MarketDurationTooShort(uint256 given, uint256 minimum);
+    // L-11 audit fix removed post-HTS-migration: see `setMarketAdmin` for rationale.
+    // The `AdminMustBeContract` error is intentionally kept (no longer thrown) so external
+    // tooling that decoded prior reverts doesn't crash.
     error AdminMustBeContract(address admin);
 
     constructor(address admin_, address marketAdmin_, address marketTreasury_)
@@ -86,11 +89,19 @@ contract FissionFactory is AccessControlDefaultAdminRules {
 
     // ───────────────────── governance ─────────────────────
 
+    /// @notice Set the marketAdmin granted to FUTURE markets. Existing markets keep
+    ///         their previously-set admin — rotation there goes through OZ
+    ///         AccessControlDefaultAdminRules' two-step delayed transfer.
+    /// @dev    The pre-HTS code rejected EOA admins via `code.length > 0` (L-11). That
+    ///         check assumed an EVM Gnosis Safe was the only "real" multisig path — wrong
+    ///         on Hedera, where native ThresholdKey accounts are consensus-enforced
+    ///         M-of-N signers but have no EVM bytecode (their EVM alias looks like an
+    ///         EOA from a contract's perspective). Dropping the check lets any address
+    ///         that can sign EVM txs serve as admin: a single-key EOA, a Hedera
+    ///         ThresholdKey account's EVM alias, an EVM Safe, or a Timelock — operators
+    ///         pick the model that fits their custody story.
     function setMarketAdmin(address newAdmin) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newAdmin == address(0)) revert ZeroAddress();
-        // L-11 audit fix: refuse EOA admin in production. The Safe (a contract) MUST
-        // own market admin so single-key compromise can't drain markets.
-        if (newAdmin.code.length == 0) revert AdminMustBeContract(newAdmin);
         emit MarketAdminUpdated(marketAdmin, newAdmin);
         marketAdmin = newAdmin;
     }
