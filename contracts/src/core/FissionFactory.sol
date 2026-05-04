@@ -157,9 +157,7 @@ contract FissionFactory is AccessControlDefaultAdminRules {
             scalarRoot,
             marketAdmin,
             marketTreasury,
-            dec,
-            string.concat("Fission LP-", suffix),
-            string.concat("fLP-", suffix)
+            dec
         );
 
         // Effects-first: stash the market in our own storage BEFORE the only external
@@ -167,13 +165,15 @@ contract FissionFactory is AccessControlDefaultAdminRules {
         markets.push(address(m));
         marketAddr = address(m);
 
-        // Market self-creates BOTH HTS-native PT and HTS-native YT inside setTokens.
-        // msg.value pays the two HTS createFungible network fees (~2 HBAR mainnet).
+        // Market self-creates THREE HTS-native tokens (PT, YT, LP) inside setTokens.
+        // msg.value pays the three createFungible network fees (~3 HBAR mainnet).
         m.setTokens{value: msg.value}(
             string.concat("Fission PT-", suffix),
             string.concat("fPT-", suffix),
             string.concat("Fission YT-", suffix),
-            string.concat("fYT-", suffix)
+            string.concat("fYT-", suffix),
+            string.concat("Fission LP-", suffix),
+            string.concat("fLP-", suffix)
         );
 
         emit MarketCreated(marketId, marketAddr, sy, m.pt(), m.yt(), expiry, scalarRoot);
@@ -209,9 +209,7 @@ contract FissionFactory is AccessControlDefaultAdminRules {
             scalarRoot,
             marketAdmin,
             marketTreasury,
-            dec,
-            string.concat("Fission LP-", suffix),
-            string.concat("fLP-", suffix)
+            dec
         );
 
         markets.push(address(m));
@@ -221,7 +219,9 @@ contract FissionFactory is AccessControlDefaultAdminRules {
             string.concat("Fission PT-", suffix),
             string.concat("fPT-", suffix),
             string.concat("Fission YT-", suffix),
-            string.concat("fYT-", suffix)
+            string.concat("fYT-", suffix),
+            string.concat("Fission LP-", suffix),
+            string.concat("fLP-", suffix)
         );
 
         emit MarketCreated(marketId, marketAddr, sy, m.pt(), m.yt(), expiry, scalarRoot);

@@ -64,9 +64,9 @@ contract ActionRouterRewardsTest is Test {
         expiry = block.timestamp + 90 days;
 
         market = new FissionMarketRewards(
-            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, "Fission LP-V2", "fLP-V2"
+            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18
         );
-        market.setTokens("fPT-V2", "fPT-V2", "fYT-V2", "fYT-V2");
+        market.setTokens("fPT-V2", "fPT-V2", "fYT-V2", "fYT-V2", "Fission LP-V2", "fLP-V2");
         pt = market.pt();
         yt = market.yt();
 

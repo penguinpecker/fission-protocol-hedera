@@ -67,9 +67,9 @@ contract FissionMarketRewardsTest is Test {
         factory = address(this);
 
         market = new FissionMarketRewards(
-            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, "Fission LP-V2", "fLP-V2"
+            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18
         );
-        market.setTokens("fPT-V2", "fPT-V2", "fYT-V2", "fYT-V2");
+        market.setTokens("fPT-V2", "fPT-V2", "fYT-V2", "fYT-V2", "lp", "lp");
         pt = market.pt();
         yt = market.yt();
 
@@ -125,51 +125,51 @@ contract FissionMarketRewardsTest is Test {
         // Build a fresh SY-like that returns wrong reward count.
         BadRewardSY bad = new BadRewardSY();
         vm.expectRevert(FissionMarketRewards.WrongRewardTokenCount.selector);
-        new FissionMarketRewards(address(bad), expiry, SCALAR_ROOT, admin, treasury, 18, "x", "x");
+        new FissionMarketRewards(address(bad), expiry, SCALAR_ROOT, admin, treasury, 18);
     }
 
     function test_constructor_revertsOnZeroSy() public {
         vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
-        new FissionMarketRewards(address(0), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x");
+        new FissionMarketRewards(address(0), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18);
     }
 
     function test_constructor_revertsOnZeroAdmin() public {
         // OZ AccessControlDefaultAdminRules rejects zero admin BEFORE our ZeroAddress check fires.
         vm.expectRevert(abi.encodeWithSignature("AccessControlInvalidDefaultAdmin(address)", address(0)));
-        new FissionMarketRewards(address(sy), block.timestamp + 90 days, SCALAR_ROOT, address(0), treasury, 18, "x", "x");
+        new FissionMarketRewards(address(sy), block.timestamp + 90 days, SCALAR_ROOT, address(0), treasury, 18);
     }
 
     function test_constructor_revertsOnZeroTreasury() public {
         vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
-        new FissionMarketRewards(address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, address(0), 18, "x", "x");
+        new FissionMarketRewards(address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, address(0), 18);
     }
 
     function test_constructor_revertsOnPastExpiry() public {
         vm.warp(1000);
         vm.expectRevert(FissionMarketRewards.MarketExpired.selector);
-        new FissionMarketRewards(address(sy), 999, SCALAR_ROOT, admin, treasury, 18, "x", "x");
+        new FissionMarketRewards(address(sy), 999, SCALAR_ROOT, admin, treasury, 18);
     }
 
     function test_constructor_revertsOnZeroScalarRoot() public {
         vm.expectRevert();
-        new FissionMarketRewards(address(sy), block.timestamp + 90 days, 0, admin, treasury, 18, "x", "x");
+        new FissionMarketRewards(address(sy), block.timestamp + 90 days, 0, admin, treasury, 18);
     }
 
     // ───────────────────── revert paths ─────────────────────
 
     function test_setTokens_revertsIfNotFactory() public {
         FissionMarketRewards mkt = new FissionMarketRewards(
-            address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
+            address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18
         );
         vm.prank(alice);
         vm.expectRevert(FissionMarketRewards.OnlyFactory.selector);
-        mkt.setTokens("p", "p", "y", "y");
+        mkt.setTokens("p", "p", "y", "y", "lp", "lp");
     }
 
     function test_setTokens_revertsIfAlreadySet() public {
         // setUp already called setTokens
         vm.expectRevert(FissionMarketRewards.TokensAlreadySet.selector);
-        market.setTokens("p", "p", "y", "y");
+        market.setTokens("p", "p", "y", "y", "lp", "lp");
     }
 
     // Removed test_setTokens_revertsOnZeroYt — Market now self-creates YT, so there's
@@ -177,7 +177,7 @@ contract FissionMarketRewardsTest is Test {
 
     function test_initialize_revertsIfTokensNotSet() public {
         FissionMarketRewards mkt = new FissionMarketRewards(
-            address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
+            address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18
         );
         vm.prank(admin);
         vm.expectRevert(FissionMarketRewards.TokensNotSet.selector);
@@ -193,9 +193,9 @@ contract FissionMarketRewardsTest is Test {
 
     function test_initialize_revertsOnZeroAmounts() public {
         FissionMarketRewards mkt = new FissionMarketRewards(
-            address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
+            address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18
         );
-        mkt.setTokens("p", "p", "y", "y");
+        mkt.setTokens("p", "p", "y", "y", "lp", "lp");
 
         vm.prank(admin);
         vm.expectRevert(FissionMarketRewards.ZeroAmount.selector);
@@ -204,9 +204,9 @@ contract FissionMarketRewardsTest is Test {
 
     function test_initialize_revertsOnReserveFeeTooHigh() public {
         FissionMarketRewards mkt = new FissionMarketRewards(
-            address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
+            address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18
         );
-        mkt.setTokens("p", "p", "y", "y");
+        mkt.setTokens("p", "p", "y", "y", "lp", "lp");
 
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(FissionMarketRewards.ReserveFeeTooHigh.selector, 101, 100));
@@ -564,7 +564,7 @@ contract FissionMarketRewardsTest is Test {
     function test_removeLiquidity_autoRedeemsPTPostExpiry() public {
         // The admin is the sole LP (from setUp's initialize). After expiry, removing
         // all LP should yield SY only (ptOut == 0).
-        uint256 lpBal = market.balanceOf(admin);
+        uint256 lpBal = IERC20(market.lp()).balanceOf(admin);
         assertGt(lpBal, 0);
         vm.warp(expiry + 1);
 

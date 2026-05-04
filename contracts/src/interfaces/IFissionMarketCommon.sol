@@ -16,6 +16,11 @@ interface IFissionMarketCommon {
     function ptAddr() external view returns (address);
     function ytAddr() external view returns (address);
 
+    /// @notice Address of the HTS-native LP token. The Market contract is no longer the
+    ///         LP token itself (that was the pre-HTS-migration design); the LP is now a
+    ///         separate HTS token that the Market mints/burns via its supply + wipe keys.
+    function lp() external view returns (address);
+
     function split(uint256 amount) external returns (uint256);
     function splitTo(uint256 amount, address ptReceiver, address ytReceiver) external returns (uint256);
     function merge(uint256 amount) external returns (uint256);

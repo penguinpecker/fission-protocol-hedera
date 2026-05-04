@@ -30,9 +30,9 @@ contract ActionRouterTest is Test {
         sy = new MockSY(address(underlying), 18);
 
         market = new FissionMarket(
-            address(sy), block.timestamp + 90 days, 75e18, admin, treasury, 18, "fLP", "fLP"
+            address(sy), block.timestamp + 90 days, 75e18, admin, treasury, 18
         );
-        market.setTokens("fPT", "fPT", "fYT", "fYT");
+        market.setTokens("fPT", "fPT", "fYT", "fYT", "fLP", "fLP");
         pt = market.pt();
         yt = market.yt();
 
@@ -180,9 +180,9 @@ contract ActionRouterTest is Test {
 
         IERC20(address(sy)).approve(address(router), 5_000e6);
         IERC20(pt).approve(address(router), 5_000e6);
-        uint256 lpBefore = market.balanceOf(alice);
+        uint256 lpBefore = IERC20(market.lp()).balanceOf(alice);
         uint256 lpOut = router.addLiquidityProportional(market, 5_000e6, 5_000e6, 0, alice, 0);
-        uint256 lpAfter = market.balanceOf(alice);
+        uint256 lpAfter = IERC20(market.lp()).balanceOf(alice);
         vm.stopPrank();
 
         assertEq(lpAfter - lpBefore, lpOut);
@@ -191,11 +191,14 @@ contract ActionRouterTest is Test {
 
     function test_removeLiquidityProportional() public {
         // Admin owns LP from initialize. Transfer some to alice and have her remove.
+        // Cache lp() before prank — vm.prank is single-shot, would otherwise be
+        // consumed by the view call and the transfer would run as test-contract.
+        address lpToken = market.lp();
         vm.prank(admin);
-        market.transfer(alice, 10_000e6);
+        IERC20(lpToken).transfer(alice, 10_000e6);
 
         vm.startPrank(alice);
-        market.approve(address(router), 10_000e6);
+        IERC20(lpToken).approve(address(router), 10_000e6);
         (uint256 syOut, uint256 ptOut) = router.removeLiquidityProportional(
             market, 10_000e6, 0, 0, alice, 0
         );

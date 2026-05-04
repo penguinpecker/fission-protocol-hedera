@@ -216,8 +216,8 @@ contract ActionRouter is ReentrancyGuardTransient {
         if (lpIn == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
 
-        IERC20(address(market)).safeTransferFrom(msg.sender, address(this), lpIn);
-        // The market burns its own LP via _burn(msg.sender, lpIn) — msg.sender of
+        IERC20(market.lp()).safeTransferFrom(msg.sender, address(this), lpIn);
+        // The market wipes its own LP via _burnLp(msg.sender, lpIn) — msg.sender of
         // removeLiquidity is the router. So the LP must be in the router's balance.
         (syOut, ptOut) = market.removeLiquidity(lpIn, minSyOut, minPtOut, receiver);
     }

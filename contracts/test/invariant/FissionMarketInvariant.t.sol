@@ -40,9 +40,9 @@ contract FissionMarketInvariantTest is Test {
         sy = new MockSY(address(underlying), 18);
 
         market = new FissionMarket(
-            address(sy), block.timestamp + 90 days, 75e18, admin, treasury, 18, "fLP-0", "fLP-0"
+            address(sy), block.timestamp + 90 days, 75e18, admin, treasury, 18
         );
-        market.setTokens("fPT-0", "fPT-0", "fYT-0", "fYT-0");
+        market.setTokens("fPT-0", "fPT-0", "fYT-0", "fYT-0", "fLP-0", "fLP-0");
         pt = market.pt();
         yt = market.yt();
 

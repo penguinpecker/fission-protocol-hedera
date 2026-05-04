@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
@@ -39,7 +38,6 @@ import {PMath} from "../libraries/PMath.sol";
 ///         that up — re-deploy a new Market for the new SY.
 contract FissionMarketRewards is
     IFissionMarketCommon,
-    ERC20,
     ReentrancyGuardTransient,
     Pausable,
     AccessControlDefaultAdminRules
@@ -81,6 +79,9 @@ contract FissionMarketRewards is
 
     /// @dev True after Market has frozen this account on YT.
     mapping(address => bool) internal _ytFrozen;
+
+    /// @notice The HTS-native LP token. Market is treasury + supplyKey + wipeKey holder.
+    address public lp;
 
     // ───────────────────── AMM pool state ─────────────────────
 
@@ -148,10 +149,8 @@ contract FissionMarketRewards is
         int256 scalarRoot_,
         address admin_,
         address treasury_,
-        uint8 assetDecimals_,
-        string memory lpName,
-        string memory lpSymbol
-    ) ERC20(lpName, lpSymbol) AccessControlDefaultAdminRules(0, admin_) {
+        uint8 assetDecimals_
+    ) AccessControlDefaultAdminRules(0, admin_) {
         if (sy_ == address(0) || admin_ == address(0) || treasury_ == address(0)) revert ZeroAddress();
         if (expiry_ <= block.timestamp) revert MarketExpired();
         if (scalarRoot_ <= 0) revert MarketMath.MarketRateScalarBelowZero();
@@ -174,11 +173,8 @@ contract FissionMarketRewards is
         _grantRole(PAUSER_ROLE, admin_);
     }
 
-    /// @notice LP shares are 18 decimals — independent of the SY/asset decimals.
-    function decimals() public pure override returns (uint8) {
-        return 18;
-    }
-
+    /// @notice Asset decimals (matches sy.decimals(), per ERC-5115). LP HTS token has
+    ///         its own decimals (18) set at HTS creation; query via `IERC20(lp)`.
     function assetDecimals() external view returns (uint8) {
         return _assetDecimals;
     }
@@ -188,55 +184,56 @@ contract FissionMarketRewards is
     /// @notice One-shot setup: Market self-creates BOTH HTS-native PT (transferable)
     ///         and HTS-native YT (frozen, AMM-only). msg.value pays the two
     ///         createFungible network fees (~2 HBAR mainnet; 0 in mock tests).
-    function setTokens(string calldata ptName, string calldata ptSymbol, string calldata ytName, string calldata ytSymbol)
+    function setTokens(
+        string calldata ptName,
+        string calldata ptSymbol,
+        string calldata ytName,
+        string calldata ytSymbol,
+        string calldata lpName,
+        string calldata lpSymbol
+    )
         external
         payable
     {
         if (msg.sender != factory) revert OnlyFactory();
         if (pt != address(0)) revert TokensAlreadySet();
 
-        // PT: transferable, SUPPLY + WIPE keys.
-        {
-            IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](2);
-            keys[0] = HtsHelpers.makeKey(16, address(this));
-            keys[1] = HtsHelpers.makeKey(8, address(this));
-
-            IHederaTokenService.HederaToken memory spec = IHederaTokenService.HederaToken({
-                name: ptName,
-                symbol: ptSymbol,
-                treasury: address(this),
-                memo: "",
-                tokenSupplyType: false,
-                maxSupply: 0,
-                freezeDefault: false,
-                tokenKeys: keys,
-                expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: address(this), autoRenewPeriod: 7776000})
-            });
-            pt = HtsHelpers.createFungible(spec, int32(uint32(_assetDecimals)));
-        }
-
-        // YT: AMM-only, SUPPLY + FREEZE + WIPE keys, freezeDefault=false.
-        {
-            IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](3);
-            keys[0] = HtsHelpers.makeKey(16, address(this));
-            keys[1] = HtsHelpers.makeKey(4, address(this));
-            keys[2] = HtsHelpers.makeKey(8, address(this));
-
-            IHederaTokenService.HederaToken memory spec = IHederaTokenService.HederaToken({
-                name: ytName,
-                symbol: ytSymbol,
-                treasury: address(this),
-                memo: "",
-                tokenSupplyType: false,
-                maxSupply: 0,
-                freezeDefault: false,
-                tokenKeys: keys,
-                expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: address(this), autoRenewPeriod: 7776000})
-            });
-            yt = HtsHelpers.createFungible(spec, int32(uint32(_assetDecimals)));
-        }
+        // PT: transferable HTS, SUPPLY + WIPE keys.
+        pt = _createHtsToken(ptName, ptSymbol, false, true, _assetDecimals);
+        // YT: AMM-only HTS, SUPPLY + FREEZE + WIPE keys, freezeDefault=false.
+        yt = _createHtsToken(ytName, ytSymbol, true, true, _assetDecimals);
+        // LP: transferable HTS, 18 decimals.
+        lp = _createHtsToken(lpName, lpSymbol, false, true, 18);
 
         emit TokensInitialized(pt, yt);
+    }
+
+    function _createHtsToken(
+        string memory name_,
+        string memory symbol_,
+        bool withFreezeKey,
+        bool withWipeKey,
+        uint8 dec
+    ) internal returns (address htsToken) {
+        uint256 keyCount = 1 + (withFreezeKey ? 1 : 0) + (withWipeKey ? 1 : 0);
+        IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](keyCount);
+        uint256 idx;
+        keys[idx++] = HtsHelpers.makeKey(16, address(this));
+        if (withFreezeKey) keys[idx++] = HtsHelpers.makeKey(4, address(this));
+        if (withWipeKey) keys[idx++] = HtsHelpers.makeKey(8, address(this));
+
+        IHederaTokenService.HederaToken memory spec = IHederaTokenService.HederaToken({
+            name: name_,
+            symbol: symbol_,
+            treasury: address(this),
+            memo: "",
+            tokenSupplyType: false,
+            maxSupply: 0,
+            freezeDefault: false,
+            tokenKeys: keys,
+            expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: address(this), autoRenewPeriod: 7776000})
+        });
+        return HtsHelpers.createFungible(spec, int32(uint32(dec)));
     }
 
     function ptAddr() external view returns (address) {
@@ -282,6 +279,21 @@ contract FissionMarketRewards is
         }
     }
 
+    function _mintLp(address to, uint256 amount) internal {
+        HtsHelpers.mintToTreasury(lp, amount);
+        if (to != address(this)) {
+            HtsHelpers.transfer(lp, address(this), to, amount);
+        }
+    }
+
+    function _burnLp(address from, uint256 amount) internal {
+        if (from == address(this)) {
+            HtsHelpers.burnFromTreasury(lp, amount);
+        } else {
+            HtsHelpers.wipeFrom(lp, from, amount);
+        }
+    }
+
     /// @notice Admin-gated wipe of caller's own YT (bootstrap helper). Settles reward
     ///         accrual first; same footprint as FissionMarket.seedBurnYt.
     function seedBurnYt(uint256 amount) external onlyRole(ADMIN_ROLE) {
@@ -300,7 +312,7 @@ contract FissionMarketRewards is
     {
         if (block.timestamp >= expiry) revert MarketExpired();
         if (pt == address(0)) revert TokensNotSet();
-        if (totalSupply() != 0) revert AlreadyInitialized();
+        if (lp != address(0) && IERC20(lp).totalSupply() != 0) revert AlreadyInitialized();
         if (syIn == 0 || ptIn == 0) revert ZeroAmount();
         if (reserveFeePercent_ > MAX_RESERVE_FEE_PERCENT) revert ReserveFeeTooHigh(reserveFeePercent_, MAX_RESERVE_FEE_PERCENT);
         MarketMath.validateLnFeeRateRoot(lnFeeRateRoot_);
@@ -317,8 +329,8 @@ contract FissionMarketRewards is
         uint256 lpRaw = PMath.sqrt(syIn * ptIn);
         if (lpRaw <= MarketMath.MINIMUM_LIQUIDITY) revert InsufficientLiquidity();
         lpOut = lpRaw - MarketMath.MINIMUM_LIQUIDITY;
-        _mint(address(0xdEaD), MarketMath.MINIMUM_LIQUIDITY);
-        _mint(msg.sender, lpOut);
+        _mintLp(address(0xdEaD), MarketMath.MINIMUM_LIQUIDITY);
+        _mintLp(msg.sender, lpOut);
 
         totalSy = syIn;
         totalPt = ptIn;
@@ -476,7 +488,7 @@ contract FissionMarketRewards is
         if (block.timestamp >= expiry) revert MarketExpired();
         if (syIn == 0 || ptIn == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
-        if (totalSupply() == 0) revert NotInitialized();
+        if (lp == address(0) || IERC20(lp).totalSupply() == 0) revert NotInitialized();
 
         MarketMath.MarketState memory ms = _loadState();
         (int256 lpToMint, int256 syUsed, int256 ptUsed,) =
@@ -490,7 +502,7 @@ contract FissionMarketRewards is
 
         totalSy += uint256(syUsed);
         totalPt += uint256(ptUsed);
-        _mint(receiver, lpOut);
+        _mintLp(receiver, lpOut);
 
         emit LiquidityAdded(msg.sender, receiver, uint256(syUsed), uint256(ptUsed), lpOut);
     }
@@ -513,7 +525,7 @@ contract FissionMarketRewards is
         syOut = uint256(syOutI);
         ptOut = uint256(ptOutI);
 
-        _burn(msg.sender, lpIn);
+        _burnLp(msg.sender, lpIn);
         totalSy -= syOut;
         totalPt -= ptOut;
 
@@ -719,7 +731,7 @@ contract FissionMarketRewards is
         // L-7 audit fix: safe-cast helpers.
         ms.totalPt = PMath.toInt(totalPt);
         ms.totalSy = PMath.toInt(totalSy);
-        ms.totalLp = PMath.toInt(totalSupply());
+        ms.totalLp = PMath.toInt(IERC20(lp).totalSupply());
         ms.expiry = expiry;
         ms.scalarRoot = scalarRoot;
         ms.lnFeeRateRoot = lnFeeRateRoot;

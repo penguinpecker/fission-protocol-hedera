@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
@@ -30,7 +29,6 @@ import {PMath} from "../libraries/PMath.sol";
 ///                  pt.totalSupply() * 1e18 + sum(userOwed) * sy.exchangeRate()`
 contract FissionMarket is
     IFissionMarketCommon,
-    ERC20,
     ReentrancyGuardTransient,
     Pausable,
     AccessControlDefaultAdminRules
@@ -75,6 +73,11 @@ contract FissionMarket is
     /// @dev True after Market has frozen this account on YT — i.e. they've previously
     ///      received YT. Used to decide whether `_mintYt` needs to unfreeze first.
     mapping(address => bool) internal _ytFrozen;
+
+    /// @notice The HTS-native LP token. Market is treasury + supplyKey + wipeKey holder.
+    ///         No freeze key — LP is freely transferable (pausing trading would strand
+    ///         users on secondary markets).
+    address public lp;
 
     // ───────────────────── AMM pool state ─────────────────────
 
@@ -156,10 +159,8 @@ contract FissionMarket is
         int256 scalarRoot_,
         address admin_,
         address treasury_,
-        uint8 assetDecimals_,
-        string memory lpName,
-        string memory lpSymbol
-    ) ERC20(lpName, lpSymbol) AccessControlDefaultAdminRules(0, admin_) {
+        uint8 assetDecimals_
+    ) AccessControlDefaultAdminRules(0, admin_) {
         if (sy_ == address(0) || admin_ == address(0) || treasury_ == address(0)) revert ZeroAddress();
         if (expiry_ <= block.timestamp) revert MarketExpired();
         if (scalarRoot_ <= 0) revert MarketMath.MarketRateScalarBelowZero();
@@ -174,12 +175,8 @@ contract FissionMarket is
         _grantRole(PAUSER_ROLE, admin_);
     }
 
-    /// @notice LP shares are 18 decimals — independent of the SY/asset decimals.
-    function decimals() public pure override returns (uint8) {
-        return 18;
-    }
-
-    /// @notice Asset decimals (matches sy.decimals(), per ERC-5115).
+    /// @notice Asset decimals (matches sy.decimals(), per ERC-5115). LP HTS token has
+    ///         its own decimals (18) set at HTS creation; query via `IERC20(lp)`.
     function assetDecimals() external view returns (uint8) {
         return _assetDecimals;
     }
@@ -194,7 +191,14 @@ contract FissionMarket is
     ///         The freeze key gives Market the authority to unfreeze/refreeze on demand —
     ///         used during YT mint to ferry tokens through `freezeDefault = true`.
     ///         Wipe is used for burn-from-arbitrary-user (merge/redeemAfterExpiry/swap).
-    function setTokens(string calldata ptName, string calldata ptSymbol, string calldata ytName, string calldata ytSymbol)
+    function setTokens(
+        string calldata ptName,
+        string calldata ptSymbol,
+        string calldata ytName,
+        string calldata ytSymbol,
+        string calldata lpName,
+        string calldata lpSymbol
+    )
         external
         payable
         onlyFactory
@@ -202,49 +206,44 @@ contract FissionMarket is
         if (pt != address(0)) revert TokensAlreadySet();
 
         // PT: transferable HTS token. SUPPLY + WIPE keys.
-        {
-            IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](2);
-            keys[0] = HtsHelpers.makeKey(16, address(this)); // SUPPLY
-            keys[1] = HtsHelpers.makeKey(8, address(this));  // WIPE
-
-            IHederaTokenService.HederaToken memory spec = IHederaTokenService.HederaToken({
-                name: ptName,
-                symbol: ptSymbol,
-                treasury: address(this),
-                memo: "",
-                tokenSupplyType: false,
-                maxSupply: 0,
-                freezeDefault: false,
-                tokenKeys: keys,
-                expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: address(this), autoRenewPeriod: 7776000})
-            });
-            pt = HtsHelpers.createFungible(spec, int32(uint32(_assetDecimals)));
-        }
-
-        // YT: AMM-only HTS token. SUPPLY + FREEZE + WIPE keys, freezeDefault=FALSE.
-        // See `yt` storage docstring for why default=false (HIP-904 auto-associate
-        // race) — Market freezes recipients explicitly after each transfer.
-        {
-            IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](3);
-            keys[0] = HtsHelpers.makeKey(16, address(this)); // SUPPLY
-            keys[1] = HtsHelpers.makeKey(4, address(this));  // FREEZE
-            keys[2] = HtsHelpers.makeKey(8, address(this));  // WIPE
-
-            IHederaTokenService.HederaToken memory spec = IHederaTokenService.HederaToken({
-                name: ytName,
-                symbol: ytSymbol,
-                treasury: address(this),
-                memo: "",
-                tokenSupplyType: false,
-                maxSupply: 0,
-                freezeDefault: false,
-                tokenKeys: keys,
-                expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: address(this), autoRenewPeriod: 7776000})
-            });
-            yt = HtsHelpers.createFungible(spec, int32(uint32(_assetDecimals)));
-        }
+        pt = _createHtsToken(ptName, ptSymbol, false, true, _assetDecimals);
+        // YT: AMM-only HTS token. SUPPLY + FREEZE + WIPE, freezeDefault=FALSE
+        // (HIP-904 auto-associate race — see `yt` storage docstring).
+        yt = _createHtsToken(ytName, ytSymbol, true, true, _assetDecimals);
+        // LP: transferable HTS token, 18 decimals (independent of SY decimals).
+        lp = _createHtsToken(lpName, lpSymbol, false, true, 18);
 
         emit TokensInitialized(pt, yt);
+    }
+
+    /// @dev Build a fungible HTS token spec. `withFreezeKey` adds key bit 4; `withWipeKey`
+    ///      adds key bit 8. SUPPLY (16) is always added. Treasury = this Market.
+    function _createHtsToken(
+        string memory name_,
+        string memory symbol_,
+        bool withFreezeKey,
+        bool withWipeKey,
+        uint8 dec
+    ) internal returns (address htsToken) {
+        uint256 keyCount = 1 + (withFreezeKey ? 1 : 0) + (withWipeKey ? 1 : 0);
+        IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](keyCount);
+        uint256 idx;
+        keys[idx++] = HtsHelpers.makeKey(16, address(this)); // SUPPLY
+        if (withFreezeKey) keys[idx++] = HtsHelpers.makeKey(4, address(this));
+        if (withWipeKey) keys[idx++] = HtsHelpers.makeKey(8, address(this));
+
+        IHederaTokenService.HederaToken memory spec = IHederaTokenService.HederaToken({
+            name: name_,
+            symbol: symbol_,
+            treasury: address(this),
+            memo: "",
+            tokenSupplyType: false,
+            maxSupply: 0,
+            freezeDefault: false,
+            tokenKeys: keys,
+            expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: address(this), autoRenewPeriod: 7776000})
+        });
+        return HtsHelpers.createFungible(spec, int32(uint32(dec)));
     }
 
     /// @notice Address-typed sibling of `pt()` — used by ActionRouter via IFissionMarketCommon.
@@ -300,6 +299,23 @@ contract FissionMarket is
         }
     }
 
+    /// @dev Mint HTS LP to `to`: mint to treasury, transfer out (LP is unfrozen).
+    function _mintLp(address to, uint256 amount) internal {
+        HtsHelpers.mintToTreasury(lp, amount);
+        if (to != address(this)) {
+            HtsHelpers.transfer(lp, address(this), to, amount);
+        }
+    }
+
+    /// @dev Burn HTS LP. Treasury via burnFromTreasury; arbitrary accounts via wipe.
+    function _burnLp(address from, uint256 amount) internal {
+        if (from == address(this)) {
+            HtsHelpers.burnFromTreasury(lp, amount);
+        } else {
+            HtsHelpers.wipeFrom(lp, from, amount);
+        }
+    }
+
     /// @notice Admin-gated wipe of caller's own YT. Used during bootstrap to dispose
     ///         of the YT minted as a side-effect of `split` (admin needs PT to call
     ///         `initialize`, but split also produces matching YT). Settles accrued
@@ -328,7 +344,7 @@ contract FissionMarket is
         returns (uint256 lpOut)
     {
         if (pt == address(0)) revert TokensNotSet();
-        if (totalSupply() != 0) revert AlreadyInitialized();
+        if (lp != address(0) && IERC20(lp).totalSupply() != 0) revert AlreadyInitialized();
         if (syIn == 0 || ptIn == 0) revert ZeroAmount();
         if (reserveFeePercent_ > MAX_RESERVE_FEE_PERCENT) revert ReserveFeeTooHigh(reserveFeePercent_, MAX_RESERVE_FEE_PERCENT);
         MarketMath.validateLnFeeRateRoot(lnFeeRateRoot_);
@@ -346,8 +362,8 @@ contract FissionMarket is
         if (lpRaw <= MarketMath.MINIMUM_LIQUIDITY) revert InsufficientLiquidity();
         lpOut = lpRaw - MarketMath.MINIMUM_LIQUIDITY;
         // burn-to-DEAD donation defence (Uniswap v2 pattern)
-        _mint(address(0xdEaD), MarketMath.MINIMUM_LIQUIDITY);
-        _mint(msg.sender, lpOut);
+        _mintLp(address(0xdEaD), MarketMath.MINIMUM_LIQUIDITY);
+        _mintLp(msg.sender, lpOut);
 
         totalSy = syIn;
         totalPt = ptIn;
@@ -514,7 +530,7 @@ contract FissionMarket is
     {
         if (syIn == 0 || ptIn == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
-        if (totalSupply() == 0) revert NotInitialized();
+        if (lp == address(0) || IERC20(lp).totalSupply() == 0) revert NotInitialized();
 
         MarketMath.MarketState memory ms = _loadState();
         (int256 lpToMint, int256 syUsed, int256 ptUsed,) =
@@ -528,7 +544,7 @@ contract FissionMarket is
 
         totalSy += uint256(syUsed);
         totalPt += uint256(ptUsed);
-        _mint(receiver, lpOut);
+        _mintLp(receiver, lpOut);
 
         emit LiquidityAdded(msg.sender, receiver, uint256(syUsed), uint256(ptUsed), lpOut);
     }
@@ -554,7 +570,7 @@ contract FissionMarket is
         syOut = uint256(syOutI);
         ptOut = uint256(ptOutI);
 
-        _burn(msg.sender, lpIn);
+        _burnLp(msg.sender, lpIn);
         totalSy -= syOut;
         totalPt -= ptOut;
 
@@ -725,7 +741,7 @@ contract FissionMarket is
         // silently wrapping to a negative value (which would corrupt the AMM math).
         ms.totalPt = PMath.toInt(totalPt);
         ms.totalSy = PMath.toInt(totalSy);
-        ms.totalLp = PMath.toInt(totalSupply());
+        ms.totalLp = PMath.toInt(IERC20(lp).totalSupply());
         ms.expiry = expiry;
         ms.scalarRoot = scalarRoot;
         ms.lnFeeRateRoot = lnFeeRateRoot;

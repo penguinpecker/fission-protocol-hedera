@@ -48,11 +48,8 @@ contract FissionMarketTest is Test {
             SCALAR_ROOT,
             admin,
             treasury,
-            18,
-            "Fission LP-0",
-            "fLP-0"
-        );
-        market.setTokens("Fission PT-0", "fPT-0", "Fission YT-0", "fYT-0");
+             18        );
+        market.setTokens("Fission PT-0", "fPT-0", "Fission YT-0", "fYT-0", "lp", "lp");
         pt = market.pt();
         yt = market.yt();
 
@@ -92,24 +89,24 @@ contract FissionMarketTest is Test {
         assertEq(market.factory(), address(this));
         assertEq(market.totalSy(), 100_000e6);
         assertEq(market.totalPt(), 100_000e6);
-        assertGt(market.totalSupply(), 0);
+        assertGt(IERC20(market.lp()).totalSupply(), 0);
         assertGt(market.lastLnImpliedRate(), 0);
         assertEq(market.globalIndex(), 1e18); // sy.exchangeRate at init
     }
 
     function test_setTokens_oneShot() public {
         vm.expectRevert(FissionMarket.TokensAlreadySet.selector);
-        market.setTokens("x", "x", "x", "x");
+        market.setTokens("x", "x", "x", "x", "lp", "lp");
     }
 
     function test_setTokens_onlyFactory() public {
         // Deploy a fresh market with no tokens set.
         FissionMarket m2 = new FissionMarket(
-            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, "x", "x"
+            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18
         );
         vm.prank(alice);
         vm.expectRevert(FissionMarket.OnlyFactory.selector);
-        m2.setTokens("x", "x", "x", "x");
+        m2.setTokens("x", "x", "x", "x", "lp", "lp");
     }
 
     function test_initialize_oneShot() public {
@@ -190,9 +187,9 @@ contract FissionMarketTest is Test {
         market.split(20_000e6);
         IERC20(pt).approve(address(market), type(uint256).max);
 
-        uint256 lpBefore = market.balanceOf(alice);
+        uint256 lpBefore = IERC20(market.lp()).balanceOf(alice);
         uint256 lpOut = market.addLiquidity(10_000e6, 10_000e6, 0, alice);
-        uint256 lpAfter = market.balanceOf(alice);
+        uint256 lpAfter = IERC20(market.lp()).balanceOf(alice);
         vm.stopPrank();
 
         assertEq(lpAfter - lpBefore, lpOut);
@@ -203,7 +200,7 @@ contract FissionMarketTest is Test {
 
     function test_removeLiquidity_proportional() public {
         // Admin (who initialized) holds the LP. Burn half.
-        uint256 lpBefore = market.balanceOf(admin);
+        uint256 lpBefore = IERC20(market.lp()).balanceOf(admin);
         uint256 lpToRemove = lpBefore / 2;
         assertGt(lpToRemove, 0, "admin should hold LP from init");
 
@@ -375,23 +372,23 @@ contract FissionMarketTest is Test {
 
     function test_constructor_revertsOnZeroSy() public {
         vm.expectRevert(FissionMarket.ZeroAddress.selector);
-        new FissionMarket(address(0), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x");
+        new FissionMarket(address(0), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18);
     }
 
     function test_constructor_revertsOnZeroTreasury() public {
         vm.expectRevert(FissionMarket.ZeroAddress.selector);
-        new FissionMarket(address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, address(0), 18, "x", "x");
+        new FissionMarket(address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, address(0), 18);
     }
 
     function test_constructor_revertsOnPastExpiry() public {
         vm.warp(1000);
         vm.expectRevert(FissionMarket.MarketExpired.selector);
-        new FissionMarket(address(sy), 999, SCALAR_ROOT, admin, treasury, 18, "x", "x");
+        new FissionMarket(address(sy), 999, SCALAR_ROOT, admin, treasury, 18);
     }
 
     function test_constructor_revertsOnZeroScalarRoot() public {
         vm.expectRevert();
-        new FissionMarket(address(sy), block.timestamp + 90 days, 0, admin, treasury, 18, "x", "x");
+        new FissionMarket(address(sy), block.timestamp + 90 days, 0, admin, treasury, 18);
     }
 
     // Removed test_setTokens_revertsOnZeroYt — Market now self-creates YT inside setTokens,
@@ -399,7 +396,7 @@ contract FissionMarketTest is Test {
 
     function test_initialize_revertsIfTokensNotSet() public {
         FissionMarket m2 = new FissionMarket(
-            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, "x", "x"
+            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18
         );
         vm.prank(admin);
         vm.expectRevert(FissionMarket.TokensNotSet.selector);
@@ -408,9 +405,9 @@ contract FissionMarketTest is Test {
 
     function test_initialize_revertsOnZeroAmounts() public {
         FissionMarket m2 = new FissionMarket(
-            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, "x", "x"
+            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18
         );
-        m2.setTokens("p", "p", "y", "y");
+        m2.setTokens("p", "p", "y", "y", "lp", "lp");
 
         vm.prank(admin);
         vm.expectRevert(FissionMarket.ZeroAmount.selector);
@@ -419,9 +416,9 @@ contract FissionMarketTest is Test {
 
     function test_initialize_revertsOnReserveFeeTooHigh() public {
         FissionMarket m2 = new FissionMarket(
-            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, "x", "x"
+            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18
         );
-        m2.setTokens("p", "p", "y", "y");
+        m2.setTokens("p", "p", "y", "y", "lp", "lp");
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(FissionMarket.ReserveFeeTooHigh.selector, 101, 100));
         m2.initialize(1e18, 1e18, INITIAL_ANCHOR, LN_FEE_ROOT, 101);

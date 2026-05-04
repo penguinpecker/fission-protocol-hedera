@@ -63,9 +63,9 @@ contract FissionMarketRewardsInvariantTest is Test {
 
         uint256 expiry_ = block.timestamp + 90 days;
         market = new FissionMarketRewards(
-            address(sy), expiry_, SCALAR_ROOT, admin, treasury, 18, "fLP-V2", "fLP-V2"
+            address(sy), expiry_, SCALAR_ROOT, admin, treasury, 18
         );
-        market.setTokens("fPT-V2", "fPT-V2", "fYT-V2", "fYT-V2");
+        market.setTokens("fPT-V2", "fPT-V2", "fYT-V2", "fYT-V2", "fLP-V2", "fLP-V2");
         pt = market.pt();
         yt = market.yt();
 
