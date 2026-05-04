@@ -5,6 +5,8 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
 import {FissionFactory} from "../src/core/FissionFactory.sol";
+import {StandardMarketDeployer} from "../src/core/StandardMarketDeployer.sol";
+import {RewardsMarketDeployer} from "../src/core/RewardsMarketDeployer.sol";
 import {ActionRouter} from "../src/periphery/ActionRouter.sol";
 import {SY_HBARX} from "../src/sy/SY_HBARX.sol";
 import {SY_SaucerSwapV2LP} from "../src/sy/SY_SaucerSwapV2LP.sol";
@@ -89,25 +91,31 @@ contract MainnetDeploy is Script {
         console2.log("  tickLower      =", int256(tickLower));
         console2.log("  tickUpper      =", int256(tickUpper));
 
-        // HTS createFungibleToken precompile fee — paid in HBAR via msg.value at the
-        // SY constructor. Hedera mainnet charges roughly 1 HBAR per createFungible;
-        // we attach 2 HBAR per SY as a safety margin for future fee bumps. Excess
-        // stays inside the SY contract and can be reclaimed by admin via a sweep
-        // helper if ever added.
-        uint256 SY_CREATE_FEE = 2 ether; // 2 HBAR
+        // HTS createFungibleToken precompile fee — paid in HBAR via msg.value to the
+        // SY's `initShareToken()` post-deploy. ~2 HBAR per SY on mainnet covers the
+        // create + 90-day auto-renew prepayment.
+        uint256 SY_INIT_FEE = 2 ether;
 
         vm.startBroadcast();
 
         // ── Core ──
-        FissionFactory factory = new FissionFactory(factoryAdmin, marketAdmin, marketTreasury);
+        StandardMarketDeployer standardDeployer = new StandardMarketDeployer();
+        RewardsMarketDeployer rewardsDeployer = new RewardsMarketDeployer();
+        FissionFactory factory =
+            new FissionFactory(factoryAdmin, marketAdmin, marketTreasury, standardDeployer, rewardsDeployer);
         ActionRouter router = new ActionRouter();
 
         // ── SY_HBARX (rate-growth) ──
-        SY_HBARX syHbarx = new SY_HBARX{value: SY_CREATE_FEE}(MainnetAddresses.HBARX, stader, syAdmin, 0);
+        // Two-step: deploy first (cheap, no precompile), then initShareToken with HBAR.
+        // The precompile-from-constructor pattern doesn't work on Hedera consensus —
+        // the spawned child TOKENCREATION tx ends up with max_fee=0. Calling the
+        // precompile from a regular external payable function works correctly.
+        SY_HBARX syHbarx = new SY_HBARX(MainnetAddresses.HBARX, stader, syAdmin, 0);
+        syHbarx.initShareToken{value: SY_INIT_FEE}();
         syHbarx.grantRole(syHbarx.KEEPER_ROLE(), keeper);
 
         // ── SY_SaucerSwapV2LP (Pendle-Kyber pattern, no keeper) ──
-        SY_SaucerSwapV2LP sySaucerV2 = new SY_SaucerSwapV2LP{value: SY_CREATE_FEE}(
+        SY_SaucerSwapV2LP sySaucerV2 = new SY_SaucerSwapV2LP(
             "Fission SY-SaucerV2LP",
             "fSY-SS-V2",
             t0,
@@ -119,6 +127,7 @@ contract MainnetDeploy is Script {
             syAdmin,
             0
         );
+        sySaucerV2.initShareToken{value: SY_INIT_FEE}();
         // No keeper role grant — SY_SaucerSwapV2LP exposes a public `harvest()` and
         // doesn't post any rate. The market's reward distribution pulls automatically.
 

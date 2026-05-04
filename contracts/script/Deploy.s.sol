@@ -5,6 +5,8 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
 import {FissionFactory} from "../src/core/FissionFactory.sol";
+import {StandardMarketDeployer} from "../src/core/StandardMarketDeployer.sol";
+import {RewardsMarketDeployer} from "../src/core/RewardsMarketDeployer.sol";
 import {ActionRouter} from "../src/periphery/ActionRouter.sol";
 
 /// @title  Deploy — first-time deploy of Factory + Router on Hedera (testnet/mainnet).
@@ -33,7 +35,10 @@ contract Deploy is Script {
         console2.log("  chainId        =", block.chainid);
 
         vm.startBroadcast();
-        FissionFactory factory = new FissionFactory(factoryAdmin, marketAdmin, marketTreasury);
+        StandardMarketDeployer standardDeployer = new StandardMarketDeployer();
+        RewardsMarketDeployer rewardsDeployer = new RewardsMarketDeployer();
+        FissionFactory factory =
+            new FissionFactory(factoryAdmin, marketAdmin, marketTreasury, standardDeployer, rewardsDeployer);
         ActionRouter router = new ActionRouter();
         vm.stopBroadcast();
 

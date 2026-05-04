@@ -6,6 +6,8 @@ import {AccessControlDefaultAdminRules} from
 
 import {FissionMarket} from "./FissionMarket.sol";
 import {FissionMarketRewards} from "./FissionMarketRewards.sol";
+import {StandardMarketDeployer} from "./StandardMarketDeployer.sol";
+import {RewardsMarketDeployer} from "./RewardsMarketDeployer.sol";
 import {IStandardizedYield} from "../interfaces/IStandardizedYield.sol";
 
 /// @title  FissionFactory — deploys per-maturity Markets with whitelisted SY tokens.
@@ -39,6 +41,12 @@ contract FissionFactory is AccessControlDefaultAdminRules {
 
     /// @notice Default treasury set on every newly created Market. Updatable.
     address public marketTreasury;
+
+    /// @notice Bytecode-isolation deployers. The Market initcodes live in these
+    ///         external contracts so this factory's runtime stays under Hedera's
+    ///         15M-gas-per-tx ContractCreate cap. Immutable — set at construction.
+    StandardMarketDeployer public immutable standardDeployer;
+    RewardsMarketDeployer public immutable rewardsDeployer;
 
     struct PendingSY {
         uint64 proposedAt;
@@ -75,14 +83,23 @@ contract FissionFactory is AccessControlDefaultAdminRules {
     // tooling that decoded prior reverts doesn't crash.
     error AdminMustBeContract(address admin);
 
-    constructor(address admin_, address marketAdmin_, address marketTreasury_)
-        AccessControlDefaultAdminRules(0, admin_)
-    {
-        if (admin_ == address(0) || marketAdmin_ == address(0) || marketTreasury_ == address(0)) {
+    constructor(
+        address admin_,
+        address marketAdmin_,
+        address marketTreasury_,
+        StandardMarketDeployer standardDeployer_,
+        RewardsMarketDeployer rewardsDeployer_
+    ) AccessControlDefaultAdminRules(0, admin_) {
+        if (
+            admin_ == address(0) || marketAdmin_ == address(0) || marketTreasury_ == address(0)
+                || address(standardDeployer_) == address(0) || address(rewardsDeployer_) == address(0)
+        ) {
             revert ZeroAddress();
         }
         marketAdmin = marketAdmin_;
         marketTreasury = marketTreasury_;
+        standardDeployer = standardDeployer_;
+        rewardsDeployer = rewardsDeployer_;
         _grantRole(SY_REVIEWER_ROLE, admin_);
         _grantRole(MARKET_CREATOR_ROLE, admin_);
     }
@@ -162,13 +179,14 @@ contract FissionFactory is AccessControlDefaultAdminRules {
         IStandardizedYield syIface = IStandardizedYield(sy);
         (, , uint8 dec) = syIface.assetInfo();
 
-        FissionMarket m = new FissionMarket(
+        FissionMarket m = standardDeployer.deploy(
             sy,
             expiry,
             scalarRoot,
             marketAdmin,
             marketTreasury,
-            dec
+            dec,
+            address(this)
         );
 
         // Effects-first: stash the market in our own storage BEFORE the only external
@@ -214,13 +232,14 @@ contract FissionFactory is AccessControlDefaultAdminRules {
         IStandardizedYield syIface = IStandardizedYield(sy);
         (, , uint8 dec) = syIface.assetInfo();
 
-        FissionMarketRewards m = new FissionMarketRewards(
+        FissionMarketRewards m = rewardsDeployer.deploy(
             sy,
             expiry,
             scalarRoot,
             marketAdmin,
             marketTreasury,
-            dec
+            dec,
+            address(this)
         );
 
         markets.push(address(m));

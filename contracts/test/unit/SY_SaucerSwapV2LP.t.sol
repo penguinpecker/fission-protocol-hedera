@@ -57,6 +57,7 @@ contract SY_SaucerSwapV2LPTest is Test {
             admin,
             0
         );
+        sy.initShareToken();
         syShare = sy.shareToken();
 
         // Stock everyone with both tokens.

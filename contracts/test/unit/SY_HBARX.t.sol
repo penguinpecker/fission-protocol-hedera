@@ -66,6 +66,7 @@ contract SY_HBARX_Test is Test {
         stader = new MockStaderOracle(1.05e18);
 
         sy = new SY_HBARX(address(hbarx), address(stader), admin, 0);
+        sy.initShareToken();
         syShare = sy.shareToken();
 
         bytes32 keeperRole = sy.KEEPER_ROLE();

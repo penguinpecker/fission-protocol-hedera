@@ -7,8 +7,11 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 
 import {FissionFactory} from "../../src/core/FissionFactory.sol";
 import {FissionMarket} from "../../src/core/FissionMarket.sol";
+import {StandardMarketDeployer} from "../../src/core/StandardMarketDeployer.sol";
+import {RewardsMarketDeployer} from "../../src/core/RewardsMarketDeployer.sol";
 import {MockSY, MockERC20} from "../mocks/MockSY.sol";
 import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
+import {FactoryTestHelper} from "../utils/FactoryTestHelper.sol";
 
 contract FissionFactoryTest is Test {
     FissionFactory factory;
@@ -31,7 +34,7 @@ contract FissionFactoryTest is Test {
         underlying = new MockERC20("USD", "USD", 18);
         sy = new MockSY(address(underlying), 18);
 
-        factory = new FissionFactory(admin, marketAdmin, treasury);
+        factory = FactoryTestHelper.deploy(admin, marketAdmin, treasury);
 
         reviewerRole = factory.SY_REVIEWER_ROLE();
         creatorRole = factory.MARKET_CREATOR_ROLE();
@@ -53,16 +56,19 @@ contract FissionFactoryTest is Test {
     }
 
     function test_init_revertsZero() public {
+        StandardMarketDeployer sd = new StandardMarketDeployer();
+        RewardsMarketDeployer rd = new RewardsMarketDeployer();
+
         // AccessControlDefaultAdminRules' constructor reverts before our ZeroAddress check
         // when admin is zero — that's still the desired behaviour (no zero admin).
         vm.expectRevert();
-        new FissionFactory(address(0), marketAdmin, treasury);
+        new FissionFactory(address(0), marketAdmin, treasury, sd, rd);
 
         // For the marketAdmin / treasury zero cases, our explicit ZeroAddress fires.
         vm.expectRevert(FissionFactory.ZeroAddress.selector);
-        new FissionFactory(admin, address(0), treasury);
+        new FissionFactory(admin, address(0), treasury, sd, rd);
         vm.expectRevert(FissionFactory.ZeroAddress.selector);
-        new FissionFactory(admin, marketAdmin, address(0));
+        new FissionFactory(admin, marketAdmin, address(0), sd, rd);
     }
 
     // ───── SY review window ─────
@@ -203,19 +209,25 @@ contract FissionFactoryTest is Test {
         // ───── revert-path coverage ─────
 
     function test_constructor_revertsZeroAdmin() public {
+        StandardMarketDeployer sd = new StandardMarketDeployer();
+        RewardsMarketDeployer rd = new RewardsMarketDeployer();
         // OZ checks AccessControlInvalidDefaultAdmin first
         vm.expectRevert(abi.encodeWithSignature("AccessControlInvalidDefaultAdmin(address)", address(0)));
-        new FissionFactory(address(0), marketAdmin, treasury);
+        new FissionFactory(address(0), marketAdmin, treasury, sd, rd);
     }
 
     function test_constructor_revertsZeroMarketAdmin() public {
+        StandardMarketDeployer sd = new StandardMarketDeployer();
+        RewardsMarketDeployer rd = new RewardsMarketDeployer();
         vm.expectRevert(FissionFactory.ZeroAddress.selector);
-        new FissionFactory(admin, address(0), treasury);
+        new FissionFactory(admin, address(0), treasury, sd, rd);
     }
 
     function test_constructor_revertsZeroTreasury() public {
+        StandardMarketDeployer sd = new StandardMarketDeployer();
+        RewardsMarketDeployer rd = new RewardsMarketDeployer();
         vm.expectRevert(FissionFactory.ZeroAddress.selector);
-        new FissionFactory(admin, marketAdmin, address(0));
+        new FissionFactory(admin, marketAdmin, address(0), sd, rd);
     }
 
     /// @notice Post-HTS-migration: the EOA-must-be-contract guard was dropped.

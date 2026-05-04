@@ -45,6 +45,7 @@ contract SY_SaucerSwapV2LPInvariantTest is Test {
             1500, -60, 60,
             address(npm), admin, 0
         );
+        sy.initShareToken();
         syShare = sy.shareToken();
 
         actors = new address[](4);

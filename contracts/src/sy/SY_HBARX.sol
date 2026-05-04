@@ -79,7 +79,6 @@ contract SY_HBARX is SYBase {
         address admin_,
         uint48 adminTransferDelay_
     )
-        payable
         SYBase("Fission SY-HBARX", "SY-HBARX", hbarx_, HBARX_DECIMALS, admin_, adminTransferDelay_)
     {
         require(hbarx_ != address(0), "SY: hbarx zero");

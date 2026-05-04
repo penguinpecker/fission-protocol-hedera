@@ -54,6 +54,7 @@ contract FissionMarketRewardsInvariantTest is Test {
             1500, -60, 60,
             address(npm), admin, 0
         );
+        sy.initShareToken();
         syShare = sy.shareToken();
 
         token0.mint(address(this), 5_000_000e6);
@@ -64,8 +65,7 @@ contract FissionMarketRewardsInvariantTest is Test {
 
         uint256 expiry_ = block.timestamp + 90 days;
         market = new FissionMarketRewards(
-            address(sy), expiry_, SCALAR_ROOT, admin, treasury, 18
-        );
+            address(sy), expiry_, SCALAR_ROOT, admin, treasury, 18, address(0));
         market.setTokens("fPT-V2", "fPT-V2", "fYT-V2", "fYT-V2", "fLP-V2", "fLP-V2");
         pt = market.pt();
         yt = market.yt();

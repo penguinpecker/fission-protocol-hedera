@@ -57,15 +57,29 @@ abstract contract SYBase is
     ///         Use `IERC20(shareToken).balanceOf(...)` for ERC-20 facade reads/writes.
     address public shareToken;
 
+    /// @dev Stored at construction; consumed once by `initShareToken`.
+    string private _pendingName;
+    string private _pendingSymbol;
+
     error AmountZero();
     error TokenNotSupported(address token);
     error SlippageExceeded();
     error InsufficientSharesOut();
     error ShareTokenAlreadySet();
+    error ShareTokenNotInitialized();
 
-    /// @notice Constructor creates the HTS-native share token. Subclasses pass
-    ///         msg.value through; createFungible costs ~1 HBAR on mainnet.
-    /// @dev    Caller must attach enough HBAR to msg.value to cover the network fee.
+    /// @notice Constructor stores the share-token name + symbol and configures admin /
+    ///         pauser. **Does NOT create the HTS share token** — that happens in a
+    ///         separate `initShareToken()` call post-deploy.
+    /// @dev    Why two-step: on Hedera consensus, `createFungibleToken` called from a
+    ///         contract constructor produces a child TOKENCREATION HAPI tx whose
+    ///         max_fee comes back as 0 (the `msg.value` forwarded to the precompile
+    ///         doesn't propagate as the child's fee budget — confirmed empirically on
+    ///         mainnet via both Hashio and the SDK). Calling the precompile from a
+    ///         regular `external payable` function works correctly. So we defer the
+    ///         token-create call out of the constructor. Until `initShareToken` is
+    ///         called, every entry point that needs `shareToken` reverts with
+    ///         `ShareTokenNotInitialized`.
     constructor(
         string memory name_,
         string memory symbol_,
@@ -77,16 +91,27 @@ abstract contract SYBase is
         underlying = underlying_;
         _assetDecimals = decimals_;
         _grantRole(PAUSER_ROLE, admin_);
+        _pendingName = name_;
+        _pendingSymbol = symbol_;
+    }
 
-        // Create the HTS share token. SYBase = treasury + supplyKey + wipeKey.
-        // No freeze key — SY shares are freely transferable (unlike YT).
+    /// @notice One-shot post-deploy initializer. Creates the HTS-native share token
+    ///         (SYBase = treasury + supplyKey + wipeKey, no freeze) and stores it in
+    ///         `shareToken`. Caller must attach enough HBAR (~2 HBAR on mainnet) to
+    ///         msg.value to cover the Hedera createFungible fee.
+    /// @dev    Anyone can call (deploy script, EOA, or another contract) — the call is
+    ///         idempotent via the `shareToken != 0` check, so there's no front-run
+    ///         vector beyond paying the deploy fee for someone else.
+    function initShareToken() external payable {
+        if (shareToken != address(0)) revert ShareTokenAlreadySet();
+
         IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](2);
         keys[0] = HtsHelpers.makeKey(16, address(this)); // SUPPLY
         keys[1] = HtsHelpers.makeKey(8, address(this));  // WIPE — for redeem-from-arbitrary
 
         IHederaTokenService.HederaToken memory spec = IHederaTokenService.HederaToken({
-            name: name_,
-            symbol: symbol_,
+            name: _pendingName,
+            symbol: _pendingSymbol,
             treasury: address(this),
             memo: "",
             tokenSupplyType: false,
@@ -99,7 +124,12 @@ abstract contract SYBase is
                 autoRenewPeriod: 7776000
             })
         });
-        shareToken = HtsHelpers.createFungible(spec, int32(uint32(decimals_)));
+        shareToken = HtsHelpers.createFungible(spec, int32(uint32(_assetDecimals)));
+    }
+
+    /// @dev Shared guard for entry points that mint/burn shares.
+    function _requireInitialized() internal view {
+        if (shareToken == address(0)) revert ShareTokenNotInitialized();
     }
 
     // ───────────────────── share-token mint / burn helpers ─────────────────────
@@ -107,6 +137,7 @@ abstract contract SYBase is
     /// @dev Mint HTS shares to `to`: settle rewards FIRST (before balance changes),
     ///      then mint to treasury and transfer out.
     function _mintShares(address to, uint256 amount) internal {
+        _requireInitialized();
         _beforeShareUpdate(address(0), to);
         HtsHelpers.mintToTreasury(shareToken, amount);
         if (to != address(this)) {
@@ -119,6 +150,7 @@ abstract contract SYBase is
     ///      `burnFromInternalBalance = false`) burns from `msg.sender` directly —
     ///      the equivalent of the old `_burn(from)` under unrestricted internal access.
     function _burnShares(address from, uint256 amount) internal {
+        _requireInitialized();
         _beforeShareUpdate(from, address(0));
         if (from == address(this)) {
             HtsHelpers.burnFromTreasury(shareToken, amount);

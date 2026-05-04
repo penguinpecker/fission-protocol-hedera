@@ -31,8 +31,7 @@ contract ActionRouterTest is Test {
         syShare = sy.shareToken();
 
         market = new FissionMarket(
-            address(sy), block.timestamp + 90 days, 75e18, admin, treasury, 18
-        );
+            address(sy), block.timestamp + 90 days, 75e18, admin, treasury, 18, address(0));
         market.setTokens("fPT", "fPT", "fYT", "fYT", "fLP", "fLP");
         pt = market.pt();
         yt = market.yt();

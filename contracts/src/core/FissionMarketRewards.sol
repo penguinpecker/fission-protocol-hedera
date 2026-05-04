@@ -149,7 +149,8 @@ contract FissionMarketRewards is
         int256 scalarRoot_,
         address admin_,
         address treasury_,
-        uint8 assetDecimals_
+        uint8 assetDecimals_,
+        address factory_
     ) AccessControlDefaultAdminRules(0, admin_) {
         if (sy_ == address(0) || admin_ == address(0) || treasury_ == address(0)) revert ZeroAddress();
         if (expiry_ <= block.timestamp) revert MarketExpired();
@@ -160,7 +161,7 @@ contract FissionMarketRewards is
         scalarRoot = scalarRoot_;
         treasury = treasury_;
         _assetDecimals = assetDecimals_;
-        factory = msg.sender;
+        factory = factory_ == address(0) ? msg.sender : factory_;
 
         // Snapshot the SY's reward set at construction. Must be exactly 2 — this Market
         // is purpose-built for V3-LP-style SYs which have token0 + token1.

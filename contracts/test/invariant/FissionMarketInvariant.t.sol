@@ -41,8 +41,7 @@ contract FissionMarketInvariantTest is Test {
         syShare = sy.shareToken();
 
         market = new FissionMarket(
-            address(sy), block.timestamp + 90 days, 75e18, admin, treasury, 18
-        );
+            address(sy), block.timestamp + 90 days, 75e18, admin, treasury, 18, address(0));
         market.setTokens("fPT-0", "fPT-0", "fYT-0", "fYT-0", "fLP-0", "fLP-0");
         pt = market.pt();
         yt = market.yt();

@@ -53,6 +53,7 @@ contract ActionRouterRewardsTest is Test {
             1500, -60, 60,
             address(npm), admin, 0
         );
+        sy.initShareToken();
         syShare = sy.shareToken();
 
         // Bootstrap: this contract seeds the SY with 2_000_000 shares.
@@ -65,8 +66,7 @@ contract ActionRouterRewardsTest is Test {
         expiry = block.timestamp + 90 days;
 
         market = new FissionMarketRewards(
-            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18
-        );
+            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, address(0));
         market.setTokens("fPT-V2", "fPT-V2", "fYT-V2", "fYT-V2", "Fission LP-V2", "fLP-V2");
         pt = market.pt();
         yt = market.yt();
