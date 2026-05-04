@@ -110,14 +110,31 @@ export const erc20Abi = [
   },
 ] as const;
 
+// Post-HTS-migration: the SY contract is NOT itself an ERC-20. The share token is a
+// separate HTS-native fungible at `sy.shareToken()` — call `IERC20(sy.shareToken())`
+// for ERC-20 reads (balanceOf / totalSupply / transfer / approve). Same pattern as
+// market.pt() / market.yt() / market.lp().
 export const syAbi = [
-  ...erc20Abi,
+  {
+    type: "function",
+    name: "shareToken",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address" }],
+  },
   {
     type: "function",
     name: "exchangeRate",
     stateMutability: "view",
     inputs: [],
     outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "decimals",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint8" }],
   },
   {
     type: "function",
@@ -129,5 +146,39 @@ export const syAbi = [
       { name: "assetAddress", type: "address" },
       { name: "assetDecimals", type: "uint8" },
     ],
+  },
+  {
+    type: "function",
+    name: "yieldToken",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address" }],
+  },
+  {
+    type: "function",
+    name: "getRewardTokens",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address[]" }],
+  },
+  {
+    type: "function",
+    name: "previewDeposit",
+    stateMutability: "view",
+    inputs: [
+      { name: "tokenIn", type: "address" },
+      { name: "amountIn", type: "uint256" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "previewRedeem",
+    stateMutability: "view",
+    inputs: [
+      { name: "tokenOut", type: "address" },
+      { name: "shares", type: "uint256" },
+    ],
+    outputs: [{ type: "uint256" }],
   },
 ] as const;

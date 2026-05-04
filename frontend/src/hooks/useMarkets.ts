@@ -2,14 +2,17 @@
 
 import { useReadContract, useReadContracts } from "wagmi";
 import { ADDRESSES, isDeployed } from "@/lib/addresses";
-import { factoryAbi, marketAbi, syAbi } from "@/lib/abis";
+import { erc20Abi, factoryAbi, marketAbi, syAbi } from "@/lib/abis";
 
 const factoryDeployed = isDeployed(ADDRESSES.factory);
 
-/** Per-market metadata + state read from chain. */
+/** Per-market metadata + state read from chain. Post-HTS-migration: market.lp() is the
+  * HTS LP token; reads of name/symbol/totalSupply for the LP go through `erc20Abi`
+  * against that address (Market is no longer ERC-20 itself). */
 export interface MarketSummary {
   address: `0x${string}`;
   syAddress: `0x${string}`;
+  lpAddress: `0x${string}`;
   expiry: bigint;
   totalSy: bigint;
   totalPt: bigint;
@@ -44,15 +47,14 @@ export function useMarketAddresses(count: bigint | undefined) {
  * Batched per-market read. Issues a multicall with 9 reads per market in one round trip.
  */
 export function useMarketDetails(addresses: readonly `0x${string}`[] | undefined) {
+  // First pass: read sy + lp + reserves + rate from each market.
   const contracts = (addresses ?? []).flatMap((addr) => [
     { abi: marketAbi, address: addr, functionName: "sy" } as const,
+    { abi: marketAbi, address: addr, functionName: "lp" } as const,
     { abi: marketAbi, address: addr, functionName: "expiry" } as const,
     { abi: marketAbi, address: addr, functionName: "totalSy" } as const,
     { abi: marketAbi, address: addr, functionName: "totalPt" } as const,
     { abi: marketAbi, address: addr, functionName: "lastLnImpliedRate" } as const,
-    { abi: marketAbi, address: addr, functionName: "totalSupply" } as const,
-    { abi: marketAbi, address: addr, functionName: "name" } as const,
-    { abi: marketAbi, address: addr, functionName: "symbol" } as const,
   ]);
 
   return useReadContracts({
@@ -63,11 +65,31 @@ export function useMarketDetails(addresses: readonly `0x${string}`[] | undefined
 }
 
 /**
- * Reads SY metadata for the given SY addresses (one multicall, 2 reads each).
+ * Reads name + totalSupply from each LP HTS token (via ERC-20 facade) — second pass
+ * after `useMarketDetails` resolves the LP addresses.
+ */
+export function useLpMetadata(lpAddresses: readonly `0x${string}`[] | undefined) {
+  const contracts = (lpAddresses ?? []).flatMap((addr) => [
+    { abi: erc20Abi, address: addr, functionName: "name" } as const,
+    { abi: erc20Abi, address: addr, functionName: "symbol" } as const,
+    { abi: erc20Abi, address: addr, functionName: "totalSupply" } as const,
+  ]);
+
+  return useReadContracts({
+    contracts,
+    query: { enabled: contracts.length > 0 },
+    allowFailure: false,
+  });
+}
+
+/**
+ * Reads SY metadata for the given SY addresses. Post-HTS-migration the SY contract
+ * itself isn't ERC-20; we read the HTS share token's `name` via the ERC-20 facade
+ * (one extra hop, but the syAbi exposes shareToken() returning that address).
  */
 export function useSyMetadata(addresses: readonly `0x${string}`[] | undefined) {
   const contracts = (addresses ?? []).flatMap((addr) => [
-    { abi: syAbi, address: addr, functionName: "name" } as const,
+    { abi: syAbi, address: addr, functionName: "shareToken" } as const,
     { abi: syAbi, address: addr, functionName: "decimals" } as const,
   ]);
 

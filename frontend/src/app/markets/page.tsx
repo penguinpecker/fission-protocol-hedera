@@ -7,6 +7,7 @@ import {
   useMarketCount,
   useMarketAddresses,
   useMarketDetails,
+  useLpMetadata,
   useSyMetadata,
   impliedApyPct,
   daysUntil,
@@ -22,14 +23,22 @@ export default function MarketsPage() {
   const { data: addressesRaw } = useMarketAddresses(count);
   const addresses = addressesRaw as readonly `0x${string}`[] | undefined;
 
+  // Post-HTS-migration: 6 market reads (sy, lp, expiry, totalSy, totalPt, lastLn).
+  // Then a second pass reads LP name/symbol/totalSupply via ERC-20 facade and
+  // SY shareToken/decimals.
   const { data: detailsRaw, isLoading: detailsLoading } = useMarketDetails(addresses);
   const syAddrs =
     addresses && detailsRaw
-      ? addresses.map((_, i) => detailsRaw[i * 8] as `0x${string}`)
+      ? addresses.map((_, i) => detailsRaw[i * 6] as `0x${string}`)
+      : undefined;
+  const lpAddrs =
+    addresses && detailsRaw
+      ? addresses.map((_, i) => detailsRaw[i * 6 + 1] as `0x${string}`)
       : undefined;
   const { data: syMetaRaw } = useSyMetadata(syAddrs);
+  const { data: lpMetaRaw } = useLpMetadata(lpAddrs);
 
-  const markets = buildMarketRows(addresses, detailsRaw, syMetaRaw);
+  const markets = buildMarketRows(addresses, detailsRaw, syMetaRaw, lpMetaRaw);
 
   return (
     <main className="min-h-screen">
@@ -194,27 +203,34 @@ function buildMarketRows(
   addresses: readonly `0x${string}`[] | undefined,
   detailsRaw: readonly unknown[] | undefined,
   syMetaRaw: readonly unknown[] | undefined,
+  lpMetaRaw: readonly unknown[] | undefined,
 ): MarketRow[] {
   if (!addresses || !detailsRaw) return [];
 
   const rows: MarketRow[] = [];
   for (let i = 0; i < addresses.length; i++) {
-    const base = i * 8;
-    const expiry = detailsRaw[base + 1] as bigint;
-    const totalSy = detailsRaw[base + 2] as bigint;
-    const totalPt = detailsRaw[base + 3] as bigint;
-    const lastLn = detailsRaw[base + 4] as bigint;
-    const lpSupply = detailsRaw[base + 5] as bigint;
-    const symbol = detailsRaw[base + 7] as string;
+    // Market read offsets — see useMarketDetails (6 fields per market):
+    //   [0] sy, [1] lp, [2] expiry, [3] totalSy, [4] totalPt, [5] lastLnImpliedRate.
+    const base = i * 6;
+    const expiry = detailsRaw[base + 2] as bigint;
+    const totalSy = detailsRaw[base + 3] as bigint;
+    const totalPt = detailsRaw[base + 4] as bigint;
+    const lastLn = detailsRaw[base + 5] as bigint;
 
-    const syName = syMetaRaw ? (syMetaRaw[i * 2] as string) : undefined;
+    // LP metadata reads (3 per LP via ERC-20 facade): name, symbol, totalSupply.
+    const lpBase = i * 3;
+    const symbol = lpMetaRaw ? (lpMetaRaw[lpBase + 1] as string) : "fLP";
+    const lpSupply = lpMetaRaw ? (lpMetaRaw[lpBase + 2] as bigint) : 0n;
+
+    // SY meta: [shareTokenAddr, decimals]. SY name reads come from the share token's
+    // ERC-20 facade — for the markets list we don't need the name, just decimals.
     const syDecimals = syMetaRaw ? Number(syMetaRaw[i * 2 + 1]) : 18;
 
     const addr = addresses[i];
     if (!addr) continue;
     rows.push({
       address: addr,
-      syName,
+      syName: undefined, // omitted at list-level; show on detail page via shareToken.name()
       syDecimals,
       symbol,
       totalSy,
