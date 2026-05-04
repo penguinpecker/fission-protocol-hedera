@@ -5,12 +5,12 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {FissionMarketRewards} from "../../src/core/FissionMarketRewards.sol";
-import {PrincipalToken} from "../../src/core/PrincipalToken.sol";
 import {YieldToken} from "../../src/core/YieldToken.sol";
 import {SY_SaucerSwapV2LP} from "../../src/sy/SY_SaucerSwapV2LP.sol";
 import {MockUniswapV3PositionManager} from "../mocks/MockUniswapV3PositionManager.sol";
 import {MockERC20} from "../mocks/MockSY.sol";
 import {FissionMarketRewardsHandler} from "./FissionMarketRewardsHandler.sol";
+import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
 
 /// @title  FissionMarketRewards invariant suite — random handler asserts:
 ///         (1) Solvency: market's SY balance ≥ PT.totalSupply().
@@ -26,7 +26,7 @@ contract FissionMarketRewardsInvariantTest is Test {
     MockUniswapV3PositionManager npm;
     SY_SaucerSwapV2LP sy;
     FissionMarketRewards market;
-    PrincipalToken pt;
+    address pt;
     YieldToken yt;
     FissionMarketRewardsHandler handler;
 
@@ -40,6 +40,8 @@ contract FissionMarketRewardsInvariantTest is Test {
     int256 constant INITIAL_ANCHOR = 1.05e18;
 
     function setUp() public {
+        HtsTestHelper.installHtsPrecompile();
+
         MockERC20 a = new MockERC20("USDC", "USDC", 6);
         MockERC20 b = new MockERC20("WHBAR", "WHBAR", 6);
         if (address(a) < address(b)) (token0, token1) = (a, b);
@@ -63,9 +65,9 @@ contract FissionMarketRewardsInvariantTest is Test {
         market = new FissionMarketRewards(
             address(sy), expiry_, SCALAR_ROOT, admin, treasury, 18, "fLP-V2", "fLP-V2"
         );
-        pt = new PrincipalToken("fPT-V2", "fPT-V2", address(sy), expiry_, address(market), 18);
         yt = new YieldToken("fYT-V2", "fYT-V2", address(sy), expiry_, address(market), 18);
-        market.setTokens(address(pt), address(yt));
+        market.setTokens(address(yt), "fPT-V2", "fPT-V2");
+        pt = market.pt();
 
         actors = new address[](3);
         actors[0] = address(0xA1);
@@ -81,7 +83,7 @@ contract FissionMarketRewardsInvariantTest is Test {
         // Admin splits + initializes.
         vm.startPrank(admin);
         IERC20(address(sy)).approve(address(market), type(uint256).max);
-        IERC20(address(pt)).approve(address(market), type(uint256).max);
+        IERC20(pt).approve(address(market), type(uint256).max);
         market.split(100_000e6);
         market.initialize(100_000e6, 100_000e6, INITIAL_ANCHOR, LN_FEE_ROOT, RESERVE_PCT);
         vm.stopPrank();
@@ -91,7 +93,7 @@ contract FissionMarketRewardsInvariantTest is Test {
             vm.prank(actors[i]);
             IERC20(address(sy)).approve(address(market), type(uint256).max);
             vm.prank(actors[i]);
-            IERC20(address(pt)).approve(address(market), type(uint256).max);
+            IERC20(pt).approve(address(market), type(uint256).max);
         }
 
         handler = new FissionMarketRewardsHandler(market, sy, npm, token0, token1, actors);
@@ -110,13 +112,13 @@ contract FissionMarketRewardsInvariantTest is Test {
     /// (1) Solvency — market always holds enough SY to redeem every PT 1:1.
     function invariant_solvency() public view {
         uint256 marketSY = IERC20(address(sy)).balanceOf(address(market));
-        assertGe(marketSY, pt.totalSupply(), "solvency violated");
+        assertGe(marketSY, IERC20(pt).totalSupply(), "solvency violated");
     }
 
     /// (2) PT/YT supplies stay paired pre-expiry.
     function invariant_ptYtSupplyParityPreExpiry() public view {
         if (block.timestamp >= market.expiry()) return;
-        assertEq(pt.totalSupply(), yt.totalSupply(), "PT/YT diverged");
+        assertEq(IERC20(pt).totalSupply(), yt.totalSupply(), "PT/YT diverged");
     }
 
     /// (3) Reward ledger upper bound: total tokens that have left the market (claimed) +

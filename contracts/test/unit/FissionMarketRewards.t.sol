@@ -5,13 +5,13 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {FissionMarketRewards} from "../../src/core/FissionMarketRewards.sol";
-import {PrincipalToken} from "../../src/core/PrincipalToken.sol";
 import {YieldToken} from "../../src/core/YieldToken.sol";
 import {SY_SaucerSwapV2LP} from "../../src/sy/SY_SaucerSwapV2LP.sol";
 import {MarketMath} from "../../src/libraries/MarketMath.sol";
 import {IFissionMarket} from "../../src/interfaces/IFissionMarket.sol";
 import {MockUniswapV3PositionManager} from "../mocks/MockUniswapV3PositionManager.sol";
 import {MockERC20} from "../mocks/MockSY.sol";
+import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
 
 /// @notice End-to-end FissionMarketRewards tests with the SY_SaucerSwapV2LP adapter
 ///         driving a real reward stream. Yield to YT holders is delivered as
@@ -22,7 +22,7 @@ contract FissionMarketRewardsTest is Test {
     MockUniswapV3PositionManager npm;
     SY_SaucerSwapV2LP sy;
     FissionMarketRewards market;
-    PrincipalToken pt;
+    address pt;
     YieldToken yt;
 
     address admin = address(0xAD);
@@ -39,6 +39,8 @@ contract FissionMarketRewardsTest is Test {
     int256 constant INITIAL_ANCHOR = 1.05e18;
 
     function setUp() public {
+        HtsTestHelper.installHtsPrecompile();
+
         // Sort tokens.
         MockERC20 a = new MockERC20("USDC", "USDC", 6);
         MockERC20 b = new MockERC20("WHBAR", "WHBAR", 6);
@@ -67,9 +69,9 @@ contract FissionMarketRewardsTest is Test {
         market = new FissionMarketRewards(
             address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, "Fission LP-V2", "fLP-V2"
         );
-        pt = new PrincipalToken("fPT-V2", "fPT-V2", address(sy), expiry, address(market), 18);
         yt = new YieldToken("fYT-V2", "fYT-V2", address(sy), expiry, address(market), 18);
-        market.setTokens(address(pt), address(yt));
+        market.setTokens(address(yt), "fPT-V2", "fPT-V2");
+        pt = market.pt();
 
         // Send admin 200k SY (admin will split 100k → 100k PT + 100k YT, then initialize
         // with the remaining 100k SY + 100k PT). Admin keeps 100k YT as residual.
@@ -81,7 +83,7 @@ contract FissionMarketRewardsTest is Test {
 
         vm.startPrank(admin);
         IERC20(address(sy)).approve(address(market), type(uint256).max);
-        IERC20(address(pt)).approve(address(market), type(uint256).max);
+        IERC20(pt).approve(address(market), type(uint256).max);
         market.split(100_000e6);
         market.initialize(100_000e6, 100_000e6, INITIAL_ANCHOR, LN_FEE_ROOT, RESERVE_PCT);
         vm.stopPrank();
@@ -93,7 +95,7 @@ contract FissionMarketRewardsTest is Test {
             vm.prank(u);
             IERC20(address(sy)).approve(address(market), type(uint256).max);
             vm.prank(u);
-            IERC20(address(pt)).approve(address(market), type(uint256).max);
+            IERC20(pt).approve(address(market), type(uint256).max);
         }
     }
 
@@ -164,21 +166,21 @@ contract FissionMarketRewardsTest is Test {
         );
         vm.prank(alice);
         vm.expectRevert(FissionMarketRewards.OnlyFactory.selector);
-        mkt.setTokens(address(0x1), address(0x2));
+        mkt.setTokens(address(0x1), "p", "p");
     }
 
     function test_setTokens_revertsIfAlreadySet() public {
         // setUp already called setTokens
         vm.expectRevert(FissionMarketRewards.TokensAlreadySet.selector);
-        market.setTokens(address(0x1), address(0x2));
+        market.setTokens(address(0x1), "p", "p");
     }
 
-    function test_setTokens_revertsOnZeroPt() public {
+    function test_setTokens_revertsOnZeroYt() public {
         FissionMarketRewards mkt = new FissionMarketRewards(
             address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
         );
         vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
-        mkt.setTokens(address(0), address(0x2));
+        mkt.setTokens(address(0), "p", "p");
     }
 
     function test_initialize_revertsIfTokensNotSet() public {
@@ -202,9 +204,8 @@ contract FissionMarketRewardsTest is Test {
             address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
         );
         // Need PT/YT set up first
-        PrincipalToken p = new PrincipalToken("p", "p", address(sy), mkt.expiry(), address(mkt), 18);
         YieldToken y = new YieldToken("y", "y", address(sy), mkt.expiry(), address(mkt), 18);
-        mkt.setTokens(address(p), address(y));
+        mkt.setTokens(address(y), "p", "p");
 
         vm.prank(admin);
         vm.expectRevert(FissionMarketRewards.ZeroAmount.selector);
@@ -215,9 +216,8 @@ contract FissionMarketRewardsTest is Test {
         FissionMarketRewards mkt = new FissionMarketRewards(
             address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
         );
-        PrincipalToken p = new PrincipalToken("p", "p", address(sy), mkt.expiry(), address(mkt), 18);
         YieldToken y = new YieldToken("y", "y", address(sy), mkt.expiry(), address(mkt), 18);
-        mkt.setTokens(address(p), address(y));
+        mkt.setTokens(address(y), "p", "p");
 
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(FissionMarketRewards.ReserveFeeTooHigh.selector, 101, 100));
@@ -392,7 +392,7 @@ contract FissionMarketRewardsTest is Test {
     function test_split_mintsPtAndYt_andSettlesRewards() public {
         vm.prank(alice);
         market.split(1_000e6);
-        assertEq(pt.balanceOf(alice), 1_000e6);
+        assertEq(IERC20(pt).balanceOf(alice), 1_000e6);
         assertEq(yt.balanceOf(alice), 1_000e6);
     }
 
@@ -401,7 +401,7 @@ contract FissionMarketRewardsTest is Test {
         market.split(1_000e6);
         vm.prank(alice);
         market.merge(500e6);
-        assertEq(pt.balanceOf(alice), 500e6);
+        assertEq(IERC20(pt).balanceOf(alice), 500e6);
         assertEq(yt.balanceOf(alice), 500e6);
     }
 
@@ -598,7 +598,7 @@ contract FissionMarketRewardsTest is Test {
         vm.warp(expiry + 1);
 
         uint256 prevSy = IERC20(address(sy)).balanceOf(admin);
-        uint256 prevPt = pt.balanceOf(admin);
+        uint256 prevPt = IERC20(pt).balanceOf(admin);
 
         vm.prank(admin);
         (uint256 syOut, uint256 ptOut) = market.removeLiquidity(lpBal, 0, 0, admin);
@@ -606,7 +606,7 @@ contract FissionMarketRewardsTest is Test {
         assertEq(ptOut, 0, "post-expiry LP exit returns SY only");
         assertGt(syOut, 0);
         assertEq(IERC20(address(sy)).balanceOf(admin), prevSy + syOut);
-        assertEq(pt.balanceOf(admin), prevPt, "LP shouldn't receive any PT post-expiry");
+        assertEq(IERC20(pt).balanceOf(admin), prevPt, "LP shouldn't receive any PT post-expiry");
     }
 
     // ───────────────────── pause ─────────────────────

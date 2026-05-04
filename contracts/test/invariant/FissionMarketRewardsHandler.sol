@@ -9,7 +9,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {FissionMarketRewards} from "../../src/core/FissionMarketRewards.sol";
 import {SY_SaucerSwapV2LP} from "../../src/sy/SY_SaucerSwapV2LP.sol";
 import {YieldToken} from "../../src/core/YieldToken.sol";
-import {PrincipalToken} from "../../src/core/PrincipalToken.sol";
 import {MockUniswapV3PositionManager} from "../mocks/MockUniswapV3PositionManager.sol";
 import {MockERC20} from "../mocks/MockSY.sol";
 
@@ -24,7 +23,8 @@ contract FissionMarketRewardsHandler is CommonBase, StdCheats, StdUtils {
     MockERC20 public immutable token0;
     MockERC20 public immutable token1;
     YieldToken public immutable yt;
-    PrincipalToken public immutable pt;
+    /// @dev HTS-native PT — `pt` is the HTS token address. Use `IERC20(pt).balanceOf(...)`.
+    address public immutable pt;
     address[] public actors;
 
     uint256 public totalInjected0;
@@ -66,7 +66,7 @@ contract FissionMarketRewardsHandler is CommonBase, StdCheats, StdUtils {
 
     function merge(uint256 actorSeed, uint256 amtSeed) external {
         address a = _actor(actorSeed);
-        uint256 ptBal = pt.balanceOf(a);
+        uint256 ptBal = IERC20(pt).balanceOf(a);
         uint256 ytBal = yt.balanceOf(a);
         uint256 cap = ptBal < ytBal ? ptBal : ytBal;
         if (cap == 0) return;

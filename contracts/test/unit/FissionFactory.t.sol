@@ -7,9 +7,9 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 
 import {FissionFactory} from "../../src/core/FissionFactory.sol";
 import {FissionMarket} from "../../src/core/FissionMarket.sol";
-import {PrincipalToken} from "../../src/core/PrincipalToken.sol";
 import {YieldToken} from "../../src/core/YieldToken.sol";
 import {MockSY, MockERC20} from "../mocks/MockSY.sol";
+import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
 
 contract FissionFactoryTest is Test {
     FissionFactory factory;
@@ -27,6 +27,8 @@ contract FissionFactoryTest is Test {
     bytes32 creatorRole;
 
     function setUp() public {
+        HtsTestHelper.installHtsPrecompile();
+
         underlying = new MockERC20("USD", "USD", 18);
         sy = new MockSY(address(underlying), 18);
 
@@ -156,15 +158,13 @@ contract FissionFactoryTest is Test {
         FissionMarket m = FissionMarket(payable(marketAddr));
         assertEq(address(m.sy()), address(sy));
         assertEq(m.factory(), address(factory));
-        assertNotEq(address(m.pt()), address(0));
+        assertNotEq(m.pt(), address(0));
         assertNotEq(address(m.yt()), address(0));
 
-        // PT/YT point at the market.
-        assertEq(m.pt().market(), marketAddr);
+        // YT points at the market (PT is HTS-native — Market is treasury+supplyKey+wipeKey).
         assertEq(m.yt().market(), marketAddr);
 
-        // PT/YT decimals match SY.
-        assertEq(m.pt().decimals(), sy.decimals());
+        // YT decimals match SY (PT decimals are set on the HTS token at creation).
         assertEq(m.yt().decimals(), sy.decimals());
 
         // Market admin = factory.marketAdmin.

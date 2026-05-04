@@ -5,10 +5,10 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {FissionMarket} from "../../src/core/FissionMarket.sol";
-import {PrincipalToken} from "../../src/core/PrincipalToken.sol";
 import {YieldToken} from "../../src/core/YieldToken.sol";
 import {MockSY, MockERC20} from "../mocks/MockSY.sol";
 import {FissionMarketHandler} from "./FissionMarketHandler.sol";
+import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
 
 /// @title  FissionMarket invariant suite — solvency + accounting consistency.
 /// @notice Drives the market through randomised handler sequences; asserts the core
@@ -20,7 +20,7 @@ contract FissionMarketInvariantTest is Test {
     MockERC20 underlying;
     MockSY sy;
     FissionMarket market;
-    PrincipalToken pt;
+    address pt;
     YieldToken yt;
     FissionMarketHandler handler;
 
@@ -29,6 +29,8 @@ contract FissionMarketInvariantTest is Test {
     address[] actors;
 
     function setUp() public {
+        HtsTestHelper.installHtsPrecompile();
+
         actors = new address[](3);
         actors[0] = address(0xA1);
         actors[1] = address(0xA2);
@@ -40,30 +42,30 @@ contract FissionMarketInvariantTest is Test {
         market = new FissionMarket(
             address(sy), block.timestamp + 90 days, 75e18, admin, treasury, 18, "fLP-0", "fLP-0"
         );
-        pt = new PrincipalToken("fPT-0", "fPT-0", address(sy), market.expiry(), address(market), 18);
         yt = new YieldToken("fYT-0", "fYT-0", address(sy), market.expiry(), address(market), 18);
-        market.setTokens(address(pt), address(yt));
+        market.setTokens(address(yt), "fPT-0", "fPT-0");
+        pt = market.pt();
 
         // Mint SY to this contract, split half, then admin initializes pool.
-        sy.mint(address(this), 1_000_000e18);
+        sy.mint(address(this), 1_000_000e6);
         IERC20(address(sy)).approve(address(market), type(uint256).max);
-        market.split(500_000e18);
+        market.split(500_000e6);
 
-        IERC20(address(sy)).transfer(admin, 200_000e18);
-        IERC20(address(pt)).transfer(admin, 200_000e18);
+        IERC20(address(sy)).transfer(admin, 200_000e6);
+        IERC20(pt).transfer(admin, 200_000e6);
 
         vm.startPrank(admin);
-        IERC20(address(sy)).approve(address(market), 100_000e18);
-        IERC20(address(pt)).approve(address(market), 100_000e18);
-        market.initialize(100_000e18, 100_000e18, 1.05e18, 0.0003e18, 80);
+        IERC20(address(sy)).approve(address(market), 100_000e6);
+        IERC20(pt).approve(address(market), 100_000e6);
+        market.initialize(100_000e6, 100_000e6, 1.05e18, 0.0003e18, 80);
         vm.stopPrank();
 
         // Fund actors with SY and some PT/YT (to exercise sells).
         for (uint256 i = 0; i < actors.length; i++) {
-            sy.mint(actors[i], 50_000e18);
+            sy.mint(actors[i], 50_000e6);
             // give them some PT and YT to start with (split of 5k each by us)
-            IERC20(address(pt)).transfer(actors[i], 5_000e18);
-            IERC20(address(yt)).transfer(actors[i], 5_000e18);
+            IERC20(pt).transfer(actors[i], 5_000e6);
+            IERC20(address(yt)).transfer(actors[i], 5_000e6);
         }
 
         handler = new FissionMarketHandler(market, actors);
@@ -84,7 +86,7 @@ contract FissionMarketInvariantTest is Test {
     ///         the PT principal claim plus all unclaimed yield owed to actors.
     function invariant_solvency() public view {
         uint256 marketSy = IERC20(address(sy)).balanceOf(address(market));
-        uint256 ptSupply = pt.totalSupply();
+        uint256 ptSupply = IERC20(pt).totalSupply();
         uint256 R = sy.exchangeRate();
 
         // Asset value of market's SY holdings.
@@ -107,7 +109,7 @@ contract FissionMarketInvariantTest is Test {
 
     /// @notice The market's PT balance equals the pool's `totalPt` accounting figure.
     function invariant_poolPtMatchesBalance() public view {
-        assertEq(pt.balanceOf(address(market)), market.totalPt(), "totalPt drift");
+        assertEq(IERC20(pt).balanceOf(address(market)), market.totalPt(), "totalPt drift");
     }
 
     /// @notice PT and YT supplies move together when minted/burned via split/merge.
@@ -115,7 +117,7 @@ contract FissionMarketInvariantTest is Test {
     ///         Since redeemAfterExpiry can burn PT alone, this only holds pre-expiry.
     function invariant_ptYtSupplyParityPreExpiry() public view {
         if (block.timestamp >= market.expiry()) return;
-        assertEq(pt.totalSupply(), yt.totalSupply(), "PT/YT supply diverged pre-expiry");
+        assertEq(IERC20(pt).totalSupply(), yt.totalSupply(), "PT/YT supply diverged pre-expiry");
     }
 
     /// @notice Handler call summary — useful to see which paths got exercised.

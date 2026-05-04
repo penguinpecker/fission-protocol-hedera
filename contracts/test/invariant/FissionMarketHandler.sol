@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {FissionMarket} from "../../src/core/FissionMarket.sol";
-import {PrincipalToken} from "../../src/core/PrincipalToken.sol";
 import {YieldToken} from "../../src/core/YieldToken.sol";
 import {MockSY} from "../mocks/MockSY.sol";
 
@@ -18,7 +17,8 @@ import {MockSY} from "../mocks/MockSY.sol";
 ///         agrees with itself.
 contract FissionMarketHandler is Test {
     FissionMarket public market;
-    PrincipalToken public pt;
+    /// @dev HTS-native PT — `pt` is the HTS token address. Use `IERC20(pt).balanceOf(...)`.
+    address public pt;
     YieldToken public yt;
     MockSY public sy;
 
@@ -67,7 +67,7 @@ contract FissionMarketHandler is Test {
     }
 
     function merge(uint256 amount, uint256 actorSeed) public useActor(actorSeed) {
-        uint256 ptBal = pt.balanceOf(currentActor);
+        uint256 ptBal = IERC20(pt).balanceOf(currentActor);
         uint256 ytBal = yt.balanceOf(currentActor);
         uint256 cap = ptBal < ytBal ? ptBal : ytBal;
         if (cap < 1e16) return;
@@ -81,14 +81,14 @@ contract FissionMarketHandler is Test {
     }
 
     function swapPtForSy(uint256 amount, uint256 actorSeed) public useActor(actorSeed) {
-        uint256 ptBal = pt.balanceOf(currentActor);
+        uint256 ptBal = IERC20(pt).balanceOf(currentActor);
         if (ptBal < 1e16) return;
         // Cap at 5% of pool reserves so we don't hit MAX_MARKET_PROPORTION.
         uint256 maxSafe = market.totalPt() / 20;
         amount = bound(amount, 1e16, ptBal < maxSafe ? ptBal : maxSafe);
 
         vm.startPrank(currentActor);
-        IERC20(address(pt)).approve(address(market), amount);
+        IERC20(pt).approve(address(market), amount);
         try market.swapExactPtForSy(amount, 0, currentActor) returns (uint256 syOut) {
             ghost_totalSyWithdrawn += syOut;
             callCount_swapPtForSy++;

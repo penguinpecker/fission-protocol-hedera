@@ -6,7 +6,6 @@ import {AccessControlDefaultAdminRules} from
 
 import {FissionMarket} from "./FissionMarket.sol";
 import {FissionMarketRewards} from "./FissionMarketRewards.sol";
-import {PrincipalToken} from "./PrincipalToken.sol";
 import {YieldToken} from "./YieldToken.sol";
 import {IStandardizedYield} from "../interfaces/IStandardizedYield.sol";
 
@@ -139,6 +138,7 @@ contract FissionFactory is AccessControlDefaultAdminRules {
     ///         with seed funds.
     function createMarket(address sy, uint256 expiry, int256 scalarRoot, string calldata suffix)
         external
+        payable
         onlyRole(MARKET_CREATOR_ROLE)
         returns (uint256 marketId, address marketAddr)
     {
@@ -163,14 +163,9 @@ contract FissionFactory is AccessControlDefaultAdminRules {
             string.concat("fLP-", suffix)
         );
 
-        PrincipalToken pt = new PrincipalToken(
-            string.concat("Fission PT-", suffix),
-            string.concat("fPT-", suffix),
-            sy,
-            expiry,
-            address(m),
-            dec
-        );
+        // YT is still a Solidity ERC-20 contract (HTS-native YT migration is the next
+        // commit). Market self-creates the HTS-native PT inside setTokens — caller's
+        // msg.value pays the createFungible network fee (~1 HBAR mainnet; 0 in tests).
         YieldToken yt = new YieldToken(
             string.concat("Fission YT-", suffix),
             string.concat("fYT-", suffix),
@@ -181,14 +176,17 @@ contract FissionFactory is AccessControlDefaultAdminRules {
         );
 
         // Effects-first: stash the market in our own storage BEFORE the only external
-        // call (setTokens). The new market contract is freshly-deployed and can't
-        // reasonably reenter the factory, but reordering removes the formal CFR.
+        // call (setTokens).
         markets.push(address(m));
         marketAddr = address(m);
 
-        m.setTokens(address(pt), address(yt));
+        m.setTokens{value: msg.value}(
+            address(yt),
+            string.concat("Fission PT-", suffix),
+            string.concat("fPT-", suffix)
+        );
 
-        emit MarketCreated(marketId, marketAddr, sy, address(pt), address(yt), expiry, scalarRoot);
+        emit MarketCreated(marketId, marketAddr, sy, m.pt(), address(yt), expiry, scalarRoot);
     }
 
     /// @notice Deploy a `FissionMarketRewards` Market + PT + YT for an SY whose yield is
@@ -202,6 +200,7 @@ contract FissionFactory is AccessControlDefaultAdminRules {
     ///         entry point. Frontends and routers should pre-check `sy.assetInfo()`.
     function createRewardsMarket(address sy, uint256 expiry, int256 scalarRoot, string calldata suffix)
         external
+        payable
         onlyRole(MARKET_CREATOR_ROLE)
         returns (uint256 marketId, address marketAddr)
     {
@@ -225,14 +224,6 @@ contract FissionFactory is AccessControlDefaultAdminRules {
             string.concat("fLP-", suffix)
         );
 
-        PrincipalToken pt = new PrincipalToken(
-            string.concat("Fission PT-", suffix),
-            string.concat("fPT-", suffix),
-            sy,
-            expiry,
-            address(m),
-            dec
-        );
         YieldToken yt = new YieldToken(
             string.concat("Fission YT-", suffix),
             string.concat("fYT-", suffix),
@@ -245,9 +236,13 @@ contract FissionFactory is AccessControlDefaultAdminRules {
         markets.push(address(m));
         marketAddr = address(m);
 
-        m.setTokens(address(pt), address(yt));
+        m.setTokens{value: msg.value}(
+            address(yt),
+            string.concat("Fission PT-", suffix),
+            string.concat("fPT-", suffix)
+        );
 
-        emit MarketCreated(marketId, marketAddr, sy, address(pt), address(yt), expiry, scalarRoot);
+        emit MarketCreated(marketId, marketAddr, sy, m.pt(), address(yt), expiry, scalarRoot);
     }
 
     // ───────────────────── views ─────────────────────

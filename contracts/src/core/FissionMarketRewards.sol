@@ -12,8 +12,9 @@ import {AccessControlDefaultAdminRules} from
 import {IFissionMarket} from "../interfaces/IFissionMarket.sol";
 import {IFissionMarketCommon} from "../interfaces/IFissionMarketCommon.sol";
 import {IStandardizedYield} from "../interfaces/IStandardizedYield.sol";
-import {PrincipalToken} from "./PrincipalToken.sol";
+import {IHederaTokenService} from "../interfaces/IHederaTokenService.sol";
 import {YieldToken} from "./YieldToken.sol";
+import {HtsHelpers} from "../libraries/HtsHelpers.sol";
 import {MarketMath} from "../libraries/MarketMath.sol";
 import {PMath} from "../libraries/PMath.sol";
 
@@ -73,7 +74,8 @@ contract FissionMarketRewards is
 
     // ───────────────────── one-shot setters ─────────────────────
 
-    PrincipalToken public pt;
+    /// @notice The HTS-native PT token. Market is treasury + supplyKey + wipeKey holder.
+    address public pt;
     YieldToken public yt;
 
     // ───────────────────── AMM pool state ─────────────────────
@@ -180,23 +182,64 @@ contract FissionMarketRewards is
 
     // ───────────────────── one-shot setup ─────────────────────
 
-    function setTokens(address pt_, address yt_) external {
+    /// @notice One-shot setup: factory passes the YT contract; Market self-creates the
+    ///         HTS-native PT. msg.value pays the createFungible network fee (~1 HBAR
+    ///         mainnet; 0 in mock tests). Same trust model as `FissionMarket.setTokens`.
+    function setTokens(address yt_, string calldata ptName, string calldata ptSymbol)
+        external
+        payable
+    {
         if (msg.sender != factory) revert OnlyFactory();
-        if (address(pt) != address(0)) revert TokensAlreadySet();
-        if (pt_ == address(0) || yt_ == address(0)) revert ZeroAddress();
-        pt = PrincipalToken(pt_);
+        if (pt != address(0)) revert TokensAlreadySet();
+        if (yt_ == address(0)) revert ZeroAddress();
+
+        IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](2);
+        keys[0] = HtsHelpers.makeKey(16, address(this)); // SUPPLY
+        keys[1] = HtsHelpers.makeKey(8, address(this));  // WIPE
+
+        IHederaTokenService.HederaToken memory spec = IHederaTokenService.HederaToken({
+            name: ptName,
+            symbol: ptSymbol,
+            treasury: address(this),
+            memo: "",
+            tokenSupplyType: false,
+            maxSupply: 0,
+            freezeDefault: false,
+            tokenKeys: keys,
+            expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: address(this), autoRenewPeriod: 7776000})
+        });
+
+        pt = HtsHelpers.createFungible(spec, int32(uint32(_assetDecimals)));
         yt = YieldToken(yt_);
-        emit TokensInitialized(pt_, yt_);
+        emit TokensInitialized(pt, yt_);
     }
 
     /// @notice Address-typed sibling of `pt()` — used by ActionRouter via IFissionMarketCommon.
     function ptAddr() external view returns (address) {
-        return address(pt);
+        return pt;
     }
 
     /// @notice Address-typed sibling of `yt()` — used by ActionRouter via IFissionMarketCommon.
     function ytAddr() external view returns (address) {
         return address(yt);
+    }
+
+    /// @dev Mint HTS PT to `to`: mint to treasury (== this), then transfer out.
+    function _mintPt(address to, uint256 amount) internal {
+        HtsHelpers.mintToTreasury(pt, amount);
+        if (to != address(this)) {
+            HtsHelpers.transfer(pt, address(this), to, amount);
+        }
+    }
+
+    /// @dev Burn HTS PT from `from`. Treasury via burnFromTreasury; arbitrary accounts
+    ///      via wipeTokenAccount (uses Market's wipe key).
+    function _burnPt(address from, uint256 amount) internal {
+        if (from == address(this)) {
+            HtsHelpers.burnFromTreasury(pt, amount);
+        } else {
+            HtsHelpers.wipeFrom(pt, from, amount);
+        }
     }
 
     function initialize(uint256 syIn, uint256 ptIn, int256 initialAnchor, int256 lnFeeRateRoot_, uint256 reserveFeePercent_)
@@ -207,7 +250,7 @@ contract FissionMarketRewards is
         returns (uint256 lpOut)
     {
         if (block.timestamp >= expiry) revert MarketExpired();
-        if (address(pt) == address(0)) revert TokensNotSet();
+        if (pt == address(0)) revert TokensNotSet();
         if (totalSupply() != 0) revert AlreadyInitialized();
         if (syIn == 0 || ptIn == 0) revert ZeroAmount();
         if (reserveFeePercent_ > MAX_RESERVE_FEE_PERCENT) revert ReserveFeeTooHigh(reserveFeePercent_, MAX_RESERVE_FEE_PERCENT);
@@ -220,7 +263,7 @@ contract FissionMarketRewards is
         if (syIndexU < PMath.ONE) revert SYRateBelowOne(syIndexU);
 
         IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), syIn);
-        IERC20(address(pt)).safeTransferFrom(msg.sender, address(this), ptIn);
+        IERC20(pt).safeTransferFrom(msg.sender, address(this), ptIn);
 
         uint256 lpRaw = PMath.sqrt(syIn * ptIn);
         if (lpRaw <= MarketMath.MINIMUM_LIQUIDITY) revert InsufficientLiquidity();
@@ -251,14 +294,14 @@ contract FissionMarketRewards is
     function split(uint256 amount) external nonReentrant whenNotPaused returns (uint256) {
         if (block.timestamp >= expiry) revert MarketExpired();
         if (amount == 0) revert ZeroAmount();
-        if (address(pt) == address(0)) revert TokensNotSet();
+        if (pt == address(0)) revert TokensNotSet();
 
         // Harvest + settle BEFORE the YT mint so the new shares earn from this point.
         _harvestRewards();
         _settleRewards(msg.sender);
 
         IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), amount);
-        pt.mint(msg.sender, amount);
+        _mintPt(msg.sender, amount);
         yt.mint(msg.sender, amount);
 
         emit Split(msg.sender, amount);
@@ -269,12 +312,12 @@ contract FissionMarketRewards is
     function merge(uint256 amount) external nonReentrant returns (uint256) {
         if (block.timestamp >= expiry) revert MarketExpired();
         if (amount == 0) revert ZeroAmount();
-        if (address(pt) == address(0)) revert TokensNotSet();
+        if (pt == address(0)) revert TokensNotSet();
 
         _harvestRewards();
         _settleRewards(msg.sender);
 
-        pt.burn(msg.sender, amount);
+        _burnPt(msg.sender, amount);
         yt.burn(msg.sender, amount);
         IERC20(address(sy)).safeTransfer(msg.sender, amount);
 
@@ -294,7 +337,7 @@ contract FissionMarketRewards is
         if (ptIn == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
 
-        IERC20(address(pt)).safeTransferFrom(msg.sender, address(this), ptIn);
+        IERC20(pt).safeTransferFrom(msg.sender, address(this), ptIn);
 
         MarketMath.MarketState memory ms = _loadState();
         int256 syIndex = int256(sy.exchangeRate()); // 1e18 always
@@ -342,7 +385,7 @@ contract FissionMarketRewards is
         if (syIn > syInMax) revert InsufficientOutput();
 
         IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), syIn);
-        IERC20(address(pt)).safeTransfer(receiver, ptOut);
+        IERC20(pt).safeTransfer(receiver, ptOut);
 
         totalPt -= ptOut;
         totalSy += syIn;
@@ -377,7 +420,7 @@ contract FissionMarketRewards is
         if (lpOut < minLpOut) revert InsufficientOutput();
 
         IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), uint256(syUsed));
-        IERC20(address(pt)).safeTransferFrom(msg.sender, address(this), uint256(ptUsed));
+        IERC20(pt).safeTransferFrom(msg.sender, address(this), uint256(ptUsed));
 
         totalSy += uint256(syUsed);
         totalPt += uint256(ptUsed);
@@ -411,7 +454,7 @@ contract FissionMarketRewards is
         if (block.timestamp >= expiry) {
             // exchangeRate ≡ 1e18 → 1 PT redeems for 1 SY. Auto-redeem the LP's PT
             // share so LP exits never compete with PT-redeemers for SY backing.
-            pt.burn(address(this), ptOut);
+            _burnPt(address(this), ptOut);
             syOut += ptOut;
             ptOut = 0;
         }
@@ -419,7 +462,7 @@ contract FissionMarketRewards is
         if (syOut < minSyOut || ptOut < minPtOut) revert InsufficientOutput();
 
         IERC20(address(sy)).safeTransfer(receiver, syOut);
-        if (ptOut > 0) IERC20(address(pt)).safeTransfer(receiver, ptOut);
+        if (ptOut > 0) IERC20(pt).safeTransfer(receiver, ptOut);
 
         emit LiquidityRemoved(msg.sender, receiver, lpIn, syOut, ptOut);
     }
@@ -577,7 +620,7 @@ contract FissionMarketRewards is
         _harvestRewards();
         _settleRewards(msg.sender);
 
-        pt.burn(msg.sender, ptIn);
+        _burnPt(msg.sender, ptIn);
         syOut = ptIn; // 1:1 — exchangeRate is constant 1
 
         IERC20(address(sy)).safeTransfer(receiver, syOut);
