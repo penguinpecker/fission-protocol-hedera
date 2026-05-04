@@ -242,19 +242,45 @@ Recommended initial markets:
   **Use `createRewardsMarket`, NOT `createMarket`** — sending a reward-bearing
   SY through `createMarket` produces a market whose YT yield path never fires.
 
-Then seed liquidity:
+Then seed liquidity. Wrapped end-to-end in `scripts/initialize-hbarx-market.mjs`
+(HBARX → SY.deposit → market.split → market.initialize). Prerequisite the
+operator must hold BEFORE running:
+
+  • **HBARX in operator wallet.** Stake HBAR via Stader
+    (https://stader.staderlabs.com/hedera) — current rate ~1.40 HBAR per HBARX.
+    For a 10-HBARX seed (≈14 HBAR worth on each side of the AMM), stake at
+    least ~30 HBAR.
+  • The HBARX HTS (0.0.834116) must be **token-associated** to the operator
+    account. Most wallets handle this on first receive; explicit association
+    via `TokenAssociateTransaction` if not.
+
+Run:
 
 ```sh
-# admin (Safe) approves SY and PT, then calls:
-market.initialize(syIn, ptIn, initialAnchor, lnFeeRateRoot, reserveFeePercent)
-
-# Recommended initial values:
-#   syIn / ptIn:        equal — splits a "neutral" position
-#   initialAnchor:      1.05e18 (5% implied yield curve start) for HBARX
-#                       1.02e18 (2% implied yield) for V2 LP (full-range ~1.84% APR)
-#   lnFeeRateRoot:      0.0003e18 (~0.03% trade fee at curve center)
-#   reserveFeePercent:  80 (Pendle default)
+MARKET_ADDRESS=0x5d75cb89e26b6e009db583afbd3797ff8ad7c8ae \
+SY_HBARX_ADDRESS=0x80728fbad79974e428c50dc548853ff858d9430c \
+HBARX_TO_DEPOSIT=1000000000   `# 10 HBARX (8 dec)` \
+SY_TO_SPLIT=500000000         `# 5 SY shares` \
+SY_IN=500000000               `# 5 SY for AMM` \
+PT_IN=500000000               `# 5 PT for AMM (neutral, equal sides)` \
+INITIAL_ANCHOR_E18=1050000000000000000   `# 1.05e18` \
+LN_FEE_RATE_ROOT_E18=300000000000000     `# 0.0003e18` \
+RESERVE_FEE_PERCENT=80 \
+node scripts/initialize-hbarx-market.mjs
 ```
+
+Recommended values (HBARX-90D market):
+  • syIn / ptIn equal — neutral starting position
+  • initialAnchor = 1.05e18 — 5% implied yield curve start (HBARX is ~5.79% APY)
+  • lnFeeRateRoot = 0.0003e18 — ~0.03% trade fee at curve center
+  • reserveFeePercent = 80 — Pendle default protocol cut
+
+For Market 1 (SaucerSwap V2 LP rewards): seed liquidity requires USDC +
+WHBAR (deposit both into SY_SaucerSwapV2LP, which mints a V3 NFT and credits
+SY shares). No script written yet — operator should swap on SaucerSwap to
+acquire both legs first, then write the deposit + split + initialize flow
+similarly. `initialAnchor = 1.02e18` (2% implied yield, matches the ~1.84%
+APR baseline for the WHBAR-USDC 0.15% pool full-range).
 
 ## Step 5 — verify on HashScan
 
