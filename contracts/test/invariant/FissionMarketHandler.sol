@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {FissionMarket} from "../../src/core/FissionMarket.sol";
-import {YieldToken} from "../../src/core/YieldToken.sol";
 import {MockSY} from "../mocks/MockSY.sol";
 
 /// @notice Handler that drives FissionMarket through bounded operations from an actor

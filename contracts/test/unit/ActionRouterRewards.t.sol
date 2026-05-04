@@ -6,7 +6,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {ActionRouter} from "../../src/periphery/ActionRouter.sol";
 import {FissionMarketRewards} from "../../src/core/FissionMarketRewards.sol";
-import {YieldToken} from "../../src/core/YieldToken.sol";
 import {SY_SaucerSwapV2LP} from "../../src/sy/SY_SaucerSwapV2LP.sol";
 import {MockUniswapV3PositionManager} from "../mocks/MockUniswapV3PositionManager.sol";
 import {MockERC20} from "../mocks/MockSY.sol";

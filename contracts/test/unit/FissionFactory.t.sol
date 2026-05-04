@@ -7,7 +7,6 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 
 import {FissionFactory} from "../../src/core/FissionFactory.sol";
 import {FissionMarket} from "../../src/core/FissionMarket.sol";
-import {YieldToken} from "../../src/core/YieldToken.sol";
 import {MockSY, MockERC20} from "../mocks/MockSY.sol";
 import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
 

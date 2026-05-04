@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {FissionMarketRewards} from "../../src/core/FissionMarketRewards.sol";
-import {YieldToken} from "../../src/core/YieldToken.sol";
 import {SY_SaucerSwapV2LP} from "../../src/sy/SY_SaucerSwapV2LP.sol";
 import {MarketMath} from "../../src/libraries/MarketMath.sol";
 import {IFissionMarketCommon} from "../../src/interfaces/IFissionMarketCommon.sol";

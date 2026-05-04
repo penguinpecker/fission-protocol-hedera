@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {FissionMarket} from "../../src/core/FissionMarket.sol";
-import {YieldToken} from "../../src/core/YieldToken.sol";
 import {MarketMath} from "../../src/libraries/MarketMath.sol";
 import {MockSY, MockERC20} from "../mocks/MockSY.sol";
 import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
