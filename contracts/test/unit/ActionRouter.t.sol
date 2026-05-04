@@ -8,6 +8,7 @@ import {ActionRouter} from "../../src/periphery/ActionRouter.sol";
 import {FissionMarket} from "../../src/core/FissionMarket.sol";
 import {PrincipalToken} from "../../src/core/PrincipalToken.sol";
 import {YieldToken} from "../../src/core/YieldToken.sol";
+import {IFissionMarketCommon} from "../../src/interfaces/IFissionMarketCommon.sol";
 import {MockSY, MockERC20} from "../mocks/MockSY.sol";
 
 contract ActionRouterTest is Test {
@@ -345,5 +346,18 @@ contract ActionRouterTest is Test {
         vm.prank(alice);
         vm.expectRevert(ActionRouter.ZeroAddress.selector);
         router.redeemAfterExpiryAndUnwrap(market, 1, 0, address(underlying), 0, address(0), 0);
+    }
+
+    // ───── interface parameterization ─────
+
+    /// @notice The router accepts any contract that implements `IFissionMarketCommon`.
+    ///         Both `FissionMarket` and `FissionMarketRewards` inherit it. This test
+    ///         exercises the address-typed accessor path the router relies on, so a
+    ///         silent ABI-shape regression (e.g. removing `ptAddr()`) trips here too.
+    function test_interface_marketSatisfiesIFissionMarketCommon() public view {
+        IFissionMarketCommon iface = IFissionMarketCommon(address(market));
+        assertEq(iface.ptAddr(), address(pt));
+        assertEq(iface.ytAddr(), address(yt));
+        assertEq(address(iface.sy()), address(sy));
     }
 }

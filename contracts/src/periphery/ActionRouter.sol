@@ -6,14 +6,18 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 import {IStandardizedYield} from "../interfaces/IStandardizedYield.sol";
-import {FissionMarket} from "../core/FissionMarket.sol";
+import {IFissionMarketCommon} from "../interfaces/IFissionMarketCommon.sol";
 
 /// @title  ActionRouter — user-facing entry for multi-step flows.
 /// @notice Single-tx flows for the common strategies. Every external entry takes a
 ///         `deadline` (revert past it) and a `minOut` (revert below it). The router
 ///         holds no state and only takes custody of tokens for the duration of a single
 ///         function call — no LP shares, no PT/YT held across blocks.
-/// @dev    Not upgradeable in v1. If we need to change the router, we deploy a new
+/// @dev    Parameterized on `IFissionMarketCommon` so the same helpers work for both
+///         `FissionMarket` (yield-bearing) and `FissionMarketRewards` (reward-bearing).
+///         Reward-market-specific flows (e.g. `claimRewards`) live on the market itself —
+///         the router doesn't currently bundle them, but `unwrapSY` works for both kinds.
+///         Not upgradeable in v1. If we need to change the router, we deploy a new
 ///         contract and ask users to re-approve. UUPS adds complexity (storage slots,
 ///         init guards) we don't need until the router gains durable state.
 contract ActionRouter is ReentrancyGuardTransient {
@@ -39,7 +43,7 @@ contract ActionRouter is ReentrancyGuardTransient {
     /// @param receiver       where to send PT and YT
     /// @param deadline       UNIX timestamp; 0 = no deadline
     function depositAndSplit(
-        FissionMarket market,
+        IFissionMarketCommon market,
         address tokenIn,
         uint256 amountIn,
         uint256 minPyOut,
@@ -73,15 +77,15 @@ contract ActionRouter is ReentrancyGuardTransient {
         if (ptOut < minPyOut) revert SlippageExceeded();
 
         // Send PT and YT to receiver.
-        IERC20(address(market.pt())).safeTransfer(receiver, ptOut);
-        IERC20(address(market.yt())).safeTransfer(receiver, ytOut);
+        IERC20(market.ptAddr()).safeTransfer(receiver, ptOut);
+        IERC20(market.ytAddr()).safeTransfer(receiver, ytOut);
     }
 
     // ───────────────────── PT trades ─────────────────────
 
     /// @notice Pay SY exact, receive PT.
     function swapExactSyForPt(
-        FissionMarket market,
+        IFissionMarketCommon market,
         uint256 syIn,
         uint256 ptOut,
         address receiver,
@@ -108,7 +112,7 @@ contract ActionRouter is ReentrancyGuardTransient {
 
     /// @notice Sell PT exact, receive SY.
     function swapExactPtForSy(
-        FissionMarket market,
+        IFissionMarketCommon market,
         uint256 ptIn,
         uint256 minSyOut,
         address receiver,
@@ -122,7 +126,7 @@ contract ActionRouter is ReentrancyGuardTransient {
         if (ptIn == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
 
-        IERC20 pt = IERC20(address(market.pt()));
+        IERC20 pt = IERC20(market.ptAddr());
         pt.safeTransferFrom(msg.sender, address(this), ptIn);
         pt.forceApprove(address(market), ptIn);
 
@@ -139,7 +143,7 @@ contract ActionRouter is ReentrancyGuardTransient {
     /// @dev    The PT sale is bounded by `minSyOutFromPtSale` slippage. If too low, the
     ///         whole flow reverts — user keeps their SY.
     function buyYT(
-        FissionMarket market,
+        IFissionMarketCommon market,
         uint256 syBudget,
         uint256 minSyOutFromPtSale,
         address receiver,
@@ -154,8 +158,8 @@ contract ActionRouter is ReentrancyGuardTransient {
         if (receiver == address(0)) revert ZeroAddress();
 
         IStandardizedYield sy = market.sy();
-        IERC20 pt = IERC20(address(market.pt()));
-        IERC20 yt = IERC20(address(market.yt()));
+        IERC20 pt = IERC20(market.ptAddr());
+        IERC20 yt = IERC20(market.ytAddr());
 
         IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), syBudget);
 
@@ -175,7 +179,7 @@ contract ActionRouter is ReentrancyGuardTransient {
     // ───────────────────── liquidity ─────────────────────
 
     function addLiquidityProportional(
-        FissionMarket market,
+        IFissionMarketCommon market,
         uint256 syIn,
         uint256 ptIn,
         uint256 minLpOut,
@@ -191,7 +195,7 @@ contract ActionRouter is ReentrancyGuardTransient {
         if (receiver == address(0)) revert ZeroAddress();
 
         IERC20 sy = IERC20(address(market.sy()));
-        IERC20 pt = IERC20(address(market.pt()));
+        IERC20 pt = IERC20(market.ptAddr());
 
         sy.safeTransferFrom(msg.sender, address(this), syIn);
         pt.safeTransferFrom(msg.sender, address(this), ptIn);
@@ -202,7 +206,7 @@ contract ActionRouter is ReentrancyGuardTransient {
     }
 
     function removeLiquidityProportional(
-        FissionMarket market,
+        IFissionMarketCommon market,
         uint256 lpIn,
         uint256 minSyOut,
         uint256 minPtOut,
@@ -228,7 +232,7 @@ contract ActionRouter is ReentrancyGuardTransient {
     /// @notice After expiry, redeem PT (and optional YT for closure) into SY, then
     ///         unwrap SY into the underlying token in one tx.
     function redeemAfterExpiryAndUnwrap(
-        FissionMarket market,
+        IFissionMarketCommon market,
         uint256 ptIn,
         uint256 ytIn,
         address tokenOut,
@@ -245,8 +249,8 @@ contract ActionRouter is ReentrancyGuardTransient {
         if (receiver == address(0)) revert ZeroAddress();
 
         IStandardizedYield sy = market.sy();
-        IERC20 pt = IERC20(address(market.pt()));
-        IERC20 yt = IERC20(address(market.yt()));
+        IERC20 pt = IERC20(market.ptAddr());
+        IERC20 yt = IERC20(market.ytAddr());
 
         if (ptIn > 0) {
             pt.safeTransferFrom(msg.sender, address(this), ptIn);

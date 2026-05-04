@@ -10,6 +10,7 @@ import {AccessControlDefaultAdminRules} from
     "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 
 import {IFissionMarket} from "../interfaces/IFissionMarket.sol";
+import {IFissionMarketCommon} from "../interfaces/IFissionMarketCommon.sol";
 import {IStandardizedYield} from "../interfaces/IStandardizedYield.sol";
 import {PrincipalToken} from "./PrincipalToken.sol";
 import {YieldToken} from "./YieldToken.sol";
@@ -30,6 +31,7 @@ import {PMath} from "../libraries/PMath.sol";
 ///                  pt.totalSupply() * 1e18 + sum(userOwed) * sy.exchangeRate()`
 contract FissionMarket is
     IFissionMarket,
+    IFissionMarketCommon,
     ERC20,
     ReentrancyGuardTransient,
     Pausable,
@@ -180,6 +182,16 @@ contract FissionMarket is
         pt = PrincipalToken(pt_);
         yt = YieldToken(yt_);
         emit TokensInitialized(pt_, yt_);
+    }
+
+    /// @notice Address-typed sibling of `pt()` — used by ActionRouter via IFissionMarketCommon.
+    function ptAddr() external view returns (address) {
+        return address(pt);
+    }
+
+    /// @notice Address-typed sibling of `yt()` — used by ActionRouter via IFissionMarketCommon.
+    function ytAddr() external view returns (address) {
+        return address(yt);
     }
 
     /// @notice Seed initial liquidity and set the implied-rate anchor. Call once after
