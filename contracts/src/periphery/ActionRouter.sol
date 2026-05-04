@@ -68,17 +68,14 @@ contract ActionRouter is ReentrancyGuardTransient {
         IERC20(tokenIn).forceApprove(address(sy), amountIn);
         uint256 shares = sy.deposit(address(this), tokenIn, amountIn, 0);
 
-        // Approve market and split.
+        // Split with both PT and YT going directly to user. YT is HTS-frozen so the
+        // router can't custody-and-forward; splitTo routes the mint past the freeze key.
         IERC20(address(sy)).forceApprove(address(market), shares);
-        market.split(shares);
+        market.splitTo(shares, receiver, receiver);
 
         ptOut = shares;
         ytOut = shares;
         if (ptOut < minPyOut) revert SlippageExceeded();
-
-        // Send PT and YT to receiver.
-        IERC20(market.ptAddr()).safeTransfer(receiver, ptOut);
-        IERC20(market.ytAddr()).safeTransfer(receiver, ytOut);
     }
 
     // ───────────────────── PT trades ─────────────────────
@@ -159,21 +156,19 @@ contract ActionRouter is ReentrancyGuardTransient {
 
         IStandardizedYield sy = market.sy();
         IERC20 pt = IERC20(market.ptAddr());
-        IERC20 yt = IERC20(market.ytAddr());
 
         IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), syBudget);
 
-        // Split SY → PT + YT.
+        // Split SY → PT (to router for sale) + YT (directly to user). YT is HTS-frozen,
+        // so the router can't custody-and-forward it; splitTo mints YT straight to the
+        // end user via Market's freeze key.
         IERC20(address(sy)).forceApprove(address(market), syBudget);
-        market.split(syBudget);
+        market.splitTo(syBudget, address(this), receiver);
         ytOut = syBudget;
 
         // Sell PT in the pool. Slippage on the PT sale.
         pt.forceApprove(address(market), syBudget);
         syRefund = market.swapExactPtForSy(syBudget, minSyOutFromPtSale, receiver);
-
-        // Forward YT to user.
-        yt.safeTransfer(receiver, ytOut);
     }
 
     // ───────────────────── liquidity ─────────────────────
@@ -229,12 +224,15 @@ contract ActionRouter is ReentrancyGuardTransient {
 
     // ───────────────────── post-expiry ─────────────────────
 
-    /// @notice After expiry, redeem PT (and optional YT for closure) into SY, then
-    ///         unwrap SY into the underlying token in one tx.
+    /// @notice After expiry, redeem PT into SY then unwrap SY to the underlying in one tx.
+    /// @dev    YT redemption is NOT supported here — YT is HTS-frozen and can't be
+    ///         transferred into the router. If a user wants to also burn YT (yield-bearing
+    ///         markets only; rewards markets reject ytIn>0 anyway), they call
+    ///         `market.redeemAfterExpiry(...)` directly. Most YT holders should keep YT
+    ///         past expiry to claim residual rewards rather than burn it.
     function redeemAfterExpiryAndUnwrap(
         IFissionMarketCommon market,
         uint256 ptIn,
-        uint256 ytIn,
         address tokenOut,
         uint256 minTokenOut,
         address receiver,
@@ -245,23 +243,16 @@ contract ActionRouter is ReentrancyGuardTransient {
         checkDeadline(deadline)
         returns (uint256 amountOut)
     {
-        if (ptIn == 0 && ytIn == 0) revert ZeroAmount();
+        if (ptIn == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
 
         IStandardizedYield sy = market.sy();
         IERC20 pt = IERC20(market.ptAddr());
-        IERC20 yt = IERC20(market.ytAddr());
 
-        if (ptIn > 0) {
-            pt.safeTransferFrom(msg.sender, address(this), ptIn);
-            pt.forceApprove(address(market), ptIn);
-        }
-        if (ytIn > 0) {
-            yt.safeTransferFrom(msg.sender, address(this), ytIn);
-            yt.forceApprove(address(market), ytIn);
-        }
+        pt.safeTransferFrom(msg.sender, address(this), ptIn);
+        pt.forceApprove(address(market), ptIn);
 
-        uint256 syOut = market.redeemAfterExpiry(ptIn, ytIn, address(this));
+        uint256 syOut = market.redeemAfterExpiry(ptIn, 0, address(this));
         if (syOut == 0) {
             return 0;
         }

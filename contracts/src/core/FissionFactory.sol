@@ -6,7 +6,6 @@ import {AccessControlDefaultAdminRules} from
 
 import {FissionMarket} from "./FissionMarket.sol";
 import {FissionMarketRewards} from "./FissionMarketRewards.sol";
-import {YieldToken} from "./YieldToken.sol";
 import {IStandardizedYield} from "../interfaces/IStandardizedYield.sol";
 
 /// @title  FissionFactory — deploys per-maturity Markets with whitelisted SY tokens.
@@ -163,30 +162,21 @@ contract FissionFactory is AccessControlDefaultAdminRules {
             string.concat("fLP-", suffix)
         );
 
-        // YT is still a Solidity ERC-20 contract (HTS-native YT migration is the next
-        // commit). Market self-creates the HTS-native PT inside setTokens — caller's
-        // msg.value pays the createFungible network fee (~1 HBAR mainnet; 0 in tests).
-        YieldToken yt = new YieldToken(
-            string.concat("Fission YT-", suffix),
-            string.concat("fYT-", suffix),
-            sy,
-            expiry,
-            address(m),
-            dec
-        );
-
         // Effects-first: stash the market in our own storage BEFORE the only external
         // call (setTokens).
         markets.push(address(m));
         marketAddr = address(m);
 
+        // Market self-creates BOTH HTS-native PT and HTS-native YT inside setTokens.
+        // msg.value pays the two HTS createFungible network fees (~2 HBAR mainnet).
         m.setTokens{value: msg.value}(
-            address(yt),
             string.concat("Fission PT-", suffix),
-            string.concat("fPT-", suffix)
+            string.concat("fPT-", suffix),
+            string.concat("Fission YT-", suffix),
+            string.concat("fYT-", suffix)
         );
 
-        emit MarketCreated(marketId, marketAddr, sy, m.pt(), address(yt), expiry, scalarRoot);
+        emit MarketCreated(marketId, marketAddr, sy, m.pt(), m.yt(), expiry, scalarRoot);
     }
 
     /// @notice Deploy a `FissionMarketRewards` Market + PT + YT for an SY whose yield is
@@ -224,25 +214,17 @@ contract FissionFactory is AccessControlDefaultAdminRules {
             string.concat("fLP-", suffix)
         );
 
-        YieldToken yt = new YieldToken(
-            string.concat("Fission YT-", suffix),
-            string.concat("fYT-", suffix),
-            sy,
-            expiry,
-            address(m),
-            dec
-        );
-
         markets.push(address(m));
         marketAddr = address(m);
 
         m.setTokens{value: msg.value}(
-            address(yt),
             string.concat("Fission PT-", suffix),
-            string.concat("fPT-", suffix)
+            string.concat("fPT-", suffix),
+            string.concat("Fission YT-", suffix),
+            string.concat("fYT-", suffix)
         );
 
-        emit MarketCreated(marketId, marketAddr, sy, m.pt(), address(yt), expiry, scalarRoot);
+        emit MarketCreated(marketId, marketAddr, sy, m.pt(), m.yt(), expiry, scalarRoot);
     }
 
     // ───────────────────── views ─────────────────────

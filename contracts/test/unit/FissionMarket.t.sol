@@ -16,7 +16,7 @@ contract FissionMarketTest is Test {
     FissionMarket market;
     /// @dev HTS-native PT — `pt` is the HTS token address. Use `IERC20(pt).balanceOf(...)`.
     address pt;
-    YieldToken yt;
+    address yt;
 
     address admin = address(0xAD);
     address treasury = address(0xBEEF);
@@ -52,9 +52,9 @@ contract FissionMarketTest is Test {
             "Fission LP-0",
             "fLP-0"
         );
-        yt = new YieldToken("Fission YT-0", "fYT-0", address(sy), expiry, address(market), 18);
-        market.setTokens(address(yt), "Fission PT-0", "fPT-0");
+        market.setTokens("Fission PT-0", "fPT-0", "Fission YT-0", "fYT-0");
         pt = market.pt();
+        yt = market.yt();
 
         // Seed the factory (this contract) with SY+PT to call initialize.
         sy.mint(address(this), 1_000_000e6);
@@ -99,7 +99,7 @@ contract FissionMarketTest is Test {
 
     function test_setTokens_oneShot() public {
         vm.expectRevert(FissionMarket.TokensAlreadySet.selector);
-        market.setTokens(address(yt), "x", "x");
+        market.setTokens("x", "x", "x", "x");
     }
 
     function test_setTokens_onlyFactory() public {
@@ -109,7 +109,7 @@ contract FissionMarketTest is Test {
         );
         vm.prank(alice);
         vm.expectRevert(FissionMarket.OnlyFactory.selector);
-        m2.setTokens(address(yt), "x", "x");
+        m2.setTokens("x", "x", "x", "x");
     }
 
     function test_initialize_oneShot() public {
@@ -127,7 +127,7 @@ contract FissionMarketTest is Test {
         vm.stopPrank();
 
         assertEq(IERC20(pt).balanceOf(alice), 1_000e6);
-        assertEq(yt.balanceOf(alice), 1_000e6);
+        assertEq(IERC20(yt).balanceOf(alice), 1_000e6);
         // Pool reserves unchanged by split.
         assertEq(market.totalSy(), 100_000e6);
         assertEq(market.totalPt(), 100_000e6);
@@ -144,7 +144,7 @@ contract FissionMarketTest is Test {
 
         assertEq(syAfter - syBefore, 1_000e6);
         assertEq(IERC20(pt).balanceOf(alice), 0);
-        assertEq(yt.balanceOf(alice), 0);
+        assertEq(IERC20(yt).balanceOf(alice), 0);
     }
 
     // ───── swaps ─────
@@ -241,33 +241,18 @@ contract FissionMarketTest is Test {
         assertLt(claimed, 48e6);
     }
 
-    function test_yieldAccrual_settledOnYTTransfer() public {
-        // Alice splits, gets 1000 YT. Rate grows. Alice transfers YT to bob.
-        // Yield up to that point should stay with alice; future yield accrues to bob.
+    /// @notice YT is HTS-frozen (AMM-only) — direct user-to-user transfer reverts.
+    ///         This is the design that closes the yield-leakage exploit: a user can't
+    ///         sneak YT to a fresh address whose userIndex would be stale.
+    function test_yt_frozen_userToUserTransferReverts() public {
         vm.startPrank(alice);
         IERC20(address(sy)).approve(address(market), 1_000e6);
         market.split(1_000e6);
+
+        // Alice now holds 1000 frozen YT. Trying to transfer to bob reverts.
+        vm.expectRevert(); // HtsCallFailed(ACCOUNT_FROZEN_FOR_TOKEN)
+        IERC20(yt).transfer(bob, 1_000e6);
         vm.stopPrank();
-
-        sy.setExchangeRate(1.05e18);
-
-        // Transfer YT — onYTBalanceChange settles alice's accrued yield.
-        vm.prank(alice);
-        yt.transfer(bob, 1_000e6);
-
-        // Alice should have userOwed > 0 now (the yield earned at 1.05).
-        assertGt(market.userOwed(alice), 47e6);
-        assertLt(market.userOwed(alice), 48e6);
-
-        // Rate grows again to 1.10.
-        sy.setExchangeRate(1.10e18);
-
-        // Bob claims; should get yield from 1.05 → 1.10 only.
-        // owed = 1000e6 * (1.10 - 1.05) / 1.10 ≈ 45.45e18
-        vm.prank(bob);
-        uint256 bobClaimed = market.claimYield(bob);
-        assertGt(bobClaimed, 45e6);
-        assertLt(bobClaimed, 46e6);
     }
 
     // ───── post-expiry ─────
@@ -409,13 +394,8 @@ contract FissionMarketTest is Test {
         new FissionMarket(address(sy), block.timestamp + 90 days, 0, admin, treasury, 18, "x", "x");
     }
 
-    function test_setTokens_revertsOnZeroYt() public {
-        FissionMarket m2 = new FissionMarket(
-            address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, "x", "x"
-        );
-        vm.expectRevert(FissionMarket.ZeroAddress.selector);
-        m2.setTokens(address(0), "x", "x");
-    }
+    // Removed test_setTokens_revertsOnZeroYt — Market now self-creates YT inside setTokens,
+    // so there's no zero-yt input case to validate.
 
     function test_initialize_revertsIfTokensNotSet() public {
         FissionMarket m2 = new FissionMarket(
@@ -430,8 +410,7 @@ contract FissionMarketTest is Test {
         FissionMarket m2 = new FissionMarket(
             address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, "x", "x"
         );
-        YieldToken y = new YieldToken("y", "y", address(sy), expiry, address(m2), 18);
-        m2.setTokens(address(y), "p", "p");
+        m2.setTokens("p", "p", "y", "y");
 
         vm.prank(admin);
         vm.expectRevert(FissionMarket.ZeroAmount.selector);
@@ -442,8 +421,7 @@ contract FissionMarketTest is Test {
         FissionMarket m2 = new FissionMarket(
             address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, "x", "x"
         );
-        YieldToken y = new YieldToken("y", "y", address(sy), expiry, address(m2), 18);
-        m2.setTokens(address(y), "p", "p");
+        m2.setTokens("p", "p", "y", "y");
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(FissionMarket.ReserveFeeTooHigh.selector, 101, 100));
         m2.initialize(1e18, 1e18, INITIAL_ANCHOR, LN_FEE_ROOT, 101);
@@ -602,9 +580,7 @@ contract FissionMarketTest is Test {
         market.unpause();
     }
 
-    function test_onYTBalanceChange_onlyYTReverts() public {
-        vm.prank(alice);
-        vm.expectRevert(FissionMarket.OnlyYT.selector);
-        market.onYTBalanceChange(alice, bob);
-    }
+    // Removed test_onYTBalanceChange_onlyYTReverts — the callback path is gone.
+    // HTS YT has no _update hook; yield settlement is now explicit at every market
+    // entry point that touches a user's YT balance.
 }

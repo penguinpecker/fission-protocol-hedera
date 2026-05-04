@@ -9,11 +9,9 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {AccessControlDefaultAdminRules} from
     "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 
-import {IFissionMarket} from "../interfaces/IFissionMarket.sol";
 import {IFissionMarketCommon} from "../interfaces/IFissionMarketCommon.sol";
 import {IStandardizedYield} from "../interfaces/IStandardizedYield.sol";
 import {IHederaTokenService} from "../interfaces/IHederaTokenService.sol";
-import {YieldToken} from "./YieldToken.sol";
 import {HtsHelpers} from "../libraries/HtsHelpers.sol";
 import {MarketMath} from "../libraries/MarketMath.sol";
 import {PMath} from "../libraries/PMath.sol";
@@ -31,7 +29,6 @@ import {PMath} from "../libraries/PMath.sol";
 ///             `sy.balanceOf(market) * sy.exchangeRate()  >=
 ///                  pt.totalSupply() * 1e18 + sum(userOwed) * sy.exchangeRate()`
 contract FissionMarket is
-    IFissionMarket,
     IFissionMarketCommon,
     ERC20,
     ReentrancyGuardTransient,
@@ -63,7 +60,21 @@ contract FissionMarket is
     /// @notice The HTS-native PT token. Market is treasury + supplyKey + wipeKey holder.
     ///         `pt.balanceOf(user)` etc. work via the Hedera ERC-20 facade.
     address public pt;
-    YieldToken public yt;
+
+    /// @notice The HTS-native YT token. Market is treasury + supplyKey + freezeKey + wipeKey.
+    ///         freezeDefault = FALSE — required because HIP-904 auto-association inherits
+    ///         the freeze default; with default=true a recipient gets auto-frozen at the
+    ///         exact moment of transfer, deadlocking the mint. The Market explicitly
+    ///         freezes every recipient AFTER each transfer (`_ytFrozen[to] = true`),
+    ///         making subsequent transfers fail with `ACCOUNT_FROZEN_FOR_TOKEN` and
+    ///         requiring all moves to route through Market — closing the yield-leakage
+    ///         exploit (no fresh-address sneak transfers). For repeat mints to an
+    ///         already-frozen recipient, `_mintYt` unfreezes → transfers → refreezes.
+    address public yt;
+
+    /// @dev True after Market has frozen this account on YT — i.e. they've previously
+    ///      received YT. Used to decide whether `_mintYt` needs to unfreeze first.
+    mapping(address => bool) internal _ytFrozen;
 
     // ───────────────────── AMM pool state ─────────────────────
 
@@ -96,7 +107,6 @@ contract FissionMarket is
     error NotInitialized();
     error MarketExpired();
     error MarketNotExpired();
-    error OnlyYT();
     error OnlyFactory();
     error InsufficientOutput();
     error InsufficientLiquidity();
@@ -126,10 +136,7 @@ contract FissionMarket is
         _;
     }
 
-    modifier onlyYT() {
-        if (msg.sender != address(yt)) revert OnlyYT();
-        _;
-    }
+    // onlyYT removed — HTS YT has no _update hook so the legacy callback is gone.
 
     modifier preExpiry() {
         if (block.timestamp >= expiry) revert MarketExpired();
@@ -179,56 +186,78 @@ contract FissionMarket is
 
     // ───────────────────── one-shot setup ─────────────────────
 
-    /// @notice One-shot setup: factory passes the YT contract, Market self-creates the
-    ///         HTS-native PT token. Caller must attach enough HBAR to msg.value to pay
-    ///         the HTS createFungible network fee (~1 HBAR mainnet; 0 in mock tests).
-    /// @dev    Market becomes treasury + supplyKey + wipeKey holder for PT. Wipe key
-    ///         is required because `merge` and `redeemAfterExpiry` burn from arbitrary
-    ///         user accounts via `HtsHelpers.wipeFrom`. The wipe authority is the same
-    ///         power the previous ERC-20 PT had via `_burn(from, amt)` under
-    ///         `onlyMarket`; this just expresses the same trust at the HTS layer.
-    function setTokens(address yt_, string calldata ptName, string calldata ptSymbol)
+    /// @notice One-shot setup: Market self-creates BOTH HTS-native PT (transferable)
+    ///         and HTS-native YT (frozen, AMM-only). Caller must attach HBAR to
+    ///         msg.value covering the two createFungible network fees (~2 HBAR mainnet;
+    ///         0 in mock tests).
+    /// @dev    Trust: Market holds supply + wipe keys on PT; supply + freeze + wipe on YT.
+    ///         The freeze key gives Market the authority to unfreeze/refreeze on demand —
+    ///         used during YT mint to ferry tokens through `freezeDefault = true`.
+    ///         Wipe is used for burn-from-arbitrary-user (merge/redeemAfterExpiry/swap).
+    function setTokens(string calldata ptName, string calldata ptSymbol, string calldata ytName, string calldata ytSymbol)
         external
         payable
         onlyFactory
     {
         if (pt != address(0)) revert TokensAlreadySet();
-        if (yt_ == address(0)) revert ZeroAddress();
 
-        IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](2);
-        keys[0] = HtsHelpers.makeKey(16, address(this)); // SUPPLY
-        keys[1] = HtsHelpers.makeKey(8, address(this));  // WIPE
+        // PT: transferable HTS token. SUPPLY + WIPE keys.
+        {
+            IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](2);
+            keys[0] = HtsHelpers.makeKey(16, address(this)); // SUPPLY
+            keys[1] = HtsHelpers.makeKey(8, address(this));  // WIPE
 
-        IHederaTokenService.HederaToken memory spec = IHederaTokenService.HederaToken({
-            name: ptName,
-            symbol: ptSymbol,
-            treasury: address(this),
-            memo: "",
-            tokenSupplyType: false,
-            maxSupply: 0,
-            freezeDefault: false,
-            tokenKeys: keys,
-            expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: address(this), autoRenewPeriod: 7776000})
-        });
+            IHederaTokenService.HederaToken memory spec = IHederaTokenService.HederaToken({
+                name: ptName,
+                symbol: ptSymbol,
+                treasury: address(this),
+                memo: "",
+                tokenSupplyType: false,
+                maxSupply: 0,
+                freezeDefault: false,
+                tokenKeys: keys,
+                expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: address(this), autoRenewPeriod: 7776000})
+            });
+            pt = HtsHelpers.createFungible(spec, int32(uint32(_assetDecimals)));
+        }
 
-        pt = HtsHelpers.createFungible(spec, int32(uint32(_assetDecimals)));
-        yt = YieldToken(yt_);
-        emit TokensInitialized(pt, yt_);
+        // YT: AMM-only HTS token. SUPPLY + FREEZE + WIPE keys, freezeDefault=FALSE.
+        // See `yt` storage docstring for why default=false (HIP-904 auto-associate
+        // race) — Market freezes recipients explicitly after each transfer.
+        {
+            IHederaTokenService.TokenKey[] memory keys = new IHederaTokenService.TokenKey[](3);
+            keys[0] = HtsHelpers.makeKey(16, address(this)); // SUPPLY
+            keys[1] = HtsHelpers.makeKey(4, address(this));  // FREEZE
+            keys[2] = HtsHelpers.makeKey(8, address(this));  // WIPE
+
+            IHederaTokenService.HederaToken memory spec = IHederaTokenService.HederaToken({
+                name: ytName,
+                symbol: ytSymbol,
+                treasury: address(this),
+                memo: "",
+                tokenSupplyType: false,
+                maxSupply: 0,
+                freezeDefault: false,
+                tokenKeys: keys,
+                expiry: IHederaTokenService.Expiry({second: 0, autoRenewAccount: address(this), autoRenewPeriod: 7776000})
+            });
+            yt = HtsHelpers.createFungible(spec, int32(uint32(_assetDecimals)));
+        }
+
+        emit TokensInitialized(pt, yt);
     }
 
     /// @notice Address-typed sibling of `pt()` — used by ActionRouter via IFissionMarketCommon.
-    /// @dev    With HTS-native PT, `pt` is already an address — `ptAddr()` is a no-op
-    ///         alias kept for interface compatibility.
     function ptAddr() external view returns (address) {
         return pt;
     }
 
     /// @notice Address-typed sibling of `yt()` — used by ActionRouter via IFissionMarketCommon.
     function ytAddr() external view returns (address) {
-        return address(yt);
+        return yt;
     }
 
-    /// @dev Mint HTS PT to `to`: mint to treasury (== this), then transfer out.
+    /// @dev Mint HTS PT to `to`: mint to treasury, transfer out (PT is unfrozen).
     function _mintPt(address to, uint256 amount) internal {
         HtsHelpers.mintToTreasury(pt, amount);
         if (to != address(this)) {
@@ -236,14 +265,52 @@ contract FissionMarket is
         }
     }
 
-    /// @dev Burn HTS PT from `from`. Treasury burns via burnFromTreasury; arbitrary
-    ///      accounts burn via wipeTokenAccount (uses Market's wipe key).
+    /// @dev Burn HTS PT: treasury via burnFromTreasury; arbitrary accounts via wipe.
     function _burnPt(address from, uint256 amount) internal {
         if (from == address(this)) {
             HtsHelpers.burnFromTreasury(pt, amount);
         } else {
             HtsHelpers.wipeFrom(pt, from, amount);
         }
+    }
+
+    /// @dev Mint HTS YT to `to`. First-time recipients: HIP-904 auto-association
+    ///      brings them in unfrozen (freezeDefault=false), transfer succeeds, then
+    ///      Market freezes them. Repeat recipients are already frozen — Market
+    ///      unfreezes first.
+    function _mintYt(address to, uint256 amount) internal {
+        HtsHelpers.mintToTreasury(yt, amount);
+        if (to != address(this)) {
+            if (_ytFrozen[to]) {
+                HtsHelpers.unfreeze(yt, to);
+            }
+            HtsHelpers.transfer(yt, address(this), to, amount);
+            HtsHelpers.freeze(yt, to);
+            _ytFrozen[to] = true;
+        }
+    }
+
+    /// @dev Burn HTS YT: wipe bypasses freeze in a single call. Treasury can also use
+    ///      burnFromTreasury when from == self.
+    function _burnYt(address from, uint256 amount) internal {
+        if (from == address(this)) {
+            HtsHelpers.burnFromTreasury(yt, amount);
+        } else {
+            HtsHelpers.wipeFrom(yt, from, amount);
+        }
+    }
+
+    /// @notice Admin-gated wipe of caller's own YT. Used during bootstrap to dispose
+    ///         of the YT minted as a side-effect of `split` (admin needs PT to call
+    ///         `initialize`, but split also produces matching YT). Settles accrued
+    ///         yield first so the caller's claim isn't silently destroyed.
+    /// @dev    NOT a general "burn-my-YT" footgun — gated to ADMIN_ROLE which is the
+    ///         protocol's Safe in production. Regular users dispose of YT via `merge`
+    ///         (requires matching PT) or by holding it for residual yield post-expiry.
+    function seedBurnYt(uint256 amount) external onlyRole(ADMIN_ROLE) {
+        if (amount == 0) revert ZeroAmount();
+        _accrue(msg.sender);
+        _burnYt(msg.sender, amount);
     }
 
     /// @notice Seed initial liquidity and set the implied-rate anchor. Call once after
@@ -308,14 +375,34 @@ contract FissionMarket is
     ///         `sy.exchangeRate()` now returns `PMath.ONE` at genesis, so the first
     ///         `_updateGlobalIndex` call sets `globalIndex = 1e18` immediately.
     function split(uint256 amount) external nonReentrant whenNotPaused preExpiry returns (uint256) {
+        return _split(amount, msg.sender, msg.sender);
+    }
+
+    /// @notice Split with explicit recipients for PT and YT. Used by ActionRouter so YT
+    ///         can be minted directly to the end user (it's frozen — the router can't
+    ///         custody-and-forward like it does for PT). PT receiver is typically the
+    ///         router (which then sells/forwards), YT receiver is the end user.
+    function splitTo(uint256 amount, address ptReceiver, address ytReceiver)
+        external
+        nonReentrant
+        whenNotPaused
+        preExpiry
+        returns (uint256)
+    {
+        if (ptReceiver == address(0) || ytReceiver == address(0)) revert ZeroAddress();
+        return _split(amount, ptReceiver, ytReceiver);
+    }
+
+    function _split(uint256 amount, address ptReceiver, address ytReceiver) internal returns (uint256) {
         if (amount == 0) revert ZeroAmount();
         if (pt == address(0)) revert TokensNotSet();
 
-        _accrue(msg.sender);
+        // Accrue against the YT recipient — they're the one whose userIndex will move.
+        _accrue(ytReceiver);
 
         IERC20(address(sy)).safeTransferFrom(msg.sender, address(this), amount);
-        _mintPt(msg.sender, amount);
-        yt.mint(msg.sender, amount);
+        _mintPt(ptReceiver, amount);
+        _mintYt(ytReceiver, amount);
 
         emit Split(msg.sender, amount);
         return amount;
@@ -329,7 +416,7 @@ contract FissionMarket is
         _accrue(msg.sender);
 
         _burnPt(msg.sender, amount);
-        yt.burn(msg.sender, amount);
+        _burnYt(msg.sender, amount);
         IERC20(address(sy)).safeTransfer(msg.sender, amount);
 
         emit Merge(msg.sender, amount);
@@ -521,8 +608,8 @@ contract FissionMarket is
             userIndex[user] = gi;
             return;
         }
-        if (gi > ui && address(yt) != address(0)) {
-            uint256 ytBal = yt.balanceOf(user);
+        if (gi > ui && yt != address(0)) {
+            uint256 ytBal = IERC20(yt).balanceOf(user);
             if (ytBal > 0) {
                 // owed in SY-share units = ytBal * (gi - ui) / gi
                 uint256 owed = (ytBal * (gi - ui)) / gi;
@@ -536,13 +623,6 @@ contract FissionMarket is
     function _accrue(address user) internal {
         _updateGlobalIndex();
         _accrueUser(user);
-    }
-
-    /// @notice Callback from YieldToken. Settles accrued yield BEFORE balance updates.
-    function onYTBalanceChange(address from, address to) external onlyYT {
-        _updateGlobalIndex();
-        _accrueUser(from);
-        _accrueUser(to);
     }
 
     function claimYield(address receiver) external nonReentrant returns (uint256 amount) {
@@ -565,8 +645,8 @@ contract FissionMarket is
         uint256 ui = userIndex[user];
         if (ui == 0) return userOwed[user];
         uint256 extra;
-        if (gi > ui && address(yt) != address(0)) {
-            uint256 ytBal = yt.balanceOf(user);
+        if (gi > ui && yt != address(0)) {
+            uint256 ytBal = IERC20(yt).balanceOf(user);
             if (ytBal > 0) extra = (ytBal * (gi - ui)) / gi;
         }
         return userOwed[user] + extra;
@@ -595,7 +675,7 @@ contract FissionMarket is
             syOut = (ptIn * 1e18) / globalIndex;
         }
         if (ytIn > 0) {
-            yt.burn(msg.sender, ytIn);
+            _burnYt(msg.sender, ytIn);
             // YT itself has no redeemable value post-expiry; user collects their yield via claimYield.
         }
 
@@ -660,7 +740,7 @@ contract FissionMarket is
         override(AccessControlDefaultAdminRules)
         returns (bool)
     {
-        return interfaceId == type(IFissionMarket).interfaceId
+        return interfaceId == type(IFissionMarketCommon).interfaceId
             || super.supportsInterface(interfaceId);
     }
 }

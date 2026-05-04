@@ -17,6 +17,7 @@ interface IFissionMarketCommon {
     function ytAddr() external view returns (address);
 
     function split(uint256 amount) external returns (uint256);
+    function splitTo(uint256 amount, address ptReceiver, address ytReceiver) external returns (uint256);
     function merge(uint256 amount) external returns (uint256);
 
     function swapExactPtForSy(uint256 ptIn, uint256 minSyOut, address receiver)

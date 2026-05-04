@@ -22,7 +22,7 @@ contract FissionMarketRewardsHandler is CommonBase, StdCheats, StdUtils {
     MockUniswapV3PositionManager public immutable npm;
     MockERC20 public immutable token0;
     MockERC20 public immutable token1;
-    YieldToken public immutable yt;
+    address public immutable yt;
     /// @dev HTS-native PT — `pt` is the HTS token address. Use `IERC20(pt).balanceOf(...)`.
     address public immutable pt;
     address[] public actors;
@@ -67,7 +67,7 @@ contract FissionMarketRewardsHandler is CommonBase, StdCheats, StdUtils {
     function merge(uint256 actorSeed, uint256 amtSeed) external {
         address a = _actor(actorSeed);
         uint256 ptBal = IERC20(pt).balanceOf(a);
-        uint256 ytBal = yt.balanceOf(a);
+        uint256 ytBal = IERC20(yt).balanceOf(a);
         uint256 cap = ptBal < ytBal ? ptBal : ytBal;
         if (cap == 0) return;
         uint256 amount = bound(amtSeed, 1, cap);
@@ -80,12 +80,12 @@ contract FissionMarketRewardsHandler is CommonBase, StdCheats, StdUtils {
         address from = _actor(fromSeed);
         address to = _actor(toSeed);
         if (from == to) return;
-        uint256 bal = yt.balanceOf(from);
+        uint256 bal = IERC20(yt).balanceOf(from);
         if (bal == 0) return;
         uint256 amt = bound(amtSeed, 1, bal);
 
         vm.prank(from);
-        try yt.transfer(to, amt) {} catch {}
+        try IERC20(yt).transfer(to, amt) {} catch {}
     }
 
     function injectFees(uint256 a0, uint256 a1) external {

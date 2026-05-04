@@ -16,7 +16,7 @@ contract ActionRouterTest is Test {
     MockSY sy;
     FissionMarket market;
     address pt;
-    YieldToken yt;
+    address yt;
     ActionRouter router;
 
     address admin = address(0xAD);
@@ -32,9 +32,9 @@ contract ActionRouterTest is Test {
         market = new FissionMarket(
             address(sy), block.timestamp + 90 days, 75e18, admin, treasury, 18, "fLP", "fLP"
         );
-        yt = new YieldToken("fYT", "fYT", address(sy), market.expiry(), address(market), 18);
-        market.setTokens(address(yt), "fPT", "fPT");
+        market.setTokens("fPT", "fPT", "fYT", "fYT");
         pt = market.pt();
+        yt = market.yt();
 
         // Seed pool. Test contract is the deployer.
         sy.mint(address(this), 1_000_000e6);
@@ -89,11 +89,11 @@ contract ActionRouterTest is Test {
         assertEq(ptOut, 1_000e6);
         assertEq(ytOut, 1_000e6);
         assertEq(IERC20(pt).balanceOf(alice), 1_000e6);
-        assertEq(yt.balanceOf(alice), 1_000e6);
+        assertEq(IERC20(yt).balanceOf(alice), 1_000e6);
         // Router holds nothing.
         assertEq(IERC20(address(sy)).balanceOf(address(router)), 0);
         assertEq(IERC20(pt).balanceOf(address(router)), 0);
-        assertEq(yt.balanceOf(address(router)), 0);
+        assertEq(IERC20(yt).balanceOf(address(router)), 0);
     }
 
     function test_depositAndSplit_slippage() public {
@@ -146,7 +146,7 @@ contract ActionRouterTest is Test {
 
         // ytOut = 5_000 (split is 1:1). syRefund = SY received from PT sale.
         assertEq(ytOut, 5_000e6);
-        assertEq(yt.balanceOf(alice), 5_000e6);
+        assertEq(IERC20(yt).balanceOf(alice), 5_000e6);
 
         // Net SY out of alice's pocket = 5_000 - syRefund.
         // syBefore was 10_000 (after deposit), alice paid 5_000 SY in, got syRefund back.
@@ -221,13 +221,14 @@ contract ActionRouterTest is Test {
         sy.setExchangeRate(1.05e18);
         vm.warp(market.expiry() + 1);
 
-        // Alice redeems via router with unwrap to underlying.
+        // Alice redeems PT via router with unwrap to underlying. YT is HTS-frozen, so
+        // the router doesn't accept it — alice keeps her YT (and any residual yield it
+        // tracks). The router only handles PT redemption + SY-to-underlying unwrap.
         vm.startPrank(alice);
         IERC20(pt).approve(address(router), 1_000e6);
-        IERC20(address(yt)).approve(address(router), 1_000e6);
         uint256 underBefore = underlying.balanceOf(alice);
         uint256 amountOut = router.redeemAfterExpiryAndUnwrap(
-            market, 1_000e6, 1_000e6, address(underlying), 0, alice, 0
+            market, 1_000e6, address(underlying), 0, alice, 0
         );
         uint256 underAfter = underlying.balanceOf(alice);
         vm.stopPrank();
@@ -340,14 +341,14 @@ contract ActionRouterTest is Test {
         vm.warp(market.expiry() + 1);
         vm.prank(alice);
         vm.expectRevert(ActionRouter.ZeroAmount.selector);
-        router.redeemAfterExpiryAndUnwrap(market, 0, 0, address(underlying), 0, alice, 0);
+        router.redeemAfterExpiryAndUnwrap(market, 0, address(underlying), 0, alice, 0);
     }
 
     function test_redeemAfterExpiry_revertsZeroReceiver() public {
         vm.warp(market.expiry() + 1);
         vm.prank(alice);
         vm.expectRevert(ActionRouter.ZeroAddress.selector);
-        router.redeemAfterExpiryAndUnwrap(market, 1, 0, address(underlying), 0, address(0), 0);
+        router.redeemAfterExpiryAndUnwrap(market, 1, address(underlying), 0, address(0), 0);
     }
 
     // ───── interface parameterization ─────
@@ -359,7 +360,7 @@ contract ActionRouterTest is Test {
     function test_interface_marketSatisfiesIFissionMarketCommon() public view {
         IFissionMarketCommon iface = IFissionMarketCommon(address(market));
         assertEq(iface.ptAddr(), pt);
-        assertEq(iface.ytAddr(), address(yt));
+        assertEq(iface.ytAddr(), yt);
         assertEq(address(iface.sy()), address(sy));
     }
 }

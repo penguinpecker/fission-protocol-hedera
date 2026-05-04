@@ -19,7 +19,7 @@ contract FissionMarketHandler is Test {
     FissionMarket public market;
     /// @dev HTS-native PT — `pt` is the HTS token address. Use `IERC20(pt).balanceOf(...)`.
     address public pt;
-    YieldToken public yt;
+    address public yt;
     MockSY public sy;
 
     address[] public actors;
@@ -68,7 +68,7 @@ contract FissionMarketHandler is Test {
 
     function merge(uint256 amount, uint256 actorSeed) public useActor(actorSeed) {
         uint256 ptBal = IERC20(pt).balanceOf(currentActor);
-        uint256 ytBal = yt.balanceOf(currentActor);
+        uint256 ytBal = IERC20(yt).balanceOf(currentActor);
         uint256 cap = ptBal < ytBal ? ptBal : ytBal;
         if (cap < 1e16) return;
         amount = bound(amount, 1e16, cap);

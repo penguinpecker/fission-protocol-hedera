@@ -27,7 +27,7 @@ contract FissionMarketRewardsInvariantTest is Test {
     SY_SaucerSwapV2LP sy;
     FissionMarketRewards market;
     address pt;
-    YieldToken yt;
+    address yt;
     FissionMarketRewardsHandler handler;
 
     address admin = address(0xAD);
@@ -65,9 +65,9 @@ contract FissionMarketRewardsInvariantTest is Test {
         market = new FissionMarketRewards(
             address(sy), expiry_, SCALAR_ROOT, admin, treasury, 18, "fLP-V2", "fLP-V2"
         );
-        yt = new YieldToken("fYT-V2", "fYT-V2", address(sy), expiry_, address(market), 18);
-        market.setTokens(address(yt), "fPT-V2", "fPT-V2");
+        market.setTokens("fPT-V2", "fPT-V2", "fYT-V2", "fYT-V2");
         pt = market.pt();
+        yt = market.yt();
 
         actors = new address[](3);
         actors[0] = address(0xA1);
@@ -118,7 +118,7 @@ contract FissionMarketRewardsInvariantTest is Test {
     /// (2) PT/YT supplies stay paired pre-expiry.
     function invariant_ptYtSupplyParityPreExpiry() public view {
         if (block.timestamp >= market.expiry()) return;
-        assertEq(IERC20(pt).totalSupply(), yt.totalSupply(), "PT/YT diverged");
+        assertEq(IERC20(pt).totalSupply(), IERC20(yt).totalSupply(), "PT/YT diverged");
     }
 
     /// (3) Reward ledger upper bound: total tokens that have left the market (claimed) +

@@ -159,13 +159,12 @@ contract FissionFactoryTest is Test {
         assertEq(address(m.sy()), address(sy));
         assertEq(m.factory(), address(factory));
         assertNotEq(m.pt(), address(0));
-        assertNotEq(address(m.yt()), address(0));
+        assertNotEq(m.yt(), address(0));
 
-        // YT points at the market (PT is HTS-native — Market is treasury+supplyKey+wipeKey).
-        assertEq(m.yt().market(), marketAddr);
-
-        // YT decimals match SY (PT decimals are set on the HTS token at creation).
-        assertEq(m.yt().decimals(), sy.decimals());
+        // PT and YT decimals match SY (set on the HTS tokens at creation).
+        // We can't check via a contract method anymore (PT/YT are HTS, not contracts);
+        // instead verify the assetDecimals matches SY's.
+        assertEq(m.assetDecimals(), sy.decimals());
 
         // Market admin = factory.marketAdmin.
         assertTrue(m.hasRole(m.DEFAULT_ADMIN_ROLE(), marketAdmin));

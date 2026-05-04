@@ -8,7 +8,7 @@ import {FissionMarketRewards} from "../../src/core/FissionMarketRewards.sol";
 import {YieldToken} from "../../src/core/YieldToken.sol";
 import {SY_SaucerSwapV2LP} from "../../src/sy/SY_SaucerSwapV2LP.sol";
 import {MarketMath} from "../../src/libraries/MarketMath.sol";
-import {IFissionMarket} from "../../src/interfaces/IFissionMarket.sol";
+import {IFissionMarketCommon} from "../../src/interfaces/IFissionMarketCommon.sol";
 import {MockUniswapV3PositionManager} from "../mocks/MockUniswapV3PositionManager.sol";
 import {MockERC20} from "../mocks/MockSY.sol";
 import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
@@ -23,7 +23,7 @@ contract FissionMarketRewardsTest is Test {
     SY_SaucerSwapV2LP sy;
     FissionMarketRewards market;
     address pt;
-    YieldToken yt;
+    address yt;
 
     address admin = address(0xAD);
     address treasury = address(0xBEEF);
@@ -69,14 +69,14 @@ contract FissionMarketRewardsTest is Test {
         market = new FissionMarketRewards(
             address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, "Fission LP-V2", "fLP-V2"
         );
-        yt = new YieldToken("fYT-V2", "fYT-V2", address(sy), expiry, address(market), 18);
-        market.setTokens(address(yt), "fPT-V2", "fPT-V2");
+        market.setTokens("fPT-V2", "fPT-V2", "fYT-V2", "fYT-V2");
         pt = market.pt();
+        yt = market.yt();
 
-        // Send admin 200k SY (admin will split 100k → 100k PT + 100k YT, then initialize
-        // with the remaining 100k SY + 100k PT). Admin keeps 100k YT as residual.
+        // Admin gets 200k SY → splits 100k → has 100k PT + 100k YT (frozen) + 100k SY
+        // → seedBurnYt disposes the YT residual → initializes pool with 100k SY+PT.
+        // After setUp: admin has 0 SY / 0 PT / 0 YT + LP shares. No dangling YT supply.
         IERC20(address(sy)).transfer(admin, 200_000e6);
-        // Actors get plenty of SY so tests can split sizeable amounts.
         IERC20(address(sy)).transfer(alice, 500_000e6);
         IERC20(address(sy)).transfer(bob, 500_000e6);
         IERC20(address(sy)).transfer(carol, 200_000e6);
@@ -85,10 +85,9 @@ contract FissionMarketRewardsTest is Test {
         IERC20(address(sy)).approve(address(market), type(uint256).max);
         IERC20(pt).approve(address(market), type(uint256).max);
         market.split(100_000e6);
+        market.seedBurnYt(100_000e6); // dispose of bootstrap YT residual
         market.initialize(100_000e6, 100_000e6, INITIAL_ANCHOR, LN_FEE_ROOT, RESERVE_PCT);
         vm.stopPrank();
-        // Admin now holds: 0 SY, 0 PT, 100_000e6 YT, plus LP shares from initialize.
-        // Test contract holds the remaining ~1_550_000 SY but ZERO YT — clean.
 
         for (uint256 i = 0; i < 3; i++) {
             address u = [alice, bob, carol][i];
@@ -99,13 +98,11 @@ contract FissionMarketRewardsTest is Test {
         }
     }
 
-    /// @dev Tests that need actor X to be the SOLE YT holder absorb admin's residual YT
-    ///      first. Admin's 100k YT then becomes part of X's balance — no dangling
-    ///      uncontrolled YT remains.
-    function _absorbAdminYT(address recipient) internal {
-        uint256 amt = yt.balanceOf(admin); // read first; vm.prank applies only to NEXT call
-        vm.prank(admin);
-        yt.transfer(recipient, amt);
+    /// @dev With HTS-frozen YT, admin doesn't hold any YT post-setup (see setUp),
+    ///      so the legacy `_absorbAdminYT` is a no-op. Kept as a no-op stub so existing
+    ///      test signatures don't have to change.
+    function _absorbAdminYT(address /* recipient */) internal pure {
+        // intentionally empty
     }
 
     /// @dev SY rewards distribute to ALL SY holders proportionally — Market is just one
@@ -166,22 +163,17 @@ contract FissionMarketRewardsTest is Test {
         );
         vm.prank(alice);
         vm.expectRevert(FissionMarketRewards.OnlyFactory.selector);
-        mkt.setTokens(address(0x1), "p", "p");
+        mkt.setTokens("p", "p", "y", "y");
     }
 
     function test_setTokens_revertsIfAlreadySet() public {
         // setUp already called setTokens
         vm.expectRevert(FissionMarketRewards.TokensAlreadySet.selector);
-        market.setTokens(address(0x1), "p", "p");
+        market.setTokens("p", "p", "y", "y");
     }
 
-    function test_setTokens_revertsOnZeroYt() public {
-        FissionMarketRewards mkt = new FissionMarketRewards(
-            address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
-        );
-        vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
-        mkt.setTokens(address(0), "p", "p");
-    }
+    // Removed test_setTokens_revertsOnZeroYt — Market now self-creates YT, so there's
+    // no zero-address input to validate.
 
     function test_initialize_revertsIfTokensNotSet() public {
         FissionMarketRewards mkt = new FissionMarketRewards(
@@ -203,9 +195,7 @@ contract FissionMarketRewardsTest is Test {
         FissionMarketRewards mkt = new FissionMarketRewards(
             address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
         );
-        // Need PT/YT set up first
-        YieldToken y = new YieldToken("y", "y", address(sy), mkt.expiry(), address(mkt), 18);
-        mkt.setTokens(address(y), "p", "p");
+        mkt.setTokens("p", "p", "y", "y");
 
         vm.prank(admin);
         vm.expectRevert(FissionMarketRewards.ZeroAmount.selector);
@@ -216,8 +206,7 @@ contract FissionMarketRewardsTest is Test {
         FissionMarketRewards mkt = new FissionMarketRewards(
             address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, "x", "x"
         );
-        YieldToken y = new YieldToken("y", "y", address(sy), mkt.expiry(), address(mkt), 18);
-        mkt.setTokens(address(y), "p", "p");
+        mkt.setTokens("p", "p", "y", "y");
 
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(FissionMarketRewards.ReserveFeeTooHigh.selector, 101, 100));
@@ -376,15 +365,12 @@ contract FissionMarketRewardsTest is Test {
         market.unpause();
     }
 
-    function test_onYTBalanceChange_onlyYTReverts() public {
-        vm.prank(alice);
-        vm.expectRevert(FissionMarketRewards.OnlyYT.selector);
-        market.onYTBalanceChange(alice, bob);
-    }
+    // Removed test_onYTBalanceChange_onlyYTReverts — callback path gone (HTS YT has
+    // no _update hook). Rewards settlement is now explicit at every entry point.
 
     function test_supportsInterface_returnsTrueForIFissionMarket() public view {
-        // Smoke test for ERC-165
-        assertTrue(market.supportsInterface(type(IFissionMarket).interfaceId));
+        // Smoke test for ERC-165 — checks the IFissionMarketCommon interface ID.
+        assertTrue(market.supportsInterface(type(IFissionMarketCommon).interfaceId));
     }
 
     // ───────────────────── basic flows ─────────────────────
@@ -393,7 +379,7 @@ contract FissionMarketRewardsTest is Test {
         vm.prank(alice);
         market.split(1_000e6);
         assertEq(IERC20(pt).balanceOf(alice), 1_000e6);
-        assertEq(yt.balanceOf(alice), 1_000e6);
+        assertEq(IERC20(yt).balanceOf(alice), 1_000e6);
     }
 
     function test_merge_burnsPtAndYt() public {
@@ -402,7 +388,7 @@ contract FissionMarketRewardsTest is Test {
         vm.prank(alice);
         market.merge(500e6);
         assertEq(IERC20(pt).balanceOf(alice), 500e6);
-        assertEq(yt.balanceOf(alice), 500e6);
+        assertEq(IERC20(yt).balanceOf(alice), 500e6);
     }
 
     function test_swapExactPtForSy_works() public {
@@ -423,7 +409,7 @@ contract FissionMarketRewardsTest is Test {
         _absorbAdminYT(alice);
         vm.prank(alice);
         market.split(10_000e6);
-        assertEq(yt.totalSupply(), yt.balanceOf(alice), "alice should be sole YT holder");
+        assertEq(IERC20(yt).totalSupply(), IERC20(yt).balanceOf(alice), "alice should be sole YT holder");
 
         uint256 expected = _marketShareOfInjected(100e6);
         _injectFees(100e6, 0);
@@ -436,12 +422,11 @@ contract FissionMarketRewardsTest is Test {
     }
 
     function test_twoYTHolders_proRata() public {
-        _absorbAdminYT(alice);
+        // alice splits 300k, bob 100k → 3:1 YT ratio.
         vm.prank(alice);
-        market.split(200_000e6);
+        market.split(300_000e6);
         vm.prank(bob);
         market.split(100_000e6);
-        // alice 300k YT, bob 100k YT → 3:1.
 
         uint256 marketShare0 = _marketShareOfInjected(400e6);
         uint256 marketShare1 = _marketShareOfInjected(200e6);
@@ -460,9 +445,9 @@ contract FissionMarketRewardsTest is Test {
     }
 
     function test_lateJoiner_doesNotEarnPastRewards() public {
-        _absorbAdminYT(alice);
+        // alice 200k YT pre-bob join.
         vm.prank(alice);
-        market.split(100_000e6);
+        market.split(200_000e6);
         // Alice sole YT holder.
         uint256 era1MarketShare = _marketShareOfInjected(100e6);
         _injectFees(100e6, 0);
@@ -486,30 +471,16 @@ contract FissionMarketRewardsTest is Test {
         assertApproxEqAbs(b0, era2MarketShare / 2, 2);
     }
 
-    function test_ytTransfer_settlesBothSides() public {
-        _absorbAdminYT(alice);
+    /// @notice YT is HTS-frozen — direct user-to-user transfer is impossible. The
+    ///         legacy "settle both sides on YT transfer" path no longer exists. The
+    ///         frozen design deliberately rules out this scenario.
+    function test_yt_frozen_userToUserTransferReverts() public {
         vm.prank(alice);
         market.split(100_000e6);
-        // Alice sole YT holder pre-transfer.
-        uint256 era1MarketShare = _marketShareOfInjected(100e6);
-        _injectFees(100e6, 0);
-        market.harvestRewards();
-
-        // Alice transfers half her YT to bob — both sides settle.
-        vm.prank(alice);
-        yt.transfer(bob, 100_000e6);
-
-        uint256 era2MarketShare = _marketShareOfInjected(40e6);
-        _injectFees(40e6, 0);
 
         vm.prank(alice);
-        (uint256 a0,) = market.claimRewards(alice);
-        vm.prank(bob);
-        (uint256 b0,) = market.claimRewards(bob);
-
-        // alice: full era1 + half era2 ; bob: half era2.
-        assertApproxEqAbs(a0, era1MarketShare + era2MarketShare / 2, 2);
-        assertApproxEqAbs(b0, era2MarketShare / 2, 2);
+        vm.expectRevert(); // HtsCallFailed(ACCOUNT_FROZEN_FOR_TOKEN)
+        IERC20(yt).transfer(bob, 100_000e6);
     }
 
     function test_merge_settlesRewardsBeforeBurn() public {

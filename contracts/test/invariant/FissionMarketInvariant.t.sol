@@ -21,7 +21,7 @@ contract FissionMarketInvariantTest is Test {
     MockSY sy;
     FissionMarket market;
     address pt;
-    YieldToken yt;
+    address yt;
     FissionMarketHandler handler;
 
     address admin = address(0xAD);
@@ -42,9 +42,9 @@ contract FissionMarketInvariantTest is Test {
         market = new FissionMarket(
             address(sy), block.timestamp + 90 days, 75e18, admin, treasury, 18, "fLP-0", "fLP-0"
         );
-        yt = new YieldToken("fYT-0", "fYT-0", address(sy), market.expiry(), address(market), 18);
-        market.setTokens(address(yt), "fPT-0", "fPT-0");
+        market.setTokens("fPT-0", "fPT-0", "fYT-0", "fYT-0");
         pt = market.pt();
+        yt = market.yt();
 
         // Mint SY to this contract, split half, then admin initializes pool.
         sy.mint(address(this), 1_000_000e6);
@@ -60,12 +60,16 @@ contract FissionMarketInvariantTest is Test {
         market.initialize(100_000e6, 100_000e6, 1.05e18, 0.0003e18, 80);
         vm.stopPrank();
 
-        // Fund actors with SY and some PT/YT (to exercise sells).
+        // Fund actors with SY. YT is HTS-frozen — only the Market can move it. Actors
+        // get YT (and PT) by calling market.split themselves below.
         for (uint256 i = 0; i < actors.length; i++) {
             sy.mint(actors[i], 50_000e6);
-            // give them some PT and YT to start with (split of 5k each by us)
-            IERC20(pt).transfer(actors[i], 5_000e6);
-            IERC20(address(yt)).transfer(actors[i], 5_000e6);
+        }
+        for (uint256 i = 0; i < actors.length; i++) {
+            vm.startPrank(actors[i]);
+            IERC20(address(sy)).approve(address(market), type(uint256).max);
+            market.split(5_000e6);
+            vm.stopPrank();
         }
 
         handler = new FissionMarketHandler(market, actors);
@@ -117,7 +121,7 @@ contract FissionMarketInvariantTest is Test {
     ///         Since redeemAfterExpiry can burn PT alone, this only holds pre-expiry.
     function invariant_ptYtSupplyParityPreExpiry() public view {
         if (block.timestamp >= market.expiry()) return;
-        assertEq(IERC20(pt).totalSupply(), yt.totalSupply(), "PT/YT supply diverged pre-expiry");
+        assertEq(IERC20(pt).totalSupply(), IERC20(yt).totalSupply(), "PT/YT supply diverged pre-expiry");
     }
 
     /// @notice Handler call summary — useful to see which paths got exercised.

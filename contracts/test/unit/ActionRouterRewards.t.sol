@@ -24,7 +24,7 @@ contract ActionRouterRewardsTest is Test {
     SY_SaucerSwapV2LP sy;
     FissionMarketRewards market;
     address pt;
-    YieldToken yt;
+    address yt;
     ActionRouter router;
 
     address admin = address(0xAD);
@@ -66,9 +66,9 @@ contract ActionRouterRewardsTest is Test {
         market = new FissionMarketRewards(
             address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, "Fission LP-V2", "fLP-V2"
         );
-        yt = new YieldToken("fYT-V2", "fYT-V2", address(sy), expiry, address(market), 18);
-        market.setTokens(address(yt), "fPT-V2", "fPT-V2");
+        market.setTokens("fPT-V2", "fPT-V2", "fYT-V2", "fYT-V2");
         pt = market.pt();
+        yt = market.yt();
 
         // Admin gets SY to bootstrap the pool.
         IERC20(address(sy)).transfer(admin, 200_000e6);
@@ -104,7 +104,7 @@ contract ActionRouterRewardsTest is Test {
 
         // Alice receives full YT exposure for `syBudget` SY split.
         assertEq(ytOut, syBudget, "ytOut == syBudget");
-        assertEq(yt.balanceOf(alice), syBudget, "alice YT");
+        assertEq(IERC20(yt).balanceOf(alice), syBudget, "alice YT");
 
         // PT was sold in the AMM — alice received some SY back.
         assertGt(syRefund, 0, "non-zero SY refund");
@@ -114,7 +114,7 @@ contract ActionRouterRewardsTest is Test {
         // Router holds nothing.
         assertEq(IERC20(address(sy)).balanceOf(address(router)), 0, "router SY");
         assertEq(IERC20(pt).balanceOf(address(router)), 0, "router PT");
-        assertEq(yt.balanceOf(address(router)), 0, "router YT");
+        assertEq(IERC20(yt).balanceOf(address(router)), 0, "router YT");
     }
 
     /// @notice Router-driven swapExactPtForSy against a rewards market. Alice splits
