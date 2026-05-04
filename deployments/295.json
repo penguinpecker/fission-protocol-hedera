@@ -1,0 +1,39 @@
+{
+  "chainId": 295,
+  "network": "mainnet",
+  "deployedAt": "2026-05-04T20:12:19.344Z",
+  "factory": {
+    "id": "0.0.10465002",
+    "evm": "0x00000000000000000000000000000000009faeea"
+  },
+  "router": {
+    "id": "(reused)",
+    "evm": "0x00000000000000000000000000000000009fad96"
+  },
+  "sy_hbarx": {
+    "id": "(reused)",
+    "evm": "0x80728fbad79974e428c50dc548853ff858d9430c"
+  },
+  "sy_saucer_v2_lp": {
+    "id": "(reused)",
+    "evm": "0xd4b535589148ea8bdf4ca64ee1007780d3d08c62"
+  },
+  "standard_deployer": {
+    "id": "0.0.10464989",
+    "evm": "0x00000000000000000000000000000000009faedd"
+  },
+  "rewards_deployer": {
+    "id": "0.0.10464996",
+    "evm": "0x00000000000000000000000000000000009faee4"
+  },
+  "deployer": "0.0.10463169",
+  "deployerEvm": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
+  "factoryAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
+  "marketAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
+  "marketTreasury": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
+  "syAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
+  "keeper": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
+  "sy_proposed_at": "2026-05-04T20:13:42.105Z",
+  "sy_confirm_window_opens": "2026-05-11T20:13:42.105Z",
+  "notes": "proposeSY done for both SYs (7d window ticking). Still TODO: KEEPER_ROLE grant on SY_HBARX. After 2026-05-11: confirmSY + createMarket / createRewardsMarket."
+}

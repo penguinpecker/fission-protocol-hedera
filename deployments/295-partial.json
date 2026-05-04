@@ -1,29 +1,38 @@
 {
   "chainId": 295,
   "network": "mainnet",
-  "deployedAt": "2026-05-04T18:30:00.000Z",
-  "status": "PARTIAL — only Router deployed; SY adapters + Factory blocked on Hedera msg.value-to-precompile-from-constructor issue (see notes)",
+  "deployedAt": "2026-05-05T00:00:00.000Z",
+  "status": "PARTIAL — Router + both SY adapters deployed & initialized; FissionFactory + 2 deployer helpers blocked on operator HBAR balance.",
+  "deployer": {
+    "id": "0.0.10463169",
+    "evm": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90"
+  },
   "router": {
     "id": "0.0.10464662",
     "evm": "0x00000000000000000000000000000000009fad96"
   },
-  "deployer": {
-    "id": "0.0.10463169",
-    "evm": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90"
+  "sy_hbarx": {
+    "evm": "0x80728fbad79974e428c50dc548853ff858d9430c",
+    "id": "0.0.10464740",
+    "init_share_token_status": "SUCCESS — 15 HBAR via SDK init-sy.mjs"
+  },
+  "sy_saucer_v2_lp": {
+    "evm": "0xd4b535589148ea8bdf4ca64ee1007780d3d08c62",
+    "init_share_token_status": "SUCCESS — 15 HBAR via SDK init-sy.mjs"
   },
   "factoryAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "marketAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "marketTreasury": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "syAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
-  "blocker": {
-    "issue": "SYBase.constructor calls HtsHelpers.createFungible(spec, decimals) which forwards msg.value to the 0x167 precompile. On Hedera mainnet (both via Hashio Ethereum-tx adapter AND via @hashgraph/sdk ContractCreate+setInitialBalance), the child TOKENCREATION transaction spawned by the precompile call has max_fee=0 → INSUFFICIENT_TX_FEE → CONTRACT_REVERT_EXECUTED.",
-    "evidence": [
-      "tx 0.0.10463169-1777917105-555205975 (SDK, setInitialBalance=10 HBAR): TOKENCREATION max_fee=0",
-      "tx 0.0.995584-1777917303-019174269 (Hashio ETHEREUMTRANSACTION, tx.value=2 HBAR): TOKENCREATION max_fee=0"
-    ],
-    "rootCause": "msg.value forwarded to a precompile call doesn't fund the spawned child HAPI tx. This pattern works in the local revm tests (mock 0x167 doesn't spawn HAPI children) but breaks on real Hedera consensus.",
-    "fix": "Refactor SYBase to defer HTS token creation out of the constructor. Two paths: (a) two-step init — constructor stores name/symbol, separate `initShareToken()` payable function creates HTS post-deploy; (b) `SYDeployer` contract that holds HBAR balance and orchestrates SY + HTS token in one external call. Either requires test updates."
+  "keeper": "0x32e8fd8434bADBCc5D79e70E1Fe0d16f86A7ab90",
+  "history": {
+    "blocker_resolved": "FissionFactory at 71KB runtime exceeded Hedera's 15M gas-per-tx ContractCreate cap (INSUFFICIENT_GAS / MAX_GAS_LIMIT_EXCEEDED). Fixed by extracting `new FissionMarket(...)` and `new FissionMarketRewards(...)` into StandardMarketDeployer.sol + RewardsMarketDeployer.sol. Added `factory_` param to both Market constructors (with `address(0)` fallback so tests don't need updating in setUp). FissionFactory shrunk 71KB → 8KB. Tests: 252/252 pass.",
+    "blocker_open": "Repeated failed FissionFactory deploy attempts (14M / 15M / 30M gas, file uploads) consumed ~260 HBAR. Operator balance is now 10.48 HBAR — insufficient for the 3 remaining deploys (~30-50 HBAR needed)."
   },
-  "spentSoFar": "~114 HBAR on failed deploys (Factory 2× attempts, SY 3× attempts)",
-  "remaining": "353 HBAR — sufficient once the SYBase refactor lands"
+  "remaining": [
+    "Top up operator (0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90 / 0.0.10463169) with ~50 HBAR",
+    "Run: ROUTER_ADDRESS=… SY_HBARX_ADDRESS=… SY_SAUCER_V2_LP_ADDRESS=… node scripts/deploy-mainnet-sdk.mjs (will deploy 2 deployers + Factory)",
+    "factory.proposeSY(sy_hbarx) / factory.proposeSY(sy_saucer_v2_lp)",
+    "Wait 7 days, then confirmSY + createMarket / createRewardsMarket"
+  ]
 }

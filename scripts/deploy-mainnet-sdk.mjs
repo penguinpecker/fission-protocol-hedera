@@ -11,7 +11,10 @@
 import {
   Client,
   ContractCreateFlow,
+  ContractCreateTransaction,
   ContractFunctionParameters,
+  FileAppendTransaction,
+  FileCreateTransaction,
   Hbar,
   PrivateKey,
 } from "@hashgraph/sdk";
@@ -111,6 +114,8 @@ const factoryBytes  = readBytecode("FissionFactory.sol/FissionFactory.json");
 const routerBytes   = readBytecode("ActionRouter.sol/ActionRouter.json");
 const syHbarxBytes  = readBytecode("SY_HBARX.sol/SY_HBARX.json");
 const sySaucerBytes = readBytecode("SY_SaucerSwapV2LP.sol/SY_SaucerSwapV2LP.json");
+const standardDeployerBytes = readBytecode("StandardMarketDeployer.sol/StandardMarketDeployer.json");
+const rewardsDeployerBytes  = readBytecode("RewardsMarketDeployer.sol/RewardsMarketDeployer.json");
 
 console.log(`\n──────────────────────────────────────────────`);
 console.log(`  Fission Mainnet Deploy (Hedera SDK / FileService)`);
@@ -126,15 +131,75 @@ console.log(`  bytecode sizes  : factory=${factoryBytes.length}b, router=${route
 
 async function deploy({ name, bytecode, params, gas = 12_000_000, payableHbar = 0 }) {
   console.log(`\n→ Deploying ${name} (bytecode ${bytecode.length}b, gas ${gas}, value ${payableHbar} HBAR)…`);
-  const tx = new ContractCreateFlow()
-    .setBytecode(bytecode)
-    .setGas(gas);
-  if (params) tx.setConstructorParameters(params);
-  if (payableHbar > 0) tx.setInitialBalance(new Hbar(payableHbar));
-  const submit = await tx.execute(client);
-  const receipt = await submit.getReceipt(client);
-  const id = receipt.contractId;
-  // Long-zero EVM alias for the contract.
+
+  // For small contracts (< ~28KB hex text, fits in one FileCreate), use ContractCreateFlow.
+  // For larger ones, do FileCreate + FileAppend (with explicit maxChunks) + ContractCreate
+  // manually — the SDK's ContractCreateFlow.execute path doesn't respect setMaxChunks
+  // (a known quirk: only executeWithSigner applies it).
+  if (bytecode.length <= 28000) {
+    const tx = new ContractCreateFlow()
+      .setBytecode(bytecode)
+      .setGas(gas);
+    if (params) tx.setConstructorParameters(params);
+    if (payableHbar > 0) tx.setInitialBalance(new Hbar(payableHbar));
+    const submit = await tx.execute(client);
+    const receipt = await submit.getReceipt(client);
+    const id = receipt.contractId;
+    const num = id.num.toNumber();
+    const evm = "0x" + num.toString(16).padStart(40, "0");
+    console.log(`  ✓ ${name}  ${id.toString()}  (${evm})`);
+    return { contractId: id.toString(), evmAddress: evm };
+  }
+
+  // Manual flow for big bytecode (> 28KB hex text).
+  console.log(`  · Bytecode > 28KB — using manual FileCreate + FileAppend.`);
+  const initialChunk = bytecode.subarray(0, 2048);
+  const remainder = bytecode.subarray(2048);
+
+  const fc = new FileCreateTransaction()
+    .setKeys([operatorKey.publicKey])
+    .setContents(initialChunk)
+    .setMaxTransactionFee(new Hbar(5));
+  const fcSubmit = await fc.execute(client);
+  const fcReceipt = await fcSubmit.getReceipt(client);
+  const fileId = fcReceipt.fileId;
+  console.log(`  · FileCreate  → ${fileId.toString()} (initial 2048b)`);
+
+  // Append the remainder in batches. Each batch is its own FileAppend transaction
+  // — splitting up the work means a slow node on one chunk doesn't expire the whole
+  // upload. Each FileAppend SDK call internally chunks at ~4KB; we keep each
+  // outer call to ≤8 chunks (~32KB) to stay well under the 180s validDuration cap.
+  const BATCH_BYTES = 32 * 1024; // 8 chunks at 4KB each
+  for (let off = 0; off < remainder.length; off += BATCH_BYTES) {
+    const batch = remainder.subarray(off, Math.min(off + BATCH_BYTES, remainder.length));
+    let attempt = 0;
+    while (true) {
+      try {
+        const fa = new FileAppendTransaction()
+          .setFileId(fileId)
+          .setContents(batch)
+          .setMaxChunks(20)
+          .setMaxTransactionFee(new Hbar(20));
+        await fa.execute(client);
+        console.log(`  · FileAppend  → +${batch.length}b @ offset ${off}`);
+        break;
+      } catch (e) {
+        attempt++;
+        if (attempt >= 3 || !String(e).includes("TRANSACTION_EXPIRED")) throw e;
+        console.log(`  · retry append @ offset ${off} (attempt ${attempt}, ${e.status?._code ?? "?"})`);
+      }
+    }
+  }
+
+  const cc = new ContractCreateTransaction()
+    .setBytecodeFileId(fileId)
+    .setGas(gas)
+    .setMaxTransactionFee(new Hbar(50));
+  if (params) cc.setConstructorParameters(params);
+  if (payableHbar > 0) cc.setInitialBalance(new Hbar(payableHbar));
+  const ccSubmit = await cc.execute(client);
+  const ccReceipt = await ccSubmit.getReceipt(client);
+  const id = ccReceipt.contractId;
   const num = id.num.toNumber();
   const evm = "0x" + num.toString(16).padStart(40, "0");
   console.log(`  ✓ ${name}  ${id.toString()}  (${evm})`);
@@ -161,57 +226,107 @@ if (existingRouter) {
 }
 
 // ── 2) SY_HBARX (16KB) ──
-const syHbarx = await deploy({
-  name: "SY_HBARX",
-  bytecode: syHbarxBytes,
-  params: new ContractFunctionParameters()
-    .addAddress(HBARX)
-    .addAddress(STADER)
-    .addAddress(SY_ADMIN)
-    .addUint48(0),
-  gas: 12_000_000,
-  payableHbar: 10,
-});
+let syHbarx;
+const existingSyHbarx = process.env.SY_HBARX_ADDRESS;
+if (existingSyHbarx) {
+  console.log(`\n→ Reusing existing SY_HBARX @ ${existingSyHbarx}`);
+  syHbarx = { contractId: "(reused)", evmAddress: existingSyHbarx };
+} else {
+  syHbarx = await deploy({
+    name: "SY_HBARX",
+    bytecode: syHbarxBytes,
+    params: new ContractFunctionParameters()
+      .addAddress(HBARX)
+      .addAddress(STADER)
+      .addAddress(SY_ADMIN)
+      .addUint48(0),
+    gas: 12_000_000,
+  });
+}
 
 // ── 3) SY_SaucerSwapV2LP (20KB) ──
-const sySaucer = await deploy({
-  name: "SY_SaucerSwapV2LP",
-  bytecode: sySaucerBytes,
-  params: new ContractFunctionParameters()
-    .addString("Fission SY-SaucerV2LP")
-    .addString("fSY-SS-V2")
-    .addAddress(T0)
-    .addAddress(T1)
-    .addUint24(POOL_FEE)
-    .addInt24(TICK_LOWER)
-    .addInt24(TICK_UPPER)
-    .addAddress(NPM)
-    .addAddress(SY_ADMIN)
-    .addUint48(0),
-  gas: 12_000_000,
-  payableHbar: 10,
-});
+let sySaucer;
+const existingSySaucer = process.env.SY_SAUCER_V2_LP_ADDRESS;
+if (existingSySaucer) {
+  console.log(`\n→ Reusing existing SY_SaucerSwapV2LP @ ${existingSySaucer}`);
+  sySaucer = { contractId: "(reused)", evmAddress: existingSySaucer };
+} else {
+  sySaucer = await deploy({
+    name: "SY_SaucerSwapV2LP",
+    bytecode: sySaucerBytes,
+    params: new ContractFunctionParameters()
+      .addString("Fission SY-SaucerV2LP")
+      .addString("fSY-SS-V2")
+      .addAddress(T0)
+      .addAddress(T1)
+      .addUint24(POOL_FEE)
+      .addInt24(TICK_LOWER)
+      .addInt24(TICK_UPPER)
+      .addAddress(NPM)
+      .addAddress(SY_ADMIN)
+      .addUint48(0),
+    gas: 12_000_000,
+  });
+}
 
-// ── 4) Factory (71KB — last; if file-append times out, retry). ──
-const factory = await deploy({
-  name: "FissionFactory",
-  bytecode: factoryBytes,
-  params: new ContractFunctionParameters()
-    .addAddress(FACTORY_ADMIN)
-    .addAddress(MARKET_ADMIN)
-    .addAddress(MARKET_TREASURY),
-  gas: 14_000_000,
-});
+// ── 4a) Market deployers (each ~22-23KB; bytecode-isolation for factory). ──
+let standardDeployer;
+const existingStandardDeployer = process.env.STANDARD_DEPLOYER_ADDRESS;
+if (existingStandardDeployer) {
+  console.log(`\n→ Reusing existing StandardMarketDeployer @ ${existingStandardDeployer}`);
+  standardDeployer = { contractId: "(reused)", evmAddress: existingStandardDeployer };
+} else {
+  standardDeployer = await deploy({
+    name: "StandardMarketDeployer",
+    bytecode: standardDeployerBytes,
+    gas: 12_000_000,
+  });
+}
+
+let rewardsDeployer;
+const existingRewardsDeployer = process.env.REWARDS_DEPLOYER_ADDRESS;
+if (existingRewardsDeployer) {
+  console.log(`\n→ Reusing existing RewardsMarketDeployer @ ${existingRewardsDeployer}`);
+  rewardsDeployer = { contractId: "(reused)", evmAddress: existingRewardsDeployer };
+} else {
+  rewardsDeployer = await deploy({
+    name: "RewardsMarketDeployer",
+    bytecode: rewardsDeployerBytes,
+    gas: 12_000_000,
+  });
+}
+
+// ── 4b) Factory (~8KB after deployer extraction — fits in any path). ──
+let factory;
+const existingFactory = process.env.FACTORY_ADDRESS;
+if (existingFactory) {
+  console.log(`\n→ Reusing existing FissionFactory @ ${existingFactory}`);
+  factory = { contractId: "(reused)", evmAddress: existingFactory };
+} else {
+  factory = await deploy({
+    name: "FissionFactory",
+    bytecode: factoryBytes,
+    params: new ContractFunctionParameters()
+      .addAddress(FACTORY_ADMIN)
+      .addAddress(MARKET_ADMIN)
+      .addAddress(MARKET_TREASURY)
+      .addAddress(standardDeployer.evmAddress)
+      .addAddress(rewardsDeployer.evmAddress),
+    gas: 8_000_000,
+  });
+}
 
 // ── 5) Persist + summary ──
 const out = {
   chainId: 295,
   network: "mainnet",
   deployedAt: new Date().toISOString(),
-  factory:        { id: factory.contractId,    evm: factory.evmAddress },
-  router:         { id: router.contractId,     evm: router.evmAddress },
-  sy_hbarx:       { id: syHbarx.contractId,    evm: syHbarx.evmAddress },
-  sy_saucer_v2_lp:{ id: sySaucer.contractId,   evm: sySaucer.evmAddress },
+  factory:           { id: factory.contractId,          evm: factory.evmAddress },
+  router:            { id: router.contractId,           evm: router.evmAddress },
+  sy_hbarx:          { id: syHbarx.contractId,          evm: syHbarx.evmAddress },
+  sy_saucer_v2_lp:   { id: sySaucer.contractId,         evm: sySaucer.evmAddress },
+  standard_deployer: { id: standardDeployer.contractId, evm: standardDeployer.evmAddress },
+  rewards_deployer:  { id: rewardsDeployer.contractId,  evm: rewardsDeployer.evmAddress },
   deployer:       operatorIdStr,
   deployerEvm:    evmAddr,
   factoryAdmin: FACTORY_ADMIN,

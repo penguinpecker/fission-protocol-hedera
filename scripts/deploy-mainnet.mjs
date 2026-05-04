@@ -155,23 +155,26 @@ if (routerAddr) {
   });
 }
 
-// SY_HBARX skipped if existing address already in env
+// SY_HBARX two-step: deploy (cheap, no precompile), then initShareToken with HBAR.
 let syHbarxAddr = process.env.SY_HBARX_ADDRESS;
 if (syHbarxAddr) {
   console.log(`\n→ Reusing existing SY_HBARX @ ${syHbarxAddr}`);
 } else {
-  // ── SY_HBARX (creates HTS share token — needs ~2 HBAR forwarded as msg.value) ──
   syHbarxAddr = await deployContract({
     name: "SY_HBARX",
     abi: syHbarxArt.abi,
     bytecode: syHbarxArt.bytecode,
     args: [HBARX, STADER, SY_ADMIN, 0],
-    value: parseEther("2"),
-    gas: 15_000_000n,
+    gas: 8_000_000n,
   });
+  console.log(`  ⚠  Deploy succeeded — initShareToken NOT yet called.`);
+  console.log(`     Run: node scripts/init-sy.mjs ${syHbarxAddr} 15`);
 }
 
-// SY_SaucerSwapV2LP skipped if existing address in env
+// SY_SaucerSwapV2LP two-step: deploy here, init via SDK (init-sy.mjs).
+// Hashio-relayed EthereumTransaction can't fund the precompile child
+// TOKENCREATION's max_fee — we proved that on SY_HBARX. The SDK
+// ContractExecuteTransaction with setPayableAmount(15 HBAR) works.
 let sySaucerAddr = process.env.SY_SAUCER_V2_LP_ADDRESS;
 if (sySaucerAddr) {
   console.log(`\n→ Reusing existing SY_SaucerSwapV2LP @ ${sySaucerAddr}`);
@@ -181,9 +184,10 @@ if (sySaucerAddr) {
     abi: sySaucerArt.abi,
     bytecode: sySaucerArt.bytecode,
     args: ["Fission SY-SaucerV2LP", "fSY-SS-V2", T0, T1, POOL_FEE, TICK_LOWER, TICK_UPPER, NPM, SY_ADMIN, 0],
-    value: parseEther("2"),
-    gas: 15_000_000n,
+    gas: 12_000_000n,
   });
+  console.log(`  ⚠  Deploy succeeded — initShareToken NOT yet called.`);
+  console.log(`     Run: node scripts/init-sy.mjs ${sySaucerAddr} 15`);
 }
 
 // proposeSY skipped here — run it AFTER deploying Factory via SDK:
