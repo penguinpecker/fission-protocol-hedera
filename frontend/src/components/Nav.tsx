@@ -5,24 +5,17 @@ import { useEffect, useRef, useState } from "react";
 import { useAccount, useConnect, useDisconnect } from "wagmi";
 import type { Connector } from "wagmi";
 import { FissionLogo } from "./FissionLogo";
+import { useSiweAuth } from "@/hooks/useSiweAuth";
 
 function shortAddr(addr: string): string {
   return addr.slice(0, 6) + "…" + addr.slice(-4);
 }
 
-/** Display label per connector — falls back to wagmi's built-in name. */
 function connectorLabel(c: Connector): string {
-  // wagmi names from `target.name` win; otherwise generic.
   return c.name || c.id;
 }
 
-/** Hide connectors whose provider isn't actually installed in the browser.
- *  This keeps the picker honest — only show wallets the user can actually click. */
 function isAvailable(c: Connector): boolean {
-  // Wagmi v2 exposes a sync `getProvider` ready check; we approximate via id rules:
-  // - 'metaMaskSDK' / 'metaMask' / 'io.metamask' are detectable post-mount
-  // - custom-target connectors return undefined provider when not installed
-  // For SSR safety, we rely on the connector's own readiness state instead.
   return Boolean(c);
 }
 
@@ -30,11 +23,11 @@ export function Nav() {
   const { address, isConnected } = useAccount();
   const { connectors, connect, isPending } = useConnect();
   const { disconnect } = useDisconnect();
+  const { state: auth, signIn, signOut } = useSiweAuth();
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
 
-  // Close picker on outside click
   useEffect(() => {
     if (!pickerOpen) return;
     function onClick(e: MouseEvent) {
@@ -45,6 +38,11 @@ export function Nav() {
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, [pickerOpen]);
+
+  const handleDisconnect = async () => {
+    if (auth.status === "authenticated") await signOut();
+    disconnect();
+  };
 
   return (
     <nav className="sticky top-0 z-50 flex items-center justify-between border-b border-border bg-bg/80 px-8 py-3 backdrop-blur">
@@ -57,15 +55,45 @@ export function Nav() {
         <Link href="/markets" className="text-[13px] font-medium text-textSec hover:text-text">
           Markets
         </Link>
+
         {isConnected && address ? (
-          <button
-            type="button"
-            onClick={() => disconnect()}
-            className="flex items-center gap-1.5 rounded-[10px] border border-borderHover bg-white/[0.04] px-3.5 py-1.5 font-mono text-xs text-text"
-          >
-            <span className="size-[5px] rounded-full bg-success" />
-            {shortAddr(address)}
-          </button>
+          auth.status === "authenticated" ? (
+            <div className="flex items-center gap-3">
+              <Link
+                href="/profile"
+                className="text-[13px] font-medium text-textSec hover:text-text"
+              >
+                Profile
+              </Link>
+              <button
+                type="button"
+                onClick={handleDisconnect}
+                className="flex items-center gap-1.5 rounded-[10px] border border-borderHover bg-white/[0.04] px-3.5 py-1.5 font-mono text-xs text-text"
+              >
+                <span className="size-[5px] rounded-full bg-success" />
+                {shortAddr(address)}
+              </button>
+            </div>
+          ) : auth.status === "loading" ? (
+            <button
+              type="button"
+              disabled
+              className="rounded-[10px] bg-white/10 px-5 py-2 text-[13px] font-semibold text-textSec"
+            >
+              Signing…
+            </button>
+          ) : (
+            <div className="flex items-center gap-2.5">
+              <span className="font-mono text-xs text-textSec">{shortAddr(address)}</span>
+              <button
+                type="button"
+                onClick={signIn}
+                className="rounded-[10px] bg-white px-4 py-1.5 text-[13px] font-semibold text-bg transition hover:opacity-90"
+              >
+                Sign In
+              </button>
+            </div>
+          )
         ) : (
           <div ref={pickerRef} className="relative">
             <button
