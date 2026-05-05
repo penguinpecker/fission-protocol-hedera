@@ -93,7 +93,7 @@ under `optimizer_runs = 200 / via_ir = true`.
 
 | Role                        | Held by (production)                          | Powers |
 |-----------------------------|-----------------------------------------------|--------|
-| `DEFAULT_ADMIN_ROLE`        | OZ TimelockController (controlled by Safe 2-of-2 at multisig.hedera.foundation) | Add/revoke other roles. AccessControlDefaultAdminRules with `delay=0` because the external Timelock provides delay. |
+| `DEFAULT_ADMIN_ROLE`        | OZ TimelockController (controlled by a Hedera 2-of-2 ThresholdKey account; no Gnosis Safe contract — the Hedera account enforces 2-of-2 at consensus) | Add/revoke other roles. AccessControlDefaultAdminRules with `delay=0` because the external Timelock provides delay. |
 | `ADMIN_ROLE`                | Same Timelock                                  | Set protocol fee, set treasury, propose/confirm SY whitelist |
 | `PAUSER_ROLE`               | Hot operator wallet                            | Pause / unpause specific markets and SYs (escape hatches always callable) |
 | `KEEPER_ROLE` (`SY_HBARX`)  | Dedicated keeper EOA                           | Post a TWAP-bounded `exchangeRate` reading |

@@ -11,16 +11,16 @@ Build order. Each phase has explicit exit criteria — no moving on until they'r
 | 2 — `SYBase`, `SY_HBARX` | **done** | Stader `getExchangeRate()` confirmed 18-decimal via mainnet fork (`1c53474`). Two-step init (`initShareToken()`) shipped — HTS createFungibleToken can't be called from a constructor on Hedera consensus. |
 | 3 — PT, YT, Factory | **done** | PT/YT/LP are HTS-native. Factory shrunk from 71KB → 8KB by extracting `new FissionMarket(...)` and `new FissionMarketRewards(...)` into `StandardMarketDeployer` + `RewardsMarketDeployer` (Hedera's 15M-gas-per-tx ContractCreate cap can't deploy 71KB). |
 | 4 — `FissionMarket` | **done** | 4 invariants × 128K calls, zero reverts. Conservation invariant holds. Constructor now takes explicit `factory_` param (with `address(0)` → `msg.sender` fallback for tests). |
-| 5 — `ActionRouter` | **done** | Parameterized on `IFissionMarketCommon` (`437cfa6`) for both standard + rewards markets. Immutable in v1. |
+| 5 — `ActionRouter` | **done (partial scope)** | Parameterized on `IFissionMarketCommon` (`437cfa6`) for both standard + rewards markets. Immutable in v1. **Shipped surface:** `depositAndSplit`, `swapExactSyForPt`, `swapExactPtForSy`, `buyYT`, `addLiquidityProportional`, `removeLiquidityProportional`, `redeemAfterExpiryAndUnwrap`, `unwrapSY`. **Deferred to v1.1** (require post-audit work): HBAR↔WHBAR auto-wrap (router currently ERC-20-only — HBAR-paying users wrap to WHBAR off-router), `swapExactYtForSy` (Pendle V2 flash-swap pattern), one-tx claim+unwrap (needs `market.claimYieldFor(user)`). |
 | 6 — Second SY adapter | **scope changed** | V1 LP + Bonzo dropped; `SY_SaucerSwapV2LP` (Pendle-Kyber) shipped, plus sister Market `FissionMarketRewards` (`8e5f36c`). |
 | 7 — Frontend | **wired** | Mainnet `.env.local` populated with all 4 contract addresses. Markets page returns 200; `marketCount === 0n` triggers the "Factory deployed — no markets yet" state correctly. Mirror Node APY chart + tx-confirmation modal gated on first market creation post-7d window. |
 | 8 — Keeper | **done** | KEEPER_ROLE granted on SY_HBARX to operator EOA on mainnet (2026-05-05). Keeper service still needs to be pointed at the mainnet RPC and started in production. |
 | 9 — Audit pipeline | **in progress** | 2 internal review passes shipped. Mutation testing + external audit not yet engaged. |
 | 10 — **Mainnet deploy** | **live (PARTIAL — markets pending 7d window)** | Router + 2 SY adapters + 2 deployers + Factory all on chain 295. proposeSY done for both SYs at 2026-05-04T20:13Z; **confirm window opens 2026-05-11T20:13Z**. See `deployments/295.json`. |
 
-**Tests:** 252 passing on `main` after the deployer-extraction refactor.
+**Tests:** 265 passing on `main` (post-pass-2 + V2-LP integration; verified 2026-05-06).
 **Mainnet addresses:** see `deployments/295.json`. Operator EOA `0x32e8…ab90` / `0.0.10463169` is solo admin pending Safe + Timelock provisioning.
-**Open gaps:** mutation testing, external audit, Safe + Timelock at multisig.hedera.foundation, Sourcify full-match (currently `bytecode_hash = "none"` so only partial-match material is produced).
+**Open gaps:** mutation testing, external audit, Hedera 2-of-2 ThresholdKey account + 48h OZ Timelock provisioning (no Safe contract — HTS-native governance), Sourcify full-match (currently `bytecode_hash = "none"` so only partial-match material is produced).
 
 The unchecked `[ ]` boxes below are the *original 2026-04 build plan* — preserved for historical reference. Treat the table above as the authoritative status snapshot.
 
@@ -122,7 +122,7 @@ This is where Hedera-native HTS integration lands.
 - [ ] Primary audit: ChainSecurity / Spearbit. Address every finding before next phase.
 - [ ] Code4rena or Sherlock contest. Address.
 - [ ] Immunefi listing.
-- [ ] **Mainnet deploy**: Safe 2-of-2 + Timelock 48 h. Genesis: HBARX market only. SaucerSwap LP + Bonzo markets after 1 week of HBARX uptime.
+- [ ] **Mainnet deploy**: Hedera 2-of-2 ThresholdKey account + Timelock 48 h. Genesis: HBARX market only. SaucerSwap LP + Bonzo markets after 1 week of HBARX uptime.
 
 ## Definition of Done
 

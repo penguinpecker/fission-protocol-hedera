@@ -55,6 +55,7 @@ audits/mutation/gambit-out/
 audits/mutation/gambit-out-fm/
 audits/mutation/run.log
 
-# Safe handoff artifacts (regenerable via scripts/prep-safe-handoff.mjs;
-# real values depend on PROD_SAFE env at handoff time)
+# Admin handoff artifacts (regenerable via scripts/prep-handoff.mjs;
+# real values depend on PROD_THRESHOLD_EVM + PROD_TIMELOCK at handoff time)
+deployments/handoff/
 deployments/safe-handoff/

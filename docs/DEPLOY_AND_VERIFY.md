@@ -103,7 +103,7 @@ forge script script/MainnetDeploy.s.sol \
   --private-key $HEDERA_OPERATOR_KEY
 ```
 
-Mainnet refuses to broadcast unless every privileged role address is a CONTRACT (Safe / Timelock). Provision those at https://multisig.hedera.foundation BEFORE running.
+Mainnet refuses to broadcast unless every privileged role address is the Hedera 2-of-2 ThresholdKey account (or its EVM alias) or the Timelock contract. Create the threshold account via SDK (`AccountCreateTransaction.setKey(ThresholdKey)`) and deploy the Timelock BEFORE running.
 
 ---
 
@@ -259,7 +259,7 @@ The `/markets` page reads `NEXT_PUBLIC_FACTORY_ADDRESS` and lists markets. Click
 
 ## 9. Mainnet checklist (before broadcasting `MainnetDeploy.s.sol`)
 
-- [ ] Safe (2-of-2) deployed at https://multisig.hedera.foundation, address pinned to `FACTORY_ADMIN`.
+- [ ] Hedera 2-of-2 ThresholdKey account created via SDK; EVM alias pinned to `FACTORY_ADMIN`.
 - [ ] OZ TimelockController (48h delay) deployed, controlled by Safe, address pinned to `MARKET_ADMIN`.
 - [ ] Operator EOA holds ≥ 20 HBAR for the deploy + initial market creates.
 - [ ] All four privileged-role env vars (FACTORY_ADMIN, MARKET_ADMIN, MARKET_TREASURY, SY_ADMIN) point at contracts (not EOAs). MainnetDeploy refuses to broadcast otherwise.

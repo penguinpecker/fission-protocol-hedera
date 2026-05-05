@@ -7,7 +7,7 @@
 1. **Real on-chain rate sources.** No mock SY, no synthetic underlyings, no TVL theatre. Every market backed by a verifiable Hedera mainnet yield-bearing asset.
 2. **Hedera-native UX.** PT/YT minted via HTS precompile so they appear in HashPack/Blade as native tokens. SY/AMM/Router stay as plain Solidity for tooling support. Every token-holding contract sets `maxAutomaticTokenAssociations = -1` (HIP-904).
 3. **Audit-ready.** Foundry invariants in CI, Medusa nightly, Halmos on math libs, ≥85 % mutation kill before audit.
-4. **Multisig-governed.** Safe (multisig.hedera.foundation, 2-of-2) + OZ TimelockController, 48 h delay on owner ops. Immutable cores; Router/adapters upgradeable (UUPS).
+4. **Hedera-native multisig governance.** A 2-of-2 Hedera threshold-key account (`ThresholdKey{2, [ECDSA_a, ECDSA_b]}`) sits above an OZ `TimelockController` (48 h delay). No Gnosis Safe contract — the Hedera account itself enforces the 2-of-2 at consensus, matching the HTS-native shape of the rest of the protocol. Immutable cores; Router/adapters upgradeable (UUPS).
 5. **No keeper-as-trust-root.** Rate updates TWAP-smoothed and bps-bounded; reverting on suspected manipulation is a feature.
 
 ---
@@ -16,8 +16,8 @@
 
 ```
                       ┌─────────────────────┐
-   Safe (2-of-2)  ──▶ │ TimelockController  │ ──▶ owner of all admin ops
-                      └─────────────────────┘                (48 h delay)
+  2-of-2 ThresholdKey │ TimelockController  │ ──▶ owner of all admin ops
+  (Hedera account)──▶ └─────────────────────┘                (48 h delay)
                                  │
                                  ▼
               ┌───────────────────────────────────┐
@@ -50,10 +50,16 @@
               ┌─────────────────────────────────────────┐
               │   ActionRouter (UUPS, timelock-owned)   │
               │   - depositAndSplit                     │
-              │   - swap PT ↔ SY ↔ YT (flash-mint)      │
-              │   - addLiq / removeLiq                  │
-              │   - matured redeem flow                 │
-              │   - HBAR ↔ WHBAR auto-wrap              │
+              │   - swapExactSyForPt / swapExactPtForSy │
+              │   - buyYT (SY → split → keep YT, sell PT for SY refund) │
+              │   - addLiquidityProportional / remove   │
+              │   - redeemAfterExpiryAndUnwrap          │
+              │   - unwrapSY                            │
+              │   v1.1 backlog: HBAR↔WHBAR auto-wrap,   │
+              │                 swapExactYtForSy        │
+              │                 (flash-swap pattern),   │
+              │                 one-tx claim+unwrap     │
+              │                 (needs claimYieldFor)   │
               └─────────────────────────────────────────┘
                           │
                           ▼
@@ -207,11 +213,11 @@ Keeper posts rate hourly. Hardening (from Pendle Boros lessons + Penpie post-mor
 
 ## Governance — final shape
 
-- **Owner**: Safe 2-of-2 (multisig.hedera.foundation deployment).
-- **TimelockController** (OZ): 48 h delay on every owner-gated function. Cancel reserved to the same 2-of-2 Safe (no separate emergency Safe in v1).
+- **Owner**: a Hedera account whose key is `ThresholdKey{2, [ECDSA_a, ECDSA_b]}`. Created via SDK (`AccountCreateTransaction.setKey(threshold)`). Enforces 2-of-2 signing at the Hedera consensus layer; from the EVM's perspective the account is just one address (its EVM alias). No Gnosis Safe contract is deployed.
+- **TimelockController** (OZ, EVM): 48 h delay on every owner-gated function. Proposers + executors = the threshold account's EVM alias; admin = `address(0)` (renounced). Cancel reserved to the same 2-of-2 (no separate emergency multisig in v1).
 - **Roles** (`AccessControlDefaultAdminRules`):
-  - `DEFAULT_ADMIN_ROLE`: timelock only
-  - `PAUSER_ROLE`: 2-of-2 Safe (no timelock — must act fast)
+  - `DEFAULT_ADMIN_ROLE`: Timelock only.
+  - `PAUSER_ROLE`: 2-of-2 threshold account directly (no timelock — must act fast).
   - `KEEPER_ROLE`: keeper EOA, rate-post-only
   - `TREASURY_ROLE`: receives post-expiry yield surplus
 - **No EOA roles in production.** Deployer revokes itself after handoff.

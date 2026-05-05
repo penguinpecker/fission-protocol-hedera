@@ -15,8 +15,8 @@ These MUST be satisfied before running any broadcast tx.
 - [ ] Branch coverage: FissionMarket 73%, FissionMarketRewards 70%, ActionRouter 82%, FissionFactory 60%. Below those thresholds → audit firm pre-review will reject.
 - [ ] **External audit** report committed under `audits/`. Until then this is
       tagged "experimental — operator risk".
-- [ ] Safe (multisig) deployed at `multisig.hedera.foundation` and recorded.
-- [ ] OZ TimelockController deployed and Safe is its admin.
+- [ ] Hedera 2-of-2 ThresholdKey account created via SDK and recorded (account ID + EVM alias).
+- [ ] OZ TimelockController deployed; proposer = executor = ThresholdKey account's EVM alias; admin = `address(0)`.
 - [ ] **HIP-1217 verification:** every privileged role address (`FACTORY_ADMIN`,
       `MARKET_ADMIN`, `SY_ADMIN`, `MARKET_TREASURY`, `KEEPER_ADDRESS`) is either
       a contract or an EVM-aliased ECDSA account — **NOT a long-zero ECDSA alias**.
@@ -123,11 +123,12 @@ bytecode. Run that fork test before broadcast as the final ABI sanity check.
 export HEDERA_MAINNET_RPC="https://mainnet.validationcloud.io/v1/<key>"   # Validation Cloud / Arkhia
 export HEDERA_OPERATOR_KEY="0x..."   # Deployer ECDSA — NOT a privileged role-holder
 
-# Governance: ALL of these MUST be the Safe (or a Safe+Timelock proxy)
-export FACTORY_ADMIN="0x..."         # Safe
-export MARKET_ADMIN="0x..."          # Safe (or Timelock that the Safe controls)
-export MARKET_TREASURY="0x..."       # Safe
-export SY_ADMIN="0x..."              # Safe
+# Governance: ALL of these MUST be either the 2-of-2 ThresholdKey account
+# (its EVM alias) OR the Timelock that the threshold account controls.
+export FACTORY_ADMIN="0x..."         # Timelock
+export MARKET_ADMIN="0x..."          # Timelock
+export MARKET_TREASURY="0x..."       # ThresholdKey account EVM alias (no delay needed for fee withdraws)
+export SY_ADMIN="0x..."              # Timelock
 
 # Operational
 export KEEPER_ADDRESS="0x..."        # Hot key, gets KEEPER_ROLE on SY_HBARX only
@@ -353,23 +354,28 @@ in step 4 once their `initialize` is confirmed.
 The deployer EOA must end with **zero privileged roles** on the live system.
 Per OZ `AccessControlDefaultAdminRules`, `DEFAULT_ADMIN_ROLE` transfer is a
 two-party process: the current admin (deployer EOA) *begins* the transfer;
-the pending new admin (Safe) *accepts* it.
+the pending new admin (the Timelock contract) *accepts* it.
 
 ```sh
 # 1. Deployer EOA begins the transfer for every admin'd contract:
-cast send $factory "beginDefaultAdminTransfer(address)" $safe \
+cast send $factory "beginDefaultAdminTransfer(address)" $timelock \
     --rpc-url $HEDERA_MAINNET_RPC --private-key $DEPLOYER_KEY
 # repeat for: $sy_hbarx, $sy_saucer_v2_lp, each market
 
-# 2. (constructor passed `delay=0`) After the same block, the Safe accepts.
-#    Queue this transaction in the Safe (multisig.hedera.foundation):
-#       to:    $factory
-#       data:  acceptDefaultAdminTransfer()
-#    Sign + execute.  Repeat for every contract.
+# 2. The Timelock can't call `acceptDefaultAdminTransfer()` itself — Timelock
+#    only acts on `schedule() + execute()`. Instead, the 2-of-2 ThresholdKey
+#    account broadcasts a `Timelock.schedule(target, value, data, predecessor,
+#    salt, delay=0)` for the accept call (the protocol Timelock is the new
+#    admin, but the threshold account drives it). After the 48h elapses (or
+#    immediately if you queue with `delay=0` only at first cutover, then
+#    raise to 48h after the handoff), threshold account broadcasts
+#    `Timelock.execute(...)`. Helper script `scripts/prep-handoff.mjs`
+#    outputs both Hedera SDK ContractExecuteTransaction snippets ready to
+#    sign 2-of-2 in HashPack.
 ```
 
 Then revoke the deployer's non-default roles. These are flat OZ AccessControl
-calls; the Safe queues each `revokeRole` call after `DEFAULT_ADMIN_ROLE`
+calls; the Timelock executes each `revokeRole` call after `DEFAULT_ADMIN_ROLE`
 has been transferred to it (only the default admin can revoke):
 
 ```sh
@@ -537,8 +543,8 @@ seed liquidity is modest.
 - [ ] Mutation testing report ≥85% kill in `audits/mutation/mutation-results.md`.
 - [ ] External audit report committed in `audits/external/`.
 - [ ] All audit findings of severity ≥ Medium have follow-up commits.
-- [ ] Safe 2-of-2 deployed at multisig.hedera.foundation; address recorded.
-- [ ] Timelock 48h deployed; Safe is its admin; address recorded.
+- [ ] Hedera 2-of-2 ThresholdKey account created (SDK `AccountCreateTransaction.setKey(ThresholdKey)`); account ID + EVM alias recorded.
+- [ ] Timelock 48h deployed; proposer + executor = ThresholdKey account's EVM alias; admin = address(0); address recorded.
 - [ ] Operator HBAR balance ≥ 250 HBAR + seed.
 - [ ] HBARX (`0.0.834116`) associated to operator account.
 - [ ] WHBAR + USDC associated to operator account.
@@ -621,8 +627,10 @@ node scripts/grant-keeper.mjs <new-sy-hbarx-evm> $KEEPER_ADDRESS
 #### Day 8+ — handoff to Safe
 
 C-14/C-15/C-16. Run `node scripts/prep-safe-handoff.mjs` to dump the
-Safe Tx Builder JSON. Import in https://app.safe.global, sign, execute.
-See `docs/MAINNET_DEPLOY.md` Step 8 for the begin/accept dance.
+a Hedera-native batch: a `Timelock.scheduleBatch()` proposal signed 2-of-2,
+followed 48h later by a `Timelock.executeBatch()` signed 2-of-2. The
+helper script outputs both Hedera-SDK ContractExecuteTransaction snippets.
+See Step 8 for the begin/accept dance for `DEFAULT_ADMIN_ROLE` itself.
 
 - [ ] `hasRole(DEFAULT_ADMIN_ROLE, deployer) == false` on every contract.
 - [ ] `hasRole(DEFAULT_ADMIN_ROLE, safe) == true` on every contract.
