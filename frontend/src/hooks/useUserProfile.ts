@@ -1,11 +1,10 @@
-// Read + update the signed-in user's profile row. RLS scopes everything to
-// the JWT's `sub` (their EVM address) so the same hook is safe regardless of
-// what address the caller claims.
+// Read + update the signed-in user's profile via the /api/profile API
+// route. The route validates the session cookie and uses service-role
+// against Supabase, so the frontend never holds DB credentials.
 
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { useCallback, useEffect, useState } from "react";
 
 export interface UserProfile {
   address: string;
@@ -16,47 +15,55 @@ export interface UserProfile {
   updated_at: string;
 }
 
-export function useUserProfile(address: string | undefined) {
+export type ProfilePatch = Partial<
+  Pick<UserProfile, "display_name" | "avatar_url" | "twitter_handle">
+>;
+
+export function useUserProfile() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!address) return;
     setLoading(true);
     setError(null);
-    const supa = createClient();
-    const { data, error } = await supa
-      .from("users")
-      .select("*")
-      .eq("address", address.toLowerCase())
-      .maybeSingle();
-    if (error) setError(error.message);
-    else setProfile((data as UserProfile) ?? null);
-    setLoading(false);
-  }, [address]);
+    try {
+      const r = await fetch("/api/profile", { credentials: "include" });
+      if (r.status === 401) {
+        setProfile(null);
+        return;
+      }
+      if (!r.ok) throw new Error(`profile_fetch_${r.status}`);
+      const j = (await r.json()) as { profile: UserProfile | null };
+      setProfile(j.profile);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "unknown");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   const updateProfile = useCallback(
-    async (patch: Partial<Pick<UserProfile, "display_name" | "avatar_url" | "twitter_handle">>) => {
-      if (!address) throw new Error("not_connected");
-      const supa = createClient();
-      const { data, error } = await supa
-        .from("users")
-        .upsert(
-          { address: address.toLowerCase(), ...patch },
-          { onConflict: "address" }
-        )
-        .select()
-        .single();
-      if (error) throw error;
-      setProfile(data as UserProfile);
-      return data as UserProfile;
+    async (patch: ProfilePatch): Promise<UserProfile> => {
+      const r = await fetch("/api/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(patch),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error((j as { error?: string }).error ?? `update_${r.status}`);
+      }
+      const j = (await r.json()) as { profile: UserProfile };
+      setProfile(j.profile);
+      return j.profile;
     },
-    [address]
+    []
   );
 
   return { profile, loading, error, refresh, updateProfile };

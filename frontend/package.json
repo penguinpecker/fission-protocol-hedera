@@ -21,7 +21,8 @@
     "recharts": "2.15.0",
     "siwe": "^3.0.0",
     "viem": "2.21.55",
-    "wagmi": "2.14.6"
+    "wagmi": "2.14.6",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "22.10.5",
