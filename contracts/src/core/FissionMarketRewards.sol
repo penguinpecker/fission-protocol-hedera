@@ -210,6 +210,12 @@ contract FissionMarketRewards is
         // LP: transferable HTS, 18 decimals. Last call gets any rounding remainder.
         lp = _createHtsToken(lpName, lpSymbol, false, true, 18, msg.value - 2 * perToken);
 
+        // Associate SY shareToken + reward tokens so transfers IN can land. PT/YT/LP
+        // self-associate as treasury at create time.
+        HtsHelpers.associateIfNeeded(address(this), sy.shareToken());
+        HtsHelpers.associateIfNeeded(address(this), rewardToken0);
+        HtsHelpers.associateIfNeeded(address(this), rewardToken1);
+
         emit TokensInitialized(pt, yt);
     }
 

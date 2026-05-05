@@ -1,10 +1,10 @@
 {
   "chainId": 295,
   "network": "mainnet",
-  "deployedAt": "2026-05-04T21:17:57.180Z",
+  "deployedAt": "2026-05-05T05:03:50.379Z",
   "factory": {
-    "id": "0.0.10465077",
-    "evm": "0x00000000000000000000000000000000009faf35"
+    "id": "0.0.10465401",
+    "evm": "0x00000000000000000000000000000000009fb079"
   },
   "router": {
     "id": "(reused)",
@@ -15,16 +15,16 @@
     "evm": "0x80728fbad79974e428c50dc548853ff858d9430c"
   },
   "sy_saucer_v2_lp": {
-    "id": "(reused)",
-    "evm": "0xd4b535589148ea8bdf4ca64ee1007780d3d08c62"
+    "id": "0.0.10465393",
+    "evm": "0x00000000000000000000000000000000009fb071"
   },
   "standard_deployer": {
-    "id": "0.0.10465069",
-    "evm": "0x00000000000000000000000000000000009faf2d"
+    "id": "0.0.10465396",
+    "evm": "0x00000000000000000000000000000000009fb074"
   },
   "rewards_deployer": {
-    "id": "0.0.10465074",
-    "evm": "0x00000000000000000000000000000000009faf32"
+    "id": "0.0.10465399",
+    "evm": "0x00000000000000000000000000000000009fb077"
   },
   "deployer": "0.0.10463169",
   "deployerEvm": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
@@ -33,26 +33,20 @@
   "marketTreasury": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "syAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "keeper": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
+  "notes": "All contracts deployed. Market 1 (rewards) created but NOT initialized \u2014 NPM mint reverts with 'MF' (next debug step). HBARX standard market not yet created on this factory (skip per user direction).",
   "sy_review_window_seconds": 0,
   "markets": [
     {
       "id": 0,
-      "evm": "0x5d75cb89e26b6e009db583afbd3797ff8ad7c8ae",
-      "type": "standard",
-      "sy": "0x80728fbad79974e428c50dc548853ff858d9430c",
-      "expiry": "+90 days",
-      "scalarRoot": "50e18",
-      "suffix": "HBARX-90D"
-    },
-    {
-      "id": 1,
-      "evm": "0x98fe6ad01129b5a1c37891b60c5eff526184ec93",
+      "evm": "0xba56d9b009c99d39f255cf713c242c2b535880d0",
       "type": "rewards",
-      "sy": "0xd4b535589148ea8bdf4ca64ee1007780d3d08c62",
-      "expiry": "+90 days",
+      "sy": "0x00000000000000000000000000000000009fb071",
+      "expiry_unix": 1785733492,
       "scalarRoot": "75e18",
-      "suffix": "SS-V2-90D"
+      "suffix": "SS-V2-90D",
+      "initialized": false,
+      "init_blocker": "NPM mint reverts with short error 'MF' \u2014 SaucerSwap V2 NPM checks (likely SaucerSwap-fork-specific) reject the deposit. Needs source-side debug or call against the NPM directly to identify the failing check."
     }
   ],
-  "notes": "All deployed + 2 markets created (2026-05-04 ~21:20Z). SY_REVIEW_WINDOW=0 (Penpie defence skipped for v1 launch — re-enable in production). Markets still need market.initialize(syIn, ptIn, initialAnchor, lnFeeRateRoot, reserveFeePercent) call from admin to seed liquidity."
+  "sy_review_window_note": "Set to 0 for v1 bootstrap. Production deploys should pass 7 days for the Penpie defence."
 }

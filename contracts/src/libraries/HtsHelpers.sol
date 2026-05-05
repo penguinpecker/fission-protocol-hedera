@@ -125,6 +125,18 @@ library HtsHelpers {
         _check(code);
     }
 
+    /// @notice Same as `associate` but tolerates already-associated state (response
+    ///         code 194 = TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT). Use in idempotent
+    ///         init paths where the same call may be replayed (e.g. setTokens after
+    ///         a partial revert).
+    function associateIfNeeded(address account, address token) internal {
+        int32 code = IHederaTokenService(PRECOMPILE).associateToken(account, token);
+        // 22 = SUCCESS, 194 = TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT (treat as success).
+        if (code != HederaResponseCodes.SUCCESS && code != int32(194)) {
+            revert HtsCallFailed(code);
+        }
+    }
+
     // ───────────────────── freeze / unfreeze ─────────────────────
 
     function freeze(address token, address account) internal {

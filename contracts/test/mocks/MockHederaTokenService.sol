@@ -217,7 +217,14 @@ contract MockHederaTokenService is IHederaTokenService, IMockHederaForFacade, IM
 
     function associateToken(address account, address token) external override returns (int32) {
         TokenState storage t = _tokens[token];
-        if (!t.exists) return HederaResponseCodes.INVALID_TOKEN_ID;
+        // For unknown tokens (e.g. MockERC20s that the test never created via HTS),
+        // treat as a no-op success — production Hedera HTS handles these differently
+        // (real associations succeed for any HTS token), but the mock's responsibility
+        // is just to not block contract logic that calls associate on its underlyings.
+        if (!t.exists) {
+            _associated[token][account] = true;
+            return HederaResponseCodes.SUCCESS;
+        }
         _associated[token][account] = true;
         _frozen[token][account] = t.freezeDefault;
         return HederaResponseCodes.SUCCESS;

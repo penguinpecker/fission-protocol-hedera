@@ -6,6 +6,7 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {SYBase} from "./SYBase.sol";
+import {HtsHelpers} from "../libraries/HtsHelpers.sol";
 import {IStandardizedYield} from "../interfaces/IStandardizedYield.sol";
 import {IUniswapV3PositionManager} from "../interfaces/IUniswapV3PositionManager.sol";
 import {PMath} from "../libraries/PMath.sol";
@@ -158,6 +159,15 @@ contract SY_SaucerSwapV2LP is SYBase {
         _token1Decimals = IERC20Metadata(token1_).decimals();
 
         _grantRole(HARVESTER_ROLE, admin_);
+    }
+
+    /// @dev Associate token0 + token1 (and the eventual reward tokens, which on V3
+    ///      are the same as token0/token1 — fees are paid in pool tokens) so that
+    ///      depositLiquidity transferFroms can land in this contract. Hedera
+    ///      contracts default to max_auto_associations=0 — without this they revert.
+    function _afterInitShareToken() internal override {
+        HtsHelpers.associateIfNeeded(address(this), token0);
+        HtsHelpers.associateIfNeeded(address(this), token1);
     }
 
     error ZeroAddress();

@@ -223,6 +223,11 @@ contract FissionMarket is
         // Last call gets msg.value - 2*perToken so any rounding remainder is included.
         lp = _createHtsToken(lpName, lpSymbol, false, true, 18, msg.value - 2 * perToken);
 
+        // Associate the SY shareToken so initialize() / split() / swaps can transfer
+        // SY shares INTO this market. PT/YT/LP self-associate as treasury at create
+        // time; only the externally-issued SY shareToken needs an explicit associate.
+        HtsHelpers.associateIfNeeded(address(this), sy.shareToken());
+
         emit TokensInitialized(pt, yt);
     }
 

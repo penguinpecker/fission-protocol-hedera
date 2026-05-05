@@ -139,7 +139,8 @@ async function deploy({ name, bytecode, params, gas = 12_000_000, payableHbar = 
   if (bytecode.length <= 28000) {
     const tx = new ContractCreateFlow()
       .setBytecode(bytecode)
-      .setGas(gas);
+      .setGas(gas)
+      .setMaxAutomaticTokenAssociations(-1); // HIP-904 unlimited for any HTS token
     if (params) tx.setConstructorParameters(params);
     if (payableHbar > 0) tx.setInitialBalance(new Hbar(payableHbar));
     const submit = await tx.execute(client);
@@ -194,6 +195,7 @@ async function deploy({ name, bytecode, params, gas = 12_000_000, payableHbar = 
   const cc = new ContractCreateTransaction()
     .setBytecodeFileId(fileId)
     .setGas(gas)
+    .setMaxAutomaticTokenAssociations(-1)
     .setMaxTransactionFee(new Hbar(50));
   if (params) cc.setConstructorParameters(params);
   if (payableHbar > 0) cc.setInitialBalance(new Hbar(payableHbar));

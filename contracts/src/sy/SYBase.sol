@@ -126,7 +126,16 @@ abstract contract SYBase is
         });
         // Single token create: send the full msg.value to the precompile.
         shareToken = HtsHelpers.createFungible(spec, int32(uint32(_assetDecimals)), msg.value);
+        _afterInitShareToken();
     }
+
+    /// @dev Hook for adapters to do post-init bookkeeping — typically associating
+    ///      underlying HTS tokens to the SY contract so deposit transfers can land.
+    ///      Default: no-op (e.g. SY_HBARX's underlying HBARX is already self-associated
+    ///      via the SY's treasury role on the share token? No — that's not enough; HBARX
+    ///      arrives via transferFrom which needs explicit association). Subclasses must
+    ///      override to associate the underlyings they accept in `_deposit`.
+    function _afterInitShareToken() internal virtual {}
 
     /// @dev Shared guard for entry points that mint/burn shares.
     function _requireInitialized() internal view {

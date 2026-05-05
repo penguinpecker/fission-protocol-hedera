@@ -7,6 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {SYBase} from "./SYBase.sol";
 import {IStandardizedYield} from "../interfaces/IStandardizedYield.sol";
 import {IStaderHBARX} from "../interfaces/IStaderHBARX.sol";
+import {HtsHelpers} from "../libraries/HtsHelpers.sol";
 import {PMath} from "../libraries/PMath.sol";
 
 /// @title  SY_HBARX — Standardized Yield wrapper for Stader HBARX (Hedera LST).
@@ -84,6 +85,13 @@ contract SY_HBARX is SYBase {
         require(hbarx_ != address(0), "SY: hbarx zero");
         require(staderOracle_ != address(0), "SY: stader zero");
         staderOracle = IStaderHBARX(staderOracle_);
+    }
+
+    /// @dev Associate HBARX so deposit transfers land. Hedera contracts default to
+    ///      max_auto_associations=0 and the SY isn't an admin-key-bearing contract,
+    ///      so the only path to receive HBARX is to self-associate via the precompile.
+    function _afterInitShareToken() internal override {
+        HtsHelpers.associateIfNeeded(address(this), underlying);
     }
 
     // ───────────────────── deposit / redeem ─────────────────────
