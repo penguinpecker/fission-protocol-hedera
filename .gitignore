@@ -54,3 +54,7 @@ audits/static-analysis/slither.stderr.log
 audits/mutation/gambit-out/
 audits/mutation/gambit-out-fm/
 audits/mutation/run.log
+
+# Safe handoff artifacts (regenerable via scripts/prep-safe-handoff.mjs;
+# real values depend on PROD_SAFE env at handoff time)
+deployments/safe-handoff/

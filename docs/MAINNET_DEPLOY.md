@@ -351,18 +351,33 @@ in step 4 once their `initialize` is confirmed.
 ## Step 8 — handoff
 
 The deployer EOA must end with **zero privileged roles** on the live system.
-Run on the Safe:
+Per OZ `AccessControlDefaultAdminRules`, `DEFAULT_ADMIN_ROLE` transfer is a
+two-party process: the current admin (deployer EOA) *begins* the transfer;
+the pending new admin (Safe) *accepts* it.
 
 ```sh
-# For each contract that the deployer was admin of:
-factory.beginDefaultAdminTransfer(safeAddress)   # 0 delay since deployer is admin
-# 0 hours later (deployer does):
-factory.acceptDefaultAdminTransfer()
+# 1. Deployer EOA begins the transfer for every admin'd contract:
+cast send $factory "beginDefaultAdminTransfer(address)" $safe \
+    --rpc-url $HEDERA_MAINNET_RPC --private-key $DEPLOYER_KEY
+# repeat for: $sy_hbarx, $sy_saucer_v2_lp, each market
 
-# Then revoke deployer from any other roles:
-factory.revokeRole(MARKET_CREATOR_ROLE, deployerEOA)
-factory.revokeRole(SY_REVIEWER_ROLE, deployerEOA)
-# ... and so on for each SY
+# 2. (constructor passed `delay=0`) After the same block, the Safe accepts.
+#    Queue this transaction in the Safe (multisig.hedera.foundation):
+#       to:    $factory
+#       data:  acceptDefaultAdminTransfer()
+#    Sign + execute.  Repeat for every contract.
+```
+
+Then revoke the deployer's non-default roles. These are flat OZ AccessControl
+calls; the Safe queues each `revokeRole` call after `DEFAULT_ADMIN_ROLE`
+has been transferred to it (only the default admin can revoke):
+
+```sh
+# Roles that may have been granted to the deployer at construction time:
+#   factory:  ADMIN_ROLE  (proposeSY / confirmSY / setProtocolFee)
+#   markets:  ADMIN_ROLE, PAUSER_ROLE
+#   SYs:      ADMIN_ROLE, PAUSER_ROLE, KEEPER_ROLE  (KEEPER moves to dedicated EOA)
+# Use `scripts/prep-safe-handoff.mjs` to dump the full Tx Builder JSON.
 ```
 
 Confirm with:
@@ -371,7 +386,7 @@ Confirm with:
 cast call $factory "hasRole(bytes32,address)(bool)" \
     0x0000000000000000000000000000000000000000000000000000000000000000 \
     $deployerEOA --rpc-url $HEDERA_MAINNET_RPC
-# expected: false
+# expected: false (deployer has no DEFAULT_ADMIN_ROLE)
 ```
 
 ## Rollback
@@ -483,24 +498,137 @@ The currently-deployed FissionFactory (`deployments/295.json`) ships with
 `SY_REVIEW_WINDOW=0` and was used for the V2 LP smoke-test market only
 ("Market 0"). It is NOT the production factory.
 
-Before launching for real users:
-
-1. **Deploy a fresh factory** with `SY_REVIEW_WINDOW = 7 days` (the
-   `MainnetDeploy` script default; verify env doesn't override to 0).
-2. **proposeSY** for both SY adapters (the existing
-   `SY_SaucerSwapV2LP` at `0x...009fb089` is already on the post-fix
-   build and can be reused; `SY_HBARX` must be redeployed since the live
-   address `0x80728fbad79974e428c50dc548853ff858d9430c` predates the 12
-   bug fixes above).
-3. **Wait 7 days.** The contract enforces the window — `confirmSY`
-   reverts before it elapses. Plan operator availability accordingly.
-4. **confirmSY** + **createMarket** on both SYs.
-5. **initialize** each market with the post-fix scripts referenced above.
-6. **grant `KEEPER_ROLE`** on the new SY_HBARX to the keeper hot key.
-7. Update `deployments/295.json` and the frontend env vars.
-8. Bootstrap Market 0 becomes orphaned. Document and abandon.
-
-The 7-day window is non-negotiable for production — it is the Penpie
-defence (factory whitelist + public review window), one of the v1
-launch-blockers. Schedule it at the *very end* of the deploy timeline so
+Before launching for real users, run the full Phase C below. The 7-day
+window is non-negotiable for production — it is the Penpie defence
+(factory whitelist + public review window), one of the v1 launch
+blockers. Schedule it at the **very end** of the deploy timeline so
 nothing else is gated on it.
+
+### Phase C HBAR budget (mainnet, observed)
+
+| Step | Action | HBAR cost |
+|------|--------|----------:|
+| C-1  | Deploy fresh FissionFactory (SDK FileService path; 7d window) | ~30 |
+| C-2  | Deploy fresh `SY_HBARX` (with all 12 bug fixes baked in)      | ~3  |
+| C-3  | `initShareToken()` on new `SY_HBARX` (15 HBAR payable + ~1 fee) | ~16 |
+| C-4  | `proposeSY` × 2 (HBARX + reuse SS-V2-LP)                       | <1  |
+| C-5  | (wait 7 days — no HBAR cost, but operator must be available on day 8) | 0 |
+| C-6  | `confirmSY` × 2                                                | <1  |
+| C-7  | `createMarket` (HBARX-90D, FissionMarket — 3 HTS creates)      | ~60 |
+| C-8  | `createRewardsMarket` (SS-V2-90D, FissionMarketRewards — 3 HTS) | ~60 |
+| C-9  | Stake HBAR via Stader UI → HBARX (operator-pocket cost; no protocol cost) | ~30+ |
+| C-10 | `initialize-hbarx-market.mjs` (deposit + split + initialize)   | ~3  |
+| C-11 | `initialize-saucer-market.mjs` (HBAR→WHBAR→swap→deposit+split+initialize) | ~3 + seed |
+| C-12 | `grantRole(KEEPER_ROLE, keeper)` on new SY_HBARX                | <1  |
+| C-13 | First keeper rate post (post-grant)                             | <1  |
+| C-14 | `beginDefaultAdminTransfer(safe)` × every contract              | ~2  |
+| C-15 | Safe `acceptDefaultAdminTransfer()` × every contract            | ~2  |
+| C-16 | `revokeRole` × all deployer roles                                | ~2  |
+|      | **Subtotal protocol cost**                                       | **~213 HBAR** |
+|      | + seed liquidity (your call) + Stader stake (~30+ HBAR)          |     |
+
+Operator should top up to **≥250 HBAR plus seed budget** before starting.
+HBAR balance EOD 2026-05-05 was ~351 HBAR — sufficient for Phase C if
+seed liquidity is modest.
+
+### Phase C step-by-step (with checkpoints)
+
+#### Pre-flight (before any tx)
+- [ ] Mutation testing report ≥85% kill in `audits/mutation/mutation-results.md`.
+- [ ] External audit report committed in `audits/external/`.
+- [ ] All audit findings of severity ≥ Medium have follow-up commits.
+- [ ] Safe 2-of-2 deployed at multisig.hedera.foundation; address recorded.
+- [ ] Timelock 48h deployed; Safe is its admin; address recorded.
+- [ ] Operator HBAR balance ≥ 250 HBAR + seed.
+- [ ] HBARX (`0.0.834116`) associated to operator account.
+- [ ] WHBAR + USDC associated to operator account.
+- [ ] `forge test --no-match-path "test/fork/*"` green.
+- [ ] `forge test --match-path "test/fork/*" --fork-url $HEDERA_MAINNET_RPC` green.
+- [ ] `MAINNET_RPC` points at Validation Cloud or Arkhia (not Hashio).
+
+#### Day 1 — kick off the 7-day clock
+
+C-1. **Deploy fresh production factory** (with 7-day window).
+```sh
+SY_REVIEW_WINDOW_SECONDS=604800 \
+ROUTER_ADDRESS=$(jq -r .router.evm deployments/295.json) \
+SY_HBARX_ADDRESS=$(jq -r .sy_hbarx.evm deployments/295.json) \
+SY_SAUCER_V2_LP_ADDRESS=$(jq -r .sy_saucer_v2_lp.evm deployments/295.json) \
+node scripts/deploy-mainnet-sdk.mjs
+```
+- [ ] New factory address recorded; old factory address moved to `abandoned`.
+- [ ] Verify factory's `SY_REVIEW_WINDOW()` returns `604800` (`cast call`).
+
+C-2. **Deploy fresh SY_HBARX**.
+```sh
+node scripts/deploy-mainnet.mjs    # SY adapter sub-15M-gas, Hashio works
+```
+- [ ] New SY_HBARX address recorded; old `0x80728fbad79974e428c50dc548853ff858d9430c` moved to `abandoned`.
+
+C-3. **`initShareToken` on new SY_HBARX** (must use SDK path, not Hashio).
+```sh
+node scripts/init-sy.mjs <new-sy-hbarx-evm> 15
+```
+- [ ] `shareToken()` returns a non-zero HTS token address.
+- [ ] Self-association of `underlying` (HBARX) verified (transfer 1 wei test).
+
+C-4. **proposeSY for both SYs**.
+```sh
+node scripts/propose-sy.mjs <new-factory-evm> <new-sy-hbarx-evm> $(jq -r .sy_saucer_v2_lp.evm deployments/295.json)
+```
+- [ ] Both `proposeSY` events emitted on-chain.
+- [ ] Record proposal block timestamps.
+- [ ] **Set a calendar reminder for day 8** to run C-6.
+
+#### Day 2-7 — wait. Use the time wisely:
+- HashScan UI verify the factory + SY_HBARX (`audits/hashscan/`).
+- Provision the Safe + Timelock if not already done.
+- Final spot-check with auditor.
+
+#### Day 8 — confirm + create markets
+
+C-6. **confirmSY for both** (reverts before 7 days have elapsed).
+```sh
+node scripts/confirm-sy.mjs <new-factory-evm> <new-sy-hbarx-evm> $(jq -r .sy_saucer_v2_lp.evm deployments/295.json)
+```
+- [ ] Both `confirmSY` events emitted.
+
+C-7. **createMarket** (HBARX rate-growth market).
+```sh
+FACTORY_ADDRESS=<new-factory-evm> \
+SY_HBARX_ADDRESS=<new-sy-hbarx-evm> \
+SY_SAUCER_V2_LP_ADDRESS=$(jq -r .sy_saucer_v2_lp.evm deployments/295.json) \
+STD_EXPIRY=$(($(date +%s) + 90*24*3600)) \
+RWD_EXPIRY=$(($(date +%s) + 90*24*3600)) \
+STD_SCALAR_ROOT=50e18 RWD_SCALAR_ROOT=75e18 \
+STD_SUFFIX="HBARX-90D" RWD_SUFFIX="SS-V2-90D" \
+node scripts/create-markets.mjs
+```
+- [ ] Both market addresses recorded; PT/YT/LP HTS tokens created.
+
+C-9. **Stake HBAR via Stader UI** → HBARX in operator wallet. (User-driven step.)
+
+C-10/C-11. **initialize each market** via the runbook scripts above.
+- [ ] `lp_total_supply` non-zero on both markets.
+- [ ] `lastLnImpliedRate` set; visible via `getMarketState()`.
+
+C-12/C-13. **Grant KEEPER_ROLE** on new SY_HBARX, post first rate.
+```sh
+node scripts/grant-keeper.mjs <new-sy-hbarx-evm> $KEEPER_ADDRESS
+# then start the keeper service per Step 6
+```
+
+#### Day 8+ — handoff to Safe
+
+C-14/C-15/C-16. Run `node scripts/prep-safe-handoff.mjs` to dump the
+Safe Tx Builder JSON. Import in https://app.safe.global, sign, execute.
+See `docs/MAINNET_DEPLOY.md` Step 8 for the begin/accept dance.
+
+- [ ] `hasRole(DEFAULT_ADMIN_ROLE, deployer) == false` on every contract.
+- [ ] `hasRole(DEFAULT_ADMIN_ROLE, safe) == true` on every contract.
+- [ ] Update `deployments/295.json`: new factory, new SY_HBARX, new
+      markets, deployer-side roles cleared.
+- [ ] Deploy frontend (Step 7) with the new addresses.
+- [ ] Bootstrap Market 0 (`0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d`)
+      remains on-chain but orphaned. Document in
+      `deployments/295.json.abandoned.old_markets`.
