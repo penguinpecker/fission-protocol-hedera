@@ -16,9 +16,9 @@ import {IStandardizedYield} from "../../src/interfaces/IStandardizedYield.sol";
 /// @dev    Run with:
 ///             HEDERA_MAINNET_RPC=https://mainnet.hashio.io/api forge test \
 ///                 --match-path 'test/fork/SY_HBARX*' --fork-url $HEDERA_MAINNET_RPC -vv
-///         Hedera mainnet IDs (verified via hashscan.io):
+///         Hedera mainnet IDs (verified via hashscan.io 2026-05-02):
 ///         - HBARX:                 0.0.834116  (EVM: 0x0000000000000000000000000000000000cba44)
-///         - Stader Staking:        0.0.1027588 (EVM: 0x00000000000000000000000000000000000fb084) [UNCONFIRMED]
+///         - Stader Staking:        0.0.1412503 (EVM: 0x0000000000000000000000000000000000158d97)
 ///         The Stader contract address is the published rate-source for HBARX. We pin
 ///         these constants here so a future automated address-update doesn't silently
 ///         break the fork harness.
@@ -28,7 +28,8 @@ contract SY_HBARX_ForkTest is Test {
 
     /// @notice Stader staking contract that publishes `getExchangeRate()`.
     /// @dev    Verified 2026-05-02: Hedera `0.0.1412503` / EVM `0x...158d97`. Selector
-    ///         `getExchangeRate() = 0xe6aa216c`, returns uint256 scaled to 8 decimals.
+    ///         `getExchangeRate() = 0xe6aa216c`, returns uint256 scaled to **18 decimals**
+    ///         (1e18 = 1.0 HBAR per HBARX), NOT 8 as an earlier memo erroneously claimed.
     address constant STADER_ORACLE = 0x0000000000000000000000000000000000158d97;
 
     address admin = address(0xAD);

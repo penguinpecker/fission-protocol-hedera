@@ -1,0 +1,93 @@
+Loaded 50 mutants from audits/mutation/gambit-out/gambit_results.json
+Loaded 50 mutants from audits/mutation/gambit-out-fm/gambit_results.json
+Total mutants: 100
+Baseline: running forge test on unmutated tree…
+  baseline: PASS (54.6s)
+
+=== contracts/src/libraries/MarketMath.sol (50 mutants) ===
+  [1/50] mutant#   1 BinaryOpMutation                       KILLED (54s)
+  [2/50] mutant#   2 SwapArgumentsOperatorMutation          KILLED (44s)
+  [3/50] mutant#   3 BinaryOpMutation                       KILLED (60s)
+  [4/50] mutant#   4 DeleteExpressionMutation               KILLED (46s)
+  [5/50] mutant#   5 AssignmentMutation                     KILLED (45s)
+  [6/50] mutant#   6 BinaryOpMutation                       KILLED (53s)
+  [7/50] mutant#   7 SwapArgumentsOperatorMutation          KILLED (55s)
+  [8/50] mutant#   8 BinaryOpMutation                       KILLED (47s)
+  [9/50] mutant#   9 IfStatementMutation                    KILLED (43s)
+  [10/50] mutant#  10 BinaryOpMutation                       KILLED (43s)
+  [11/50] mutant#  11 BinaryOpMutation                       KILLED (47s)
+  [12/50] mutant#  12 BinaryOpMutation                       KILLED (55s)
+  [13/50] mutant#  13 SwapArgumentsOperatorMutation          KILLED (56s)
+  [14/50] mutant#  14 BinaryOpMutation                       KILLED (55s)
+  [15/50] mutant#  15 IfStatementMutation                    KILLED (55s)
+  [16/50] mutant#  16 DeleteExpressionMutation               KILLED (54s)
+  [17/50] mutant#  17 AssignmentMutation                     KILLED (61s)
+  [18/50] mutant#  18 AssignmentMutation                     KILLED (46s)
+  [19/50] mutant#  19 AssignmentMutation                     KILLED (48s)
+  [20/50] mutant#  20 BinaryOpMutation                       KILLED (56s)
+  [21/50] mutant#  21 AssignmentMutation                   SURVIVED (55s)
+  [22/50] mutant#  22 BinaryOpMutation                     SURVIVED (55s)
+  [23/50] mutant#  23 BinaryOpMutation                       KILLED (55s)
+  [24/50] mutant#  24 BinaryOpMutation                     SURVIVED (48s)
+  [25/50] mutant#  25 BinaryOpMutation                       KILLED (55s)
+  [26/50] mutant#  26 SwapArgumentsOperatorMutation        SURVIVED (47s)
+  [27/50] mutant#  27 IfStatementMutation                    KILLED (59s)
+  [28/50] mutant#  28 IfStatementMutation                    KILLED (59s)
+  [29/50] mutant#  29 BinaryOpMutation                       KILLED (55s)
+  [30/50] mutant#  30 BinaryOpMutation                       KILLED (60s)
+  [31/50] mutant#  31 AssignmentMutation                     KILLED (55s)
+  [32/50] mutant#  32 BinaryOpMutation                       KILLED (54s)
+  [33/50] mutant#  33 DeleteExpressionMutation             SURVIVED (55s)
+  [34/50] mutant#  34 AssignmentMutation                   SURVIVED (48s)
+  [35/50] mutant#  35 AssignmentMutation                   SURVIVED (65s)
+  [36/50] mutant#  36 BinaryOpMutation                     SURVIVED (60s)
+  [37/50] mutant#  37 BinaryOpMutation                     SURVIVED (60s)
+  [38/50] mutant#  38 BinaryOpMutation                       KILLED (57s)
+  [39/50] mutant#  39 DeleteExpressionMutation               KILLED (55s)
+  [40/50] mutant#  40 AssignmentMutation                     KILLED (55s)
+  [41/50] mutant#  41 BinaryOpMutation                       KILLED (54s)
+  [42/50] mutant#  42 BinaryOpMutation                       KILLED (48s)
+  [43/50] mutant#  43 UnaryOperatorMutation                SURVIVED (54s)
+  [44/50] mutant#  44 UnaryOperatorMutation                SURVIVED (49s)
+  [45/50] mutant#  45 BinaryOpMutation                     SURVIVED (55s)
+  [46/50] mutant#  46 BinaryOpMutation                       KILLED (54s)
+  [47/50] mutant#  47 BinaryOpMutation                       KILLED (47s)
+  [48/50] mutant#  48 IfStatementMutation                  SURVIVED (59s)
+  [49/50] mutant#  49 AssignmentMutation                     KILLED (55s)
+  [50/50] mutant#  50 AssignmentMutation                     KILLED (47s)
+
+=== contracts/src/core/FissionMarket.sol (50 mutants) ===
+  [1/50] mutant#   1 IfStatementMutation                    KILLED (54s)
+  [2/50] mutant#   2 IfStatementMutation                    KILLED (3s)
+  [3/50] mutant#   3 IfStatementMutation                    KILLED (46s)
+  [4/50] mutant#   4 DeleteExpressionMutation               KILLED (39s)
+  [5/50] mutant#   5 DeleteExpressionMutation               KILLED (46s)
+  [6/50] mutant#   6 BinaryOpMutation                     SURVIVED (52s)
+  [7/50] mutant#   7 BinaryOpMutation                       KILLED (44s)
+  [8/50] mutant#   8 IfStatementMutation                  SURVIVED (57s)
+  [9/50] mutant#   9 IfStatementMutation                    KILLED (37s)
+  [10/50] mutant#  10 AssignmentMutation                   SURVIVED (46s)
+Traceback (most recent call last):
+  File "/Users/pp/Desktop/Projects/fission-protocol-hedera/audits/mutation/run_mutation_tests.py", line 184, in <module>
+    main()
+    ~~~~^^
+  File "/Users/pp/Desktop/Projects/fission-protocol-hedera/audits/mutation/run_mutation_tests.py", line 91, in main
+    passed, tail = run_forge()
+                   ~~~~~~~~~^^
+  File "/Users/pp/Desktop/Projects/fission-protocol-hedera/audits/mutation/run_mutation_tests.py", line 30, in run_forge
+    proc = subprocess.run(
+        [FORGE, "test", "--no-match-path", "test/fork/*"],
+        cwd=REPO_ROOT / "contracts",
+        capture_output=True, text=True, timeout=600,
+    )
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 557, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1221, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 2153, in _communicate
+    ready = selector.select(timeout)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/selectors.py", line 398, in select
+    fd_event_list = self._selector.poll(timeout)
+KeyboardInterrupt
