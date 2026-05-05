@@ -48,17 +48,29 @@ contract SY_SaucerSwapV2LP_ForkTest is Test {
         }
     }
 
-    /// @notice The NPM exposes `positions(uint256)` with the V3 12-field tuple.
-    /// @dev    A revert with non-empty data signals "selector exists, ID just unminted."
-    ///         A revert with empty data signals a missing selector / wrong contract.
+    /// @notice The NPM exposes `positions(uint256)` with the SaucerSwap-V2 10-field tuple
+    ///         (no leading `nonce`/`operator` vs canonical Uniswap V3).
+    /// @dev    Earlier version of this test used the canonical 12-field shape and
+    ///         relied on the catch-all `bytes memory reason` to mask a silent decode
+    ///         failure — passing while the ABI was wrong. The 10-field shape was
+    ///         verified live 2026-05-06 by decoding the raw response (320 bytes).
     function test_fork_npm_positionsSelector() public view {
-        try IUniswapV3PositionManager(NPM).positions(1) returns (
-            uint96, address, address, address, uint24, int24, int24, uint128,
+        try IUniswapV3PositionManager(NPM).positions(74444) returns (
+            address t0, address t1, uint24 fee,
+            int24 tickLower, int24 tickUpper, uint128 liquidity,
             uint256, uint256, uint128, uint128
         ) {
-            // Either tokenId 1 exists or NPM happily returns zeroes — both fine.
+            // Real Market 0 position; expectations from deployments/295.json.
+            assertEq(t0, USDC, "position token0 != USDC");
+            assertEq(t1, WHBAR, "position token1 != WHBAR");
+            assertEq(fee, 1500, "position fee tier != 0.15%");
+            assertEq(tickLower, -887220, "position tickLower != full-range");
+            assertEq(tickUpper, 887220, "position tickUpper != full-range");
+            assertGt(liquidity, 0, "position liquidity = 0");
         } catch (bytes memory reason) {
-            require(reason.length > 0, "NPM positions(uint256) selector missing");
+            // If positions() returns wrong-shape data, it'd surface as a decode
+            // revert with non-empty reason; we want to fail loudly, not pass silently.
+            revert(string.concat("NPM positions decode failed: ", vm.toString(reason)));
         }
     }
 

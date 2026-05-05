@@ -53,9 +53,9 @@ contract PreFlight is Script {
         // tuple shape. If tokenId 1 doesn't exist, the call reverts — that's the V3
         // NPM behavior, also acceptable as proof of "not an EOA / not random contract".
         try IUniswapV3PositionManager(npm).positions(1) returns (
-            uint96, address, address, address, uint24, int24, int24, uint128, uint256, uint256, uint128, uint128
+            address, address, uint24, int24, int24, uint128, uint256, uint256, uint128, uint128
         ) {
-            console2.log("  OK (positions(1) returned the expected V3 tuple)");
+            console2.log("  OK (positions(1) returned the expected SaucerSwap V2 10-field tuple)");
         } catch (bytes memory reason) {
             // A revert on positions(1) is acceptable IF the contract has the selector —
             // V3 NPM reverts with `Invalid token ID` when the position doesn't exist.

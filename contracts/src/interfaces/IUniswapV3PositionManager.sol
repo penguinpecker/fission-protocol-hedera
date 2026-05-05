@@ -61,13 +61,19 @@ interface IUniswapV3PositionManager {
         external
         returns (uint256 amount0, uint256 amount1);
 
-    /// @notice Returns the position's full state. Field order matches Uniswap V3 NPM.
+    /// @notice Returns the position's full state.
+    /// @dev    SaucerSwap V2 (Hedera 0.0.4053945) deviates from canonical Uniswap V3:
+    ///         it drops the leading `nonce (uint96)` and `operator (address)` fields,
+    ///         returning 10 fields starting at `token0`. Verified live 2026-05-06 by
+    ///         decoding `cast call 0x...3DDbb9 "positions(uint256)" 74444` — response
+    ///         length 320 bytes (10 × 32). Production code does NOT call this function,
+    ///         so the interface mismatch had no runtime impact, but a fork test using
+    ///         the canonical 12-field shape silently swallowed the decode error and
+    ///         appeared to pass.
     function positions(uint256 tokenId)
         external
         view
         returns (
-            uint96 nonce,
-            address operator,
             address token0,
             address token1,
             uint24 fee,

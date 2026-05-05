@@ -82,7 +82,7 @@ contract SY_SaucerSwapV2LPInvariantTest is Test {
             assertEq(IERC20(syShare).totalSupply(), 0, "shares minted before position");
             return;
         }
-        ( , , , , , , , uint128 liquidity, , , , ) = npm.positions(tokenId);
+        ( , , , , , uint128 liquidity, , , , ) = npm.positions(tokenId);
         assertEq(IERC20(syShare).totalSupply(), uint256(liquidity), "totalSupply != position liquidity");
     }
 

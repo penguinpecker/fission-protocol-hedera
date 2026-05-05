@@ -174,8 +174,6 @@ contract MockUniswapV3PositionManager is IUniswapV3PositionManager {
         view
         override
         returns (
-            uint96 nonce,
-            address operator,
             address token0_,
             address token1_,
             uint24 fee,
@@ -190,8 +188,6 @@ contract MockUniswapV3PositionManager is IUniswapV3PositionManager {
     {
         Position storage p = _positions[tokenId];
         return (
-            0,
-            address(0),
             p.token0,
             p.token1,
             p.fee,
