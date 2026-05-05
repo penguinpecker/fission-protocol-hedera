@@ -1,10 +1,10 @@
 {
   "chainId": 295,
   "network": "mainnet",
-  "deployedAt": "2026-05-05T05:03:50.379Z",
+  "deployedAt": "2026-05-05T06:08:39.255Z",
   "factory": {
-    "id": "0.0.10465401",
-    "evm": "0x00000000000000000000000000000000009fb079"
+    "id": "0.0.10465459",
+    "evm": "0x00000000000000000000000000000000009fb0b3"
   },
   "router": {
     "id": "(reused)",
@@ -15,16 +15,16 @@
     "evm": "0x80728fbad79974e428c50dc548853ff858d9430c"
   },
   "sy_saucer_v2_lp": {
-    "id": "0.0.10465393",
-    "evm": "0x00000000000000000000000000000000009fb071"
+    "id": "(reused)",
+    "evm": "0x00000000000000000000000000000000009fb089"
   },
   "standard_deployer": {
-    "id": "0.0.10465396",
-    "evm": "0x00000000000000000000000000000000009fb074"
+    "id": "0.0.10465455",
+    "evm": "0x00000000000000000000000000000000009fb0af"
   },
   "rewards_deployer": {
-    "id": "0.0.10465399",
-    "evm": "0x00000000000000000000000000000000009fb077"
+    "id": "0.0.10465457",
+    "evm": "0x00000000000000000000000000000000009fb0b1"
   },
   "deployer": "0.0.10463169",
   "deployerEvm": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
@@ -33,20 +33,46 @@
   "marketTreasury": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "syAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "keeper": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
-  "notes": "All contracts deployed. Market 1 (rewards) created but NOT initialized \u2014 NPM mint reverts with 'MF' (next debug step). HBARX standard market not yet created on this factory (skip per user direction).",
+  "notes": "Market 0 LIVE on chain 295. seed: 500001 SY + 500000 PT, lpTotalSupply=500000 (1000 locked in market). lastLnImpliedRate set \u2713. SaucerSwap V2 LP rewards Pendle-Kyber market is operational \u2014 users can split SY \u2192 PT+YT, swap PT\u2194SY, add/remove LP. HBARX market still pending (skipped per user direction).",
   "sy_review_window_seconds": 0,
   "markets": [
     {
       "id": 0,
-      "evm": "0xba56d9b009c99d39f255cf713c242c2b535880d0",
+      "evm": "0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d",
       "type": "rewards",
-      "sy": "0x00000000000000000000000000000000009fb071",
-      "expiry_unix": 1785733492,
+      "sy": "0x00000000000000000000000000000000009fb089",
+      "expiry_unix": 1785737388,
       "scalarRoot": "75e18",
       "suffix": "SS-V2-90D",
-      "initialized": false,
-      "init_blocker": "NPM mint reverts with short error 'MF' \u2014 SaucerSwap V2 NPM checks (likely SaucerSwap-fork-specific) reject the deposit. Needs source-side debug or call against the NPM directly to identify the failing check."
+      "pt": "0x00000000000000000000000000000000009fb0b5",
+      "yt": "0x00000000000000000000000000000000009fb0b6",
+      "lp": "0x00000000000000000000000000000000009fb0b7",
+      "initialized": true,
+      "lp_total_supply": 500000,
+      "initial_anchor_e18": "1.02e18",
+      "ln_fee_rate_root_e18": "3e14",
+      "reserve_fee_percent": 80,
+      "seed_size_hbar_equiv": "~5 HBAR each side"
     }
   ],
-  "sy_review_window_note": "Set to 0 for v1 bootstrap. Production deploys should pass 7 days for the Penpie defence."
+  "abandoned": {
+    "old_factories": [
+      "0x00000000000000000000000000000000009faeea",
+      "0x00000000000000000000000000000000009faf26",
+      "0x00000000000000000000000000000000009faf35",
+      "0x00000000000000000000000000000000009fb079",
+      "0x00000000000000000000000000000000009fb0a1"
+    ],
+    "old_sy_v2_lp": [
+      "0xd4b535589148ea8bdf4ca64ee1007780d3d08c62"
+    ],
+    "old_markets": [
+      "0x5d75cb89e26b6e009db583afbd3797ff8ad7c8ae",
+      "0x98fe6ad01129b5a1c37891b60c5eff526184ec93",
+      "0xba56d9b009c99d39f255cf713c242c2b535880d0",
+      "0xd44caf20cec0b48847ea301efb373f8c3f10b36b",
+      "0x52f95a30bfc130efb5295a68bf17448c84c3f7ea"
+    ],
+    "reason": "Iteratively redeployed while debugging Hedera-specific bugs: (1) HtsHelpers.createFungible drained msg.value into first call when called 3\u00d7 in setTokens; (2) FissionFactory missed setMaxAutomaticTokenAssociations; (3) SY/Market contracts couldn't receive HTS tokens without explicit associate calls; (4) SaucerSwap V2 NPM requires msg.value (USD-cents-denominated fee converted via tinycentsToTinybars) for V3 NFT mint; (5) _burnYt didn't unfreeze before wipe (frozen YT holders couldn't merge); (6) _mintLp(0xdEaD, MIN_LIQUIDITY) failed because 0xdEaD isn't HTS-associated. All fixed in source; current factory + market are the working set."
+  }
 }

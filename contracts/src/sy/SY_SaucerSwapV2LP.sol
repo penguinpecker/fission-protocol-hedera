@@ -234,7 +234,7 @@ contract SY_SaucerSwapV2LP is SYBase {
         uint256 amount1Min,
         address receiver,
         uint128 minLiquidity
-    ) external nonReentrant whenNotPaused returns (uint128 liquidity) {
+    ) external payable nonReentrant whenNotPaused returns (uint128 liquidity) {
         if (receiver == address(0)) revert ZeroAddress();
         if (amount0Desired == 0 && amount1Desired == 0) revert AmountZero();
 
@@ -268,7 +268,10 @@ contract SY_SaucerSwapV2LP is SYBase {
                 deadline: block.timestamp
             });
             uint256 newTokenId;
-            (newTokenId, liquidity, amount0Used, amount1Used) = npm.mint(mp);
+            // Forward msg.value: SaucerSwap V2 NPM checks SELFBALANCE >=
+            // tinycentsToTinybars(mintFee) and reverts with "MF" if not. The fee
+            // covers the V3 NFT creation cost on Hedera (HTS NFT, not pure EVM).
+            (newTokenId, liquidity, amount0Used, amount1Used) = npm.mint{value: msg.value}(mp);
             if (newTokenId == 0) revert MintFailed();
             positionTokenId = newTokenId;
             emit PositionMinted(newTokenId, liquidity, amount0Used, amount1Used);
@@ -286,7 +289,10 @@ contract SY_SaucerSwapV2LP is SYBase {
                     amount1Min: amount1Min,
                     deadline: block.timestamp
                 });
-            (liquidity, amount0Used, amount1Used) = npm.increaseLiquidity(ip);
+            // Forward msg.value here too — SaucerSwap V2 NPM gates increaseLiquidity
+            // on the same SELFBALANCE check (the fee covers per-call Hedera costs;
+            // it's smaller than mint's NFT-creation fee but still non-zero).
+            (liquidity, amount0Used, amount1Used) = npm.increaseLiquidity{value: msg.value}(ip);
         }
 
         if (liquidity < minLiquidity) revert InsufficientLiquidityOut();

@@ -237,10 +237,14 @@ console.log(`[3b] WHBAR.approve(SY, ${SYM_DESIRED_WHBAR})…`);
 console.log(`\n[4] SY.depositLiquidity(${SYM_DESIRED_USDC}, ${SYM_DESIRED_WHBAR}, 0, 0, operator, 1)…`);
 const syId = await lookup(SY_ADDRESS);
 {
+  // Forward 5 HBAR to cover SaucerSwap V2 NPM's mint fee (USD-cents-denominated,
+  // converted to HBAR via tinycentsToTinybars; NPM checks SELFBALANCE >= fee).
+  // Gas: V3 mint + 4 HTS precompile calls (transferFrom×2, refund×2) is ~8M.
   const tx = new ContractExecuteTransaction()
     .setContractId(syId)
-    .setGas(3_000_000)
-    .setMaxTransactionFee(new Hbar(15))
+    .setGas(15_000_000)
+    .setMaxTransactionFee(new Hbar(40))
+    .setPayableAmount(new Hbar(5))
     .setFunction(
       "depositLiquidity",
       new ContractFunctionParameters()

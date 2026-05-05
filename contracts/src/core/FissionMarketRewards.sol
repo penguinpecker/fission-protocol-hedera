@@ -287,7 +287,19 @@ contract FissionMarketRewards is
         if (from == address(this)) {
             HtsHelpers.burnFromTreasury(yt, amount);
         } else {
+            // YT is frozen post-receive (AMM-only); wipe-on-frozen returns 165
+            // (ACCOUNT_FROZEN_FOR_TOKEN). Unfreeze before wipe; refreeze if any
+            // YT remains so the AMM-only invariant holds.
+            bool wasFrozen = _ytFrozen[from];
+            if (wasFrozen) HtsHelpers.unfreeze(yt, from);
             HtsHelpers.wipeFrom(yt, from, amount);
+            // Refreeze only if the holder still has YT (otherwise they're a clean
+            // slate and the next _mintYt will set _ytFrozen[from] = true again).
+            if (wasFrozen && IERC20(yt).balanceOf(from) > 0) {
+                HtsHelpers.freeze(yt, from);
+            } else if (wasFrozen) {
+                _ytFrozen[from] = false;
+            }
         }
     }
 
@@ -341,7 +353,10 @@ contract FissionMarketRewards is
         uint256 lpRaw = PMath.sqrt(syIn * ptIn);
         if (lpRaw <= MarketMath.MINIMUM_LIQUIDITY) revert InsufficientLiquidity();
         lpOut = lpRaw - MarketMath.MINIMUM_LIQUIDITY;
-        _mintLp(address(0xdEaD), MarketMath.MINIMUM_LIQUIDITY);
+        // Lock MINIMUM_LIQUIDITY in market treasury (no withdraw path → permanent
+        // lock). On Ethereum a 0xdEaD send is the convention; on Hedera, 0xdEaD
+        // isn't HTS-associated with the LP, so transfers there revert with 184.
+        _mintLp(address(this), MarketMath.MINIMUM_LIQUIDITY);
         _mintLp(msg.sender, lpOut);
 
         totalSy = syIn;

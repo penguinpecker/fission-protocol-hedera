@@ -305,13 +305,21 @@ contract FissionMarket is
         }
     }
 
-    /// @dev Burn HTS YT: wipe bypasses freeze in a single call. Treasury can also use
-    ///      burnFromTreasury when from == self.
+    /// @dev Burn HTS YT: wipe REQUIRES the account to be unfrozen first
+    ///      (Hedera HTS returns code 165 = ACCOUNT_FROZEN_FOR_TOKEN otherwise).
+    ///      Unfreeze, wipe, and refreeze if YT remains.
     function _burnYt(address from, uint256 amount) internal {
         if (from == address(this)) {
             HtsHelpers.burnFromTreasury(yt, amount);
         } else {
+            bool wasFrozen = _ytFrozen[from];
+            if (wasFrozen) HtsHelpers.unfreeze(yt, from);
             HtsHelpers.wipeFrom(yt, from, amount);
+            if (wasFrozen && IERC20(yt).balanceOf(from) > 0) {
+                HtsHelpers.freeze(yt, from);
+            } else if (wasFrozen) {
+                _ytFrozen[from] = false;
+            }
         }
     }
 
@@ -378,7 +386,10 @@ contract FissionMarket is
         if (lpRaw <= MarketMath.MINIMUM_LIQUIDITY) revert InsufficientLiquidity();
         lpOut = lpRaw - MarketMath.MINIMUM_LIQUIDITY;
         // burn-to-DEAD donation defence (Uniswap v2 pattern)
-        _mintLp(address(0xdEaD), MarketMath.MINIMUM_LIQUIDITY);
+        // Lock MINIMUM_LIQUIDITY in market treasury (no withdraw path → permanent
+        // lock). On Hedera, 0xdEaD isn't HTS-associated with the LP, so transfers
+        // there revert with code 184 (TOKEN_NOT_ASSOCIATED_TO_ACCOUNT).
+        _mintLp(address(this), MarketMath.MINIMUM_LIQUIDITY);
         _mintLp(msg.sender, lpOut);
 
         totalSy = syIn;
