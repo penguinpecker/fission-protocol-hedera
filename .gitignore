@@ -44,3 +44,8 @@ pnpm-debug.log*
 
 # Verification dumps (regenerated)
 contracts/verification/
+
+# Static-analysis transient outputs (regenerate via audits/external/HANDOFF.md §14)
+.venv-slither/
+audits/static-analysis/slither.json
+audits/static-analysis/slither.stderr.log

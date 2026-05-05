@@ -257,8 +257,9 @@ operator must hold BEFORE running:
 Run:
 
 ```sh
-MARKET_ADDRESS=0x5d75cb89e26b6e009db583afbd3797ff8ad7c8ae \
-SY_HBARX_ADDRESS=0x80728fbad79974e428c50dc548853ff858d9430c \
+# Read freshly-deployed addresses from the source of truth.
+MARKET_ADDRESS=$(jq -r '.markets[] | select(.suffix=="HBARX-90D") | .evm' deployments/295.json) \
+SY_HBARX_ADDRESS=$(jq -r '.sy_hbarx.evm' deployments/295.json) \
 HBARX_TO_DEPOSIT=1000000000   `# 10 HBARX (8 dec)` \
 SY_TO_SPLIT=500000000         `# 5 SY shares` \
 SY_IN=500000000               `# 5 SY for AMM` \
@@ -269,18 +270,24 @@ RESERVE_FEE_PERCENT=80 \
 node scripts/initialize-hbarx-market.mjs
 ```
 
+**DO NOT** copy the example addresses out of an older runbook. Any
+`sy_hbarx` / market address that predates this deploy carries pre-fix
+bugs (see "Hedera deploy gotchas" appendix below). Always pull from
+`deployments/295.json` at deploy-time.
+
 Recommended values (HBARX-90D market):
   • syIn / ptIn equal — neutral starting position
   • initialAnchor = 1.05e18 — 5% implied yield curve start (HBARX is ~5.79% APY)
   • lnFeeRateRoot = 0.0003e18 — ~0.03% trade fee at curve center
   • reserveFeePercent = 80 — Pendle default protocol cut
 
-For Market 1 (SaucerSwap V2 LP rewards): seed liquidity requires USDC +
-WHBAR (deposit both into SY_SaucerSwapV2LP, which mints a V3 NFT and credits
-SY shares). No script written yet — operator should swap on SaucerSwap to
-acquire both legs first, then write the deposit + split + initialize flow
-similarly. `initialAnchor = 1.02e18` (2% implied yield, matches the ~1.84%
-APR baseline for the WHBAR-USDC 0.15% pool full-range).
+For Market 1 (SaucerSwap V2 LP rewards): use `scripts/initialize-saucer-market.mjs`,
+which wraps HBAR → WHBAR, swaps half to USDC, deposits both into
+SY_SaucerSwapV2LP (mints a V3 NFT, credits SY shares), splits to PT/YT,
+and calls `market.initialize`. Resume flags: `SKIP_WRAP=1` if you already
+hold WHBAR, `SKIP_SWAP=1` if you already hold USDC. `initialAnchor = 1.02e18`
+(2% implied yield, matches the ~1.84% APR baseline for the WHBAR-USDC 0.15%
+pool full-range).
 
 ## Step 5 — verify on HashScan
 
@@ -382,3 +389,118 @@ If users have already deposited:
   Any rescue would be a follow-on contract that users opt into.
 
 This is why the audit gate matters.
+
+---
+
+## Appendix A — Hedera deploy gotchas (12 hard-won lessons)
+
+Each item below tripped a previous deploy and is now fixed in the source.
+Read these even if everything looks fine — they explain *why* the runbook
+prefers SDK paths over Hashio JSON-RPC for certain steps.
+
+1. **HTS `createFungibleToken` cannot be called from a constructor.**
+   The child `TOKENCREATION` HAPI tx is born with `max_fee = 0` and reverts.
+   Two-step pattern only: deploy → external `initShareToken()` payable.
+   `payableAmount ≥ 15 HBAR` (token create + 90-day auto-renew prepay) and
+   it MUST go through the SDK's `ContractExecuteTransaction.setPayableAmount`.
+   Hashio's `EthereumTransaction` relay does NOT propagate `value` into the
+   child HAPI's fee budget. (`scripts/init-sy.mjs`.)
+
+2. **15M-gas-per-tx ContractCreate cap on Hashio mainnet.**
+   FissionFactory at 71KB runtime needed >15M gas for `G_codedeposit` alone
+   and reverted with `MAX_GAS_LIMIT_EXCEEDED`. Fix: extracted
+   `new FissionMarket(...)` / `new FissionMarketRewards(...)` into
+   `StandardMarketDeployer` + `RewardsMarketDeployer`. Both Market
+   constructors take an explicit `factory_` param; the deployer passes
+   it through. Factory shrunk 71KB → 8KB.
+
+3. **`ContractCreateFlow.execute` ignores `setMaxChunks`.**
+   The non-signer convenience path silently caps at 20 chunks, which
+   isn't enough for big bytecode. Use the explicit `FileCreate +
+   FileAppend(setMaxChunks) + ContractCreate` sequence instead.
+   (`scripts/deploy-mainnet-sdk.mjs`.)
+
+4. **`HtsHelpers.createFungible` was using `msg.value` directly.**
+   When called 3× from `setTokens` (PT / YT / LP), each call requested the
+   full `msg.value`, draining the contract on the first call and reverting
+   the next two. Fix: explicit `value` param; `setTokens` splits
+   `msg.value / 3` per call (last call gets rounding remainder).
+
+5. **`SY_REVIEW_WINDOW` was a hard-coded `7 days` constant.**
+   Converted to `immutable` set via constructor. Production deploy passes
+   `7 days`; bootstrap (only used to ship Market 0 for smoke-test) passes
+   `0`. `MainnetDeploy.s.sol` defaults to 7d.
+
+6. **`maxAutomaticTokenAssociations = 0` by default on contracts.**
+   Without that or an admin key set at create time, ANY HTS token transfer
+   TO the contract reverts with `TOKEN_NOT_ASSOCIATED_TO_ACCOUNT (167)`.
+   Two-pronged fix:
+   (a) `_afterInitShareToken()` virtual hook in `SYBase`. `SY_HBARX`
+       self-associates `underlying`. `SY_SaucerSwapV2LP` self-associates
+       `token0` + `token1`. `FissionMarket` / `FissionMarketRewards`
+       self-associate `sy.shareToken()` (and reward tokens) inside
+       `setTokens`.
+   (b) `deploy-mainnet-sdk.mjs` sets `setMaxAutomaticTokenAssociations(-1)`
+       (HIP-904) on every `ContractCreate`.
+
+7. **Tolerate response code 194 (`TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT`).**
+   `HtsHelpers.associateIfNeeded` swallows 194 for idempotency. Without
+   that, any path that re-runs association on an already-associated token
+   reverts.
+
+8. **SaucerSwap V2 NPM `mint` requires `msg.value` for the V3 NFT fee.**
+   Cryptic revert string `"MF"` when calling contract has zero HBAR. NPM
+   checks `selfbalance >= tinycentsToTinybars(usdMintFee)` — the V3 NFT
+   creation fee is USD-cents-denominated, converted via Hedera's
+   exchange-rate precompile. Fix: `SY_SaucerSwapV2LP.depositLiquidity` is
+   `payable` and forwards `msg.value` to `npm.mint{value: msg.value}`.
+   `increaseLiquidity` is symmetric. The init script attaches ~5 HBAR.
+
+9. **`_burnYt` failed on frozen YT holders.**
+   HTS rejects `wipeTokenAccount` on frozen accounts with response code
+   165 (`ACCOUNT_FROZEN_FOR_TOKEN`). YT is frozen post-receive (AMM-only)
+   so any `merge` / post-expiry redeem / YT-burning swap was unreachable.
+   Fix in both Markets: unfreeze → wipe → refreeze if balance remains.
+
+10. **`_mintLp(address(0xdEaD), MIN_LIQUIDITY)`** anti-griefing lock failed
+    because `0xdEaD` isn't HTS-associated (response code 184). Fix:
+    `_mintLp(address(this), MIN_LIQUIDITY)` — locked in market treasury,
+    no withdraw path. Same effective behaviour on Hedera.
+
+11. **HTS atomicity quirk on partial revert.**
+    When `initialize()` reverted partway through, the HTS `transferFrom`s
+    it had already done were NOT fully reverted by the EVM revert. State
+    drift required a `merge()` recovery flow — and the unfreeze fix in
+    `_burnYt` (#9) was needed to make recovery reachable.
+
+12. **`optimizer_runs = 200`** (was `1_000_000`). 33% smaller bytecode;
+    needed to fit the deployers under the gas cap. Re-check your function
+    selectors are still cheap if you bump this back up.
+
+## Appendix B — Final-factory cutover (Phase C)
+
+The currently-deployed FissionFactory (`deployments/295.json`) ships with
+`SY_REVIEW_WINDOW=0` and was used for the V2 LP smoke-test market only
+("Market 0"). It is NOT the production factory.
+
+Before launching for real users:
+
+1. **Deploy a fresh factory** with `SY_REVIEW_WINDOW = 7 days` (the
+   `MainnetDeploy` script default; verify env doesn't override to 0).
+2. **proposeSY** for both SY adapters (the existing
+   `SY_SaucerSwapV2LP` at `0x...009fb089` is already on the post-fix
+   build and can be reused; `SY_HBARX` must be redeployed since the live
+   address `0x80728fbad79974e428c50dc548853ff858d9430c` predates the 12
+   bug fixes above).
+3. **Wait 7 days.** The contract enforces the window — `confirmSY`
+   reverts before it elapses. Plan operator availability accordingly.
+4. **confirmSY** + **createMarket** on both SYs.
+5. **initialize** each market with the post-fix scripts referenced above.
+6. **grant `KEEPER_ROLE`** on the new SY_HBARX to the keeper hot key.
+7. Update `deployments/295.json` and the frontend env vars.
+8. Bootstrap Market 0 becomes orphaned. Document and abandon.
+
+The 7-day window is non-negotiable for production — it is the Penpie
+defence (factory whitelist + public review window), one of the v1
+launch-blockers. Schedule it at the *very end* of the deploy timeline so
+nothing else is gated on it.
