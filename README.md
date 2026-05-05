@@ -29,7 +29,7 @@ deployments/ Per-network address ledger
 | `SY_HBARX`              | ERC-5115 over Stader's HBARX (TWAP-bounded keeper-posted rate)         |
 | `SY_SaucerSwapV2LP`     | ERC-5115 over a fixed-range SaucerSwap V2 NFT position                 |
 | `ActionRouter`          | Multi-step user flows (deposit → split → swap)                         |
-| Safe + OZ Timelock      | 3-of-5 with 48h delay on owner actions                                 |
+| Safe + OZ Timelock      | 2-of-2 with 48h delay on owner actions                                 |
 
 ## License
 

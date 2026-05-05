@@ -49,3 +49,8 @@ contracts/verification/
 .venv-slither/
 audits/static-analysis/slither.json
 audits/static-analysis/slither.stderr.log
+
+# Mutation testing transient outputs (regenerable via gambit)
+audits/mutation/gambit-out/
+audits/mutation/gambit-out-fm/
+audits/mutation/run.log

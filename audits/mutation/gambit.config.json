@@ -1,0 +1,48 @@
+[
+  {
+    "filename": "contracts/src/libraries/MarketMath.sol",
+    "sourceroot": ".",
+    "solc": "solc8.27",
+    "solc_optimize": true,
+    "solc_remappings": [
+      "@openzeppelin/=contracts/lib/openzeppelin-contracts/",
+      "forge-std/=contracts/lib/forge-std/src/",
+      "@solady/=contracts/lib/solady/src/"
+    ],
+    "mutations": [
+      "binary-op-mutation",
+      "unary-operator-mutation",
+      "require-mutation",
+      "assignment-mutation",
+      "delete-expression-mutation",
+      "if-statement-mutation",
+      "swap-arguments-operator-mutation"
+    ],
+    "num_mutants": 50,
+    "random_seed": true,
+    "seed": 42
+  },
+  {
+    "filename": "contracts/src/core/FissionMarket.sol",
+    "sourceroot": ".",
+    "solc": "solc8.27",
+    "solc_optimize": true,
+    "solc_remappings": [
+      "@openzeppelin/=contracts/lib/openzeppelin-contracts/",
+      "forge-std/=contracts/lib/forge-std/src/",
+      "@solady/=contracts/lib/solady/src/"
+    ],
+    "mutations": [
+      "binary-op-mutation",
+      "unary-operator-mutation",
+      "require-mutation",
+      "assignment-mutation",
+      "delete-expression-mutation",
+      "if-statement-mutation",
+      "swap-arguments-operator-mutation"
+    ],
+    "num_mutants": 50,
+    "random_seed": true,
+    "seed": 42
+  }
+]

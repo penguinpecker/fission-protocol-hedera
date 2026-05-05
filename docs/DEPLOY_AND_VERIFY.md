@@ -259,7 +259,7 @@ The `/markets` page reads `NEXT_PUBLIC_FACTORY_ADDRESS` and lists markets. Click
 
 ## 9. Mainnet checklist (before broadcasting `MainnetDeploy.s.sol`)
 
-- [ ] Safe (3-of-5) deployed at https://multisig.hedera.foundation, address pinned to `FACTORY_ADMIN`.
+- [ ] Safe (2-of-2) deployed at https://multisig.hedera.foundation, address pinned to `FACTORY_ADMIN`.
 - [ ] OZ TimelockController (48h delay) deployed, controlled by Safe, address pinned to `MARKET_ADMIN`.
 - [ ] Operator EOA holds ≥ 20 HBAR for the deploy + initial market creates.
 - [ ] All four privileged-role env vars (FACTORY_ADMIN, MARKET_ADMIN, MARKET_TREASURY, SY_ADMIN) point at contracts (not EOAs). MainnetDeploy refuses to broadcast otherwise.

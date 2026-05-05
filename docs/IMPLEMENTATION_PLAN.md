@@ -122,7 +122,7 @@ This is where Hedera-native HTS integration lands.
 - [ ] Primary audit: ChainSecurity / Spearbit. Address every finding before next phase.
 - [ ] Code4rena or Sherlock contest. Address.
 - [ ] Immunefi listing.
-- [ ] **Mainnet deploy**: Safe 3-of-5 + Timelock 48 h. Genesis: HBARX market only. SaucerSwap LP + Bonzo markets after 1 week of HBARX uptime.
+- [ ] **Mainnet deploy**: Safe 2-of-2 + Timelock 48 h. Genesis: HBARX market only. SaucerSwap LP + Bonzo markets after 1 week of HBARX uptime.
 
 ## Definition of Done
 

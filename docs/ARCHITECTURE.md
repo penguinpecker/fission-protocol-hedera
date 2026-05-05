@@ -7,7 +7,7 @@
 1. **Real on-chain rate sources.** No mock SY, no synthetic underlyings, no TVL theatre. Every market backed by a verifiable Hedera mainnet yield-bearing asset.
 2. **Hedera-native UX.** PT/YT minted via HTS precompile so they appear in HashPack/Blade as native tokens. SY/AMM/Router stay as plain Solidity for tooling support. Every token-holding contract sets `maxAutomaticTokenAssociations = -1` (HIP-904).
 3. **Audit-ready.** Foundry invariants in CI, Medusa nightly, Halmos on math libs, ≥85 % mutation kill before audit.
-4. **Multisig-governed.** Safe (multisig.hedera.foundation, 3-of-5) + OZ TimelockController, 48 h delay on owner ops. Immutable cores; Router/adapters upgradeable (UUPS).
+4. **Multisig-governed.** Safe (multisig.hedera.foundation, 2-of-2) + OZ TimelockController, 48 h delay on owner ops. Immutable cores; Router/adapters upgradeable (UUPS).
 5. **No keeper-as-trust-root.** Rate updates TWAP-smoothed and bps-bounded; reverting on suspected manipulation is a feature.
 
 ---
@@ -16,7 +16,7 @@
 
 ```
                       ┌─────────────────────┐
-   Safe (3-of-5)  ──▶ │ TimelockController  │ ──▶ owner of all admin ops
+   Safe (2-of-2)  ──▶ │ TimelockController  │ ──▶ owner of all admin ops
                       └─────────────────────┘                (48 h delay)
                                  │
                                  ▼
@@ -207,11 +207,11 @@ Keeper posts rate hourly. Hardening (from Pendle Boros lessons + Penpie post-mor
 
 ## Governance — final shape
 
-- **Owner**: Safe 3-of-5 (multisig.hedera.foundation deployment).
-- **TimelockController** (OZ): 48 h delay on every owner-gated function. Cancel reserved to a 4-of-5 emergency Safe.
+- **Owner**: Safe 2-of-2 (multisig.hedera.foundation deployment).
+- **TimelockController** (OZ): 48 h delay on every owner-gated function. Cancel reserved to the same 2-of-2 Safe (no separate emergency Safe in v1).
 - **Roles** (`AccessControlDefaultAdminRules`):
   - `DEFAULT_ADMIN_ROLE`: timelock only
-  - `PAUSER_ROLE`: emergency Safe (no timelock — must act fast)
+  - `PAUSER_ROLE`: 2-of-2 Safe (no timelock — must act fast)
   - `KEEPER_ROLE`: keeper EOA, rate-post-only
   - `TREASURY_ROLE`: receives post-expiry yield surplus
 - **No EOA roles in production.** Deployer revokes itself after handoff.
