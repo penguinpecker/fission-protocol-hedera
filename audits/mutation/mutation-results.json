@@ -1,24 +1,24 @@
 {
-  "ran_at": "2026-05-06T21:58:03Z",
-  "total_elapsed_s": 5020.8,
+  "ran_at": "2026-05-06T23:30:27Z",
+  "total_elapsed_s": 5062.7,
   "overall": {
     "mutants_run": 100,
-    "killed": 64,
-    "survived": 36,
-    "kill_rate_percent": 64.0
+    "killed": 85,
+    "survived": 15,
+    "kill_rate_percent": 85.0
   },
   "by_file": {
     "contracts/src/libraries/MarketMath.sol": {
       "mutants_run": 50,
-      "killed": 37,
-      "survived": 13,
-      "kill_rate_percent": 74.0
+      "killed": 47,
+      "survived": 3,
+      "kill_rate_percent": 94.0
     },
     "contracts/src/core/FissionMarket.sol": {
       "mutants_run": 50,
-      "killed": 27,
-      "survived": 23,
-      "kill_rate_percent": 54.0
+      "killed": 38,
+      "survived": 12,
+      "kill_rate_percent": 76.0
     }
   },
   "details": [
@@ -27,7 +27,7 @@
       "id": "1",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 55.8,
+      "elapsed_s": 48.3,
       "tail": ""
     },
     {
@@ -35,12 +35,68 @@
       "id": "2",
       "description": "SwapArgumentsOperatorMutation",
       "killed": true,
-      "elapsed_s": 47.2,
+      "elapsed_s": 50.5,
       "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "3",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 56.7,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "4",
+      "description": "DeleteExpressionMutation",
+      "killed": true,
+      "elapsed_s": 54.6,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "5",
+      "description": "AssignmentMutation",
+      "killed": true,
+      "elapsed_s": 46.7,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "6",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 50.6,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "7",
+      "description": "SwapArgumentsOperatorMutation",
+      "killed": true,
+      "elapsed_s": 56.1,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "8",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 56.6,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "9",
+      "description": "IfStatementMutation",
+      "killed": true,
+      "elapsed_s": 47.3,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "10",
       "description": "BinaryOpMutation",
       "killed": true,
       "elapsed_s": 44.5,
@@ -48,66 +104,10 @@
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "4",
-      "description": "DeleteExpressionMutation",
-      "killed": true,
-      "elapsed_s": 54.2,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "5",
-      "description": "AssignmentMutation",
-      "killed": true,
-      "elapsed_s": 47.4,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "6",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 54.8,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "7",
-      "description": "SwapArgumentsOperatorMutation",
-      "killed": true,
-      "elapsed_s": 49.4,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "8",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 55.3,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "9",
-      "description": "IfStatementMutation",
-      "killed": true,
-      "elapsed_s": 43.2,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "10",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 46.4,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
       "id": "11",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 55.3,
+      "elapsed_s": 49.3,
       "tail": ""
     },
     {
@@ -115,7 +115,7 @@
       "id": "12",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 50.8,
+      "elapsed_s": 46.5,
       "tail": ""
     },
     {
@@ -123,7 +123,7 @@
       "id": "13",
       "description": "SwapArgumentsOperatorMutation",
       "killed": true,
-      "elapsed_s": 55.8,
+      "elapsed_s": 56.6,
       "tail": ""
     },
     {
@@ -131,7 +131,7 @@
       "id": "14",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 55.2,
+      "elapsed_s": 45.6,
       "tail": ""
     },
     {
@@ -139,7 +139,7 @@
       "id": "15",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 54.9,
+      "elapsed_s": 56.5,
       "tail": ""
     },
     {
@@ -147,7 +147,7 @@
       "id": "16",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 43.6,
+      "elapsed_s": 56.2,
       "tail": ""
     },
     {
@@ -155,7 +155,7 @@
       "id": "17",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 54.1,
+      "elapsed_s": 47.1,
       "tail": ""
     },
     {
@@ -163,7 +163,7 @@
       "id": "18",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 55.8,
+      "elapsed_s": 48.6,
       "tail": ""
     },
     {
@@ -171,7 +171,7 @@
       "id": "19",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 66.1,
+      "elapsed_s": 58.3,
       "tail": ""
     },
     {
@@ -179,63 +179,63 @@
       "id": "20",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 73.0,
+      "elapsed_s": 56.8,
       "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "21",
       "description": "AssignmentMutation",
-      "killed": false,
-      "elapsed_s": 55.2,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.94s (69.07s CPU time)\n\nRan 14 test suites in 30.94s (143.44s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 56.6,
+      "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "22",
       "description": "BinaryOpMutation",
-      "killed": false,
-      "elapsed_s": 55.0,
-      "tail": "afeFlow_bothClaimBeforeTransfer() (gas: 705804)\n[PASS] test_twoHolders_proRataDistribution() (gas: 734784)\nSuite result: ok. 41 passed; 0 failed; 0 skipped; finished in 30.75s (6.44ms CPU time)\n\nRan 14 test suites in 30.75s (140.00s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 66.6,
+      "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "23",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 60.3,
+      "elapsed_s": 56.6,
       "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "24",
       "description": "BinaryOpMutation",
-      "killed": false,
-      "elapsed_s": 59.8,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 34.89s (77.99s CPU time)\n\nRan 14 test suites in 34.89s (111.47s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 53.3,
+      "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "25",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 55.1,
+      "elapsed_s": 56.0,
       "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "26",
       "description": "SwapArgumentsOperatorMutation",
-      "killed": false,
-      "elapsed_s": 55.1,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.84s (62.32s CPU time)\n\nRan 14 test suites in 30.84s (118.92s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 56.5,
+      "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "27",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 55.6,
+      "elapsed_s": 60.5,
       "tail": ""
     },
     {
@@ -243,7 +243,7 @@
       "id": "28",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 48.0,
+      "elapsed_s": 56.2,
       "tail": ""
     },
     {
@@ -251,7 +251,7 @@
       "id": "29",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 66.4,
+      "elapsed_s": 59.9,
       "tail": ""
     },
     {
@@ -259,7 +259,7 @@
       "id": "30",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 57.5,
+      "elapsed_s": 63.6,
       "tail": ""
     },
     {
@@ -267,7 +267,7 @@
       "id": "31",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 55.9,
+      "elapsed_s": 56.0,
       "tail": ""
     },
     {
@@ -275,55 +275,55 @@
       "id": "32",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 59.0,
+      "elapsed_s": 56.6,
       "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "33",
       "description": "DeleteExpressionMutation",
-      "killed": false,
-      "elapsed_s": 49.4,
-      "tail": " | 21223 | 0       | 0        |\n\u2570--------------------------+----------------+-------+---------+----------\u256f\n\nSuite result: ok. 5 passed; 0 failed; 0 skipped; finished in 25.76s (85.96s CPU time)\n\nRan 14 test suites in 25.77s (174.15s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 56.4,
+      "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "34",
       "description": "AssignmentMutation",
-      "killed": false,
-      "elapsed_s": 54.5,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.63s (68.35s CPU time)\n\nRan 14 test suites in 30.64s (101.28s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 49.4,
+      "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "35",
       "description": "AssignmentMutation",
-      "killed": false,
-      "elapsed_s": 55.1,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.98s (62.31s CPU time)\n\nRan 14 test suites in 30.99s (129.33s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 56.8,
+      "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "36",
       "description": "BinaryOpMutation",
-      "killed": false,
-      "elapsed_s": 55.4,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.88s (62.54s CPU time)\n\nRan 14 test suites in 30.88s (137.94s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 67.2,
+      "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "37",
       "description": "BinaryOpMutation",
-      "killed": false,
-      "elapsed_s": 55.2,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.96s (62.61s CPU time)\n\nRan 14 test suites in 30.96s (105.65s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 55.9,
+      "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "38",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 68.2,
+      "elapsed_s": 56.5,
       "tail": ""
     },
     {
@@ -331,7 +331,7 @@
       "id": "39",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 55.1,
+      "elapsed_s": 56.7,
       "tail": ""
     },
     {
@@ -339,7 +339,7 @@
       "id": "40",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 55.0,
+      "elapsed_s": 57.9,
       "tail": ""
     },
     {
@@ -347,7 +347,7 @@
       "id": "41",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 54.7,
+      "elapsed_s": 56.2,
       "tail": ""
     },
     {
@@ -355,7 +355,7 @@
       "id": "42",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 54.9,
+      "elapsed_s": 56.0,
       "tail": ""
     },
     {
@@ -363,31 +363,31 @@
       "id": "43",
       "description": "UnaryOperatorMutation",
       "killed": false,
-      "elapsed_s": 55.0,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.61s (69.19s CPU time)\n\nRan 14 test suites in 30.61s (148.95s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 70.9,
+      "tail": "44.37s (133.90s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "44",
       "description": "UnaryOperatorMutation",
       "killed": false,
-      "elapsed_s": 55.1,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.77s (62.24s CPU time)\n\nRan 14 test suites in 30.77s (110.08s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 49.4,
+      "tail": "23.43s (170.36s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "45",
       "description": "BinaryOpMutation",
       "killed": false,
-      "elapsed_s": 50.0,
-      "tail": " | 21223 | 0       | 0        |\n\u2570--------------------------+----------------+-------+---------+----------\u256f\n\nSuite result: ok. 5 passed; 0 failed; 0 skipped; finished in 25.80s (81.05s CPU time)\n\nRan 14 test suites in 25.80s (128.87s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 56.2,
+      "tail": " 29.84s (98.06s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "46",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 53.8,
+      "elapsed_s": 44.7,
       "tail": ""
     },
     {
@@ -395,23 +395,23 @@
       "id": "47",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 44.3,
+      "elapsed_s": 55.1,
       "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "48",
       "description": "IfStatementMutation",
-      "killed": false,
-      "elapsed_s": 55.1,
-      "tail": "YT | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.83s (62.39s CPU time)\n\nRan 14 test suites in 30.83s (92.75s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 56.4,
+      "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "49",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 60.8,
+      "elapsed_s": 50.6,
       "tail": ""
     },
     {
@@ -419,7 +419,7 @@
       "id": "50",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 55.3,
+      "elapsed_s": 56.6,
       "tail": ""
     },
     {
@@ -427,7 +427,7 @@
       "id": "1",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 47.2,
+      "elapsed_s": 55.4,
       "tail": ""
     },
     {
@@ -435,7 +435,7 @@
       "id": "2",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 2.8,
+      "elapsed_s": 2.7,
       "tail": ""
     },
     {
@@ -443,7 +443,7 @@
       "id": "3",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 40.4,
+      "elapsed_s": 50.4,
       "tail": ""
     },
     {
@@ -451,7 +451,7 @@
       "id": "4",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 36.5,
+      "elapsed_s": 39.5,
       "tail": ""
     },
     {
@@ -459,7 +459,7 @@
       "id": "5",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 55.8,
+      "elapsed_s": 39.3,
       "tail": ""
     },
     {
@@ -467,15 +467,15 @@
       "id": "6",
       "description": "BinaryOpMutation",
       "killed": false,
-      "elapsed_s": 46.1,
-      "tail": "YT | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.81s (55.32s CPU time)\n\nRan 14 test suites in 30.81s (86.63s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 47.0,
+      "tail": "30.10s (141.36s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "7",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 45.1,
+      "elapsed_s": 46.1,
       "tail": ""
     },
     {
@@ -483,63 +483,63 @@
       "id": "8",
       "description": "IfStatementMutation",
       "killed": false,
-      "elapsed_s": 45.8,
-      "tail": "YT | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.64s (62.04s CPU time)\n\nRan 14 test suites in 30.64s (89.83s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 47.4,
+      "tail": " 30.56s (86.09s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "9",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 55.8,
+      "elapsed_s": 47.1,
       "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "10",
       "description": "AssignmentMutation",
-      "killed": false,
-      "elapsed_s": 45.9,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.68s (61.83s CPU time)\n\nRan 14 test suites in 30.68s (176.98s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 54.3,
+      "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "11",
       "description": "IfStatementMutation",
       "killed": false,
-      "elapsed_s": 46.2,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.76s (62.24s CPU time)\n\nRan 14 test suites in 30.76s (162.34s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 39.5,
+      "tail": "22.69s (149.28s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "12",
       "description": "IfStatementMutation",
       "killed": false,
-      "elapsed_s": 53.1,
-      "tail": "s | 21223 | 0       | 0        |\n\u2570--------------------------+----------------+-------+---------+----------\u256f\n\nSuite result: ok. 5 passed; 0 failed; 0 skipped; finished in 37.74s (92.52s CPU time)\n\nRan 14 test suites in 37.75s (86.67s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 47.1,
+      "tail": "30.30s (205.73s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "13",
       "description": "IfStatementMutation",
       "killed": false,
-      "elapsed_s": 45.9,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.62s (66.19s CPU time)\n\nRan 14 test suites in 30.62s (133.28s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 47.3,
+      "tail": "30.62s (101.05s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "14",
       "description": "AssignmentMutation",
       "killed": false,
-      "elapsed_s": 45.9,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.59s (61.62s CPU time)\n\nRan 14 test suites in 30.59s (156.45s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 47.4,
+      "tail": " 30.60s (91.32s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "15",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 45.9,
+      "elapsed_s": 57.4,
       "tail": ""
     },
     {
@@ -547,31 +547,31 @@
       "id": "16",
       "description": "DeleteExpressionMutation",
       "killed": false,
-      "elapsed_s": 46.0,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.78s (62.02s CPU time)\n\nRan 14 test suites in 30.78s (182.94s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 47.1,
+      "tail": "30.39s (115.13s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "17",
       "description": "DeleteExpressionMutation",
-      "killed": false,
-      "elapsed_s": 46.6,
-      "tail": "S] test_yieldAccrual_basic() (gas: 298315)\n[PASS] test_yt_frozen_userToUserTransferReverts() (gas: 303923)\nSuite result: ok. 48 passed; 0 failed; 0 skipped; finished in 31.26s (4.06ms CPU time)\n\nRan 14 test suites in 31.26s (189.77s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 47.1,
+      "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "18",
       "description": "AssignmentMutation",
-      "killed": false,
-      "elapsed_s": 56.9,
-      "tail": "| 21223 | 0       | 0        |\n\u2570--------------------------+----------------+-------+---------+----------\u256f\n\nSuite result: ok. 5 passed; 0 failed; 0 skipped; finished in 41.33s (104.51s CPU time)\n\nRan 14 test suites in 41.33s (129.91s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 46.8,
+      "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "19",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 37.7,
+      "elapsed_s": 46.9,
       "tail": ""
     },
     {
@@ -579,23 +579,23 @@
       "id": "20",
       "description": "IfStatementMutation",
       "killed": false,
-      "elapsed_s": 51.5,
-      "tail": " | 21223 | 0       | 0        |\n\u2570--------------------------+----------------+-------+---------+----------\u256f\n\nSuite result: ok. 5 passed; 0 failed; 0 skipped; finished in 35.74s (96.23s CPU time)\n\nRan 14 test suites in 35.74s (150.86s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 43.2,
+      "tail": "26.44s (118.66s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "21",
       "description": "UnaryOperatorMutation",
       "killed": false,
-      "elapsed_s": 47.1,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 31.25s (63.24s CPU time)\n\nRan 14 test suites in 31.25s (109.26s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 54.9,
+      "tail": "38.10s (145.41s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "22",
       "description": "SwapArgumentsOperatorMutation",
       "killed": true,
-      "elapsed_s": 54.3,
+      "elapsed_s": 51.1,
       "tail": ""
     },
     {
@@ -603,7 +603,7 @@
       "id": "23",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 47.2,
+      "elapsed_s": 46.9,
       "tail": ""
     },
     {
@@ -611,15 +611,15 @@
       "id": "24",
       "description": "AssignmentMutation",
       "killed": false,
-      "elapsed_s": 39.3,
-      "tail": " | 21223 | 0       | 0        |\n\u2570--------------------------+----------------+-------+---------+----------\u256f\n\nSuite result: ok. 5 passed; 0 failed; 0 skipped; finished in 23.56s (84.45s CPU time)\n\nRan 14 test suites in 23.56s (115.34s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 64.5,
+      "tail": "47.78s (126.26s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "25",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 46.4,
+      "elapsed_s": 47.2,
       "tail": ""
     },
     {
@@ -627,7 +627,7 @@
       "id": "26",
       "description": "SwapArgumentsOperatorMutation",
       "killed": true,
-      "elapsed_s": 46.2,
+      "elapsed_s": 40.7,
       "tail": ""
     },
     {
@@ -635,15 +635,15 @@
       "id": "27",
       "description": "IfStatementMutation",
       "killed": false,
-      "elapsed_s": 46.1,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 30.75s (55.11s CPU time)\n\nRan 14 test suites in 30.75s (101.64s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 47.3,
+      "tail": " 30.57s (73.62s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "28",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 42.0,
+      "elapsed_s": 47.4,
       "tail": ""
     },
     {
@@ -651,39 +651,39 @@
       "id": "29",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 46.4,
+      "elapsed_s": 39.4,
       "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "30",
       "description": "DeleteExpressionMutation",
-      "killed": false,
-      "elapsed_s": 53.7,
-      "tail": "| 21223 | 0       | 0        |\n\u2570--------------------------+----------------+-------+---------+----------\u256f\n\nSuite result: ok. 5 passed; 0 failed; 0 skipped; finished in 38.21s (102.22s CPU time)\n\nRan 14 test suites in 38.21s (119.04s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 54.7,
+      "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "31",
       "description": "BinaryOpMutation",
-      "killed": false,
-      "elapsed_s": 46.6,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 31.40s (63.35s CPU time)\n\nRan 14 test suites in 31.40s (104.16s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "killed": true,
+      "elapsed_s": 64.8,
+      "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "32",
       "description": "BinaryOpMutation",
       "killed": false,
-      "elapsed_s": 46.8,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 31.09s (62.95s CPU time)\n\nRan 14 test suites in 31.09s (133.21s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\n"
+      "elapsed_s": 47.0,
+      "tail": "30.21s (155.16s CPU time): 284 tests passed, 0 failed, 0 skipped (284 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "33",
       "description": "SwapArgumentsOperatorMutation",
       "killed": true,
-      "elapsed_s": 39.4,
+      "elapsed_s": 47.3,
       "tail": ""
     },
     {
@@ -691,7 +691,7 @@
       "id": "34",
       "description": "SwapArgumentsOperatorMutation",
       "killed": true,
-      "elapsed_s": 53.8,
+      "elapsed_s": 54.1,
       "tail": ""
     },
     {
@@ -699,7 +699,7 @@
       "id": "35",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 50.0,
+      "elapsed_s": 46.7,
       "tail": ""
     },
     {
@@ -707,7 +707,7 @@
       "id": "36",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 39.1,
+      "elapsed_s": 47.3,
       "tail": ""
     },
     {
@@ -715,7 +715,7 @@
       "id": "37",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 44.6,
+      "elapsed_s": 45.0,
       "tail": ""
     },
     {
@@ -723,7 +723,7 @@
       "id": "38",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 46.5,
+      "elapsed_s": 40.2,
       "tail": ""
     },
     {
@@ -731,47 +731,47 @@
       "id": "39",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 46.6,
+      "elapsed_s": 47.2,
       "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "40",
       "description": "BinaryOpMutation",
-      "killed": false,
-      "elapsed_s": 46.1,
-      "tail": "30.80s (129.85s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
+      "killed": true,
+      "elapsed_s": 39.8,
+      "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "41",
       "description": "SwapArgumentsOperatorMutation",
-      "killed": false,
-      "elapsed_s": 46.7,
-      "tail": "30.74s (142.77s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
+      "killed": true,
+      "elapsed_s": 40.2,
+      "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "42",
       "description": "BinaryOpMutation",
-      "killed": false,
-      "elapsed_s": 46.2,
-      "tail": "30.90s (135.11s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
+      "killed": true,
+      "elapsed_s": 47.4,
+      "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "43",
       "description": "BinaryOpMutation",
-      "killed": false,
-      "elapsed_s": 46.1,
-      "tail": "30.71s (170.39s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
+      "killed": true,
+      "elapsed_s": 47.4,
+      "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "44",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 40.9,
+      "elapsed_s": 40.3,
       "tail": ""
     },
     {
@@ -779,7 +779,7 @@
       "id": "45",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 46.1,
+      "elapsed_s": 47.4,
       "tail": ""
     },
     {
@@ -787,31 +787,31 @@
       "id": "46",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 45.7,
+      "elapsed_s": 47.3,
       "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "47",
       "description": "DeleteExpressionMutation",
-      "killed": false,
-      "elapsed_s": 51.6,
-      "tail": "36.41s (234.72s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
+      "killed": true,
+      "elapsed_s": 47.1,
+      "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "48",
       "description": "AssignmentMutation",
-      "killed": false,
-      "elapsed_s": 46.0,
-      "tail": "30.63s (114.51s CPU time): 265 tests passed, 0 failed, 0 skipped (265 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
+      "killed": true,
+      "elapsed_s": 47.1,
+      "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "49",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 45.7,
+      "elapsed_s": 36.5,
       "tail": ""
     },
     {
@@ -819,7 +819,7 @@
       "id": "50",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 47.5,
+      "elapsed_s": 48.3,
       "tail": ""
     }
   ]

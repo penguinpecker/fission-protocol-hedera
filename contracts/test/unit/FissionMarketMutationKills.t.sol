@@ -235,14 +235,138 @@ contract FissionMarketMutationKillsTest is Test {
         assertEq(market.reserveFeePercent(), newReservePct, "reserveFeePercent updated");
     }
 
-    // ---------- kills #20 (pt == address(0) check removed in initialize) ----------
-    function test_kill_20_initializeRevertsBeforeSetTokens() public {
+    // ---------- kills #20 (merge() pt == address(0) check removed) ----------
+    function test_kill_20_mergeRevertsBeforeSetTokens() public {
+        // Mutation #20 is in merge() not initialize(). Need a fresh market with
+        // setTokens NOT called, then call merge.
         FissionMarket m3 = new FissionMarket(address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, address(0));
-        // m3.setTokens NOT called; pt == address(0).
+        vm.expectRevert(FissionMarket.TokensNotSet.selector);
+        m3.merge(100);
+    }
+
+    function test_kill_20b_initializeRevertsBeforeSetTokens() public {
+        // Bonus check on initialize() path (separate guard at function top).
+        FissionMarket m3 = new FissionMarket(address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, address(0));
         vm.startPrank(admin);
         vm.expectRevert(FissionMarket.TokensNotSet.selector);
         m3.initialize(100e6, 100e6, INITIAL_ANCHOR, LN_FEE_ROOT, RESERVE_PCT);
         vm.stopPrank();
+    }
+
+    // ---------- kills #27 (addLiquidity NotInitialized guard removed) ----------
+    function test_kill_27_addLiquidityRevertsBeforeInit() public {
+        // Fresh market with setTokens but NOT initialize.
+        FissionMarket m4 = new FissionMarket(address(sy), expiry, SCALAR_ROOT, admin, treasury, 18, address(0));
+        m4.setTokens("PT4", "fPT4", "YT4", "fYT4", "lp4", "lp4");
+
+        // Pre-init: lp.totalSupply == 0. Mutation removes the guard.
+        vm.startPrank(admin);
+        vm.expectRevert(FissionMarket.NotInitialized.selector);
+        m4.addLiquidity(100e6, 100e6, 0, admin);
+        vm.stopPrank();
+    }
+
+    // ---------- kills #21 (-int(ptIn) -> ~int(ptIn) in swapExactPtForSy) ----------
+    function test_kill_21_swapPtSyExact() public {
+        // ~int256(1000e6) = -1000e6 - 1 (one wei off). To distinguish from -int256,
+        // use a tiny swap where the 1-wei discrepancy is visible in syOut.
+        vm.startPrank(alice);
+        IERC20(syShare).approve(address(market), 1_000e6);
+        market.split(1_000e6);
+        IERC20(pt).approve(address(market), 1_000e6);
+        uint256 syOut1 = market.swapExactPtForSy(1_000e6, 0, alice);
+        vm.stopPrank();
+
+        // Capture the canonical output, then assert it's reproducible exactly when
+        // the same trade is repeated against a snapshot. Cheaper alternative: the
+        // mutation makes syOut differ from canonical by at least 1 wei via the
+        // bitwise NOT. Pin syOut % 1e6 --- under mutation it shifts noticeably.
+        // Actual canonical 1000 PT @ ~5% rate: should net ~951 SY plus change.
+        // We hard-pin a tight integer band to surface even tiny drift.
+        assertEq(syOut1 / 1e3, 952_280, "kill #21: syOut/1e3 must match canonical exactly");
+    }
+
+    // ---------- kills #24 (totalSy -= 1 instead of -= netSyToReserve) ----------
+    function test_kill_24_totalSyExactDelta() public {
+        uint256 totalSyBefore = market.totalSy();
+
+        vm.startPrank(alice);
+        IERC20(syShare).approve(address(market), 5_000e6);
+        market.split(5_000e6);
+        IERC20(pt).approve(address(market), 5_000e6);
+        uint256 syOut = market.swapExactPtForSy(5_000e6, 0, alice);
+        vm.stopPrank();
+
+        // totalSy = before + syPaidIntoPool - reserveFee (Pendle accounting).
+        // syPaidIntoPool = syOut + reserveFeeAccrued (treasury holds reserveFee).
+        // So: totalSy = before + syOut + reserveFee - reserveFee = before + syOut.
+        // Wait, that's not quite right. Let's just assert reserve fee is non-1.
+        // Mutation #24: totalSy -= 1 instead of netSyToReserve. So totalSy ends
+        // ~reserveFee-1 wei HIGHER than canonical.
+        // Canonical reserve fee for this swap is ~1e7 wei (computed). So canonical
+        // totalSy is ~1e7 wei smaller than mutated.
+        uint256 totalSyAfter = market.totalSy();
+        uint256 reserveAccrued = IERC20(syShare).balanceOf(treasury);
+
+        // Conservation: split() does NOT touch totalSy (SY goes into the contract
+        // but isn't part of the AMM pool reserve). Only swap touches totalSy:
+        //   totalSy -= syOut   (syOut SY leaves the pool to user)
+        //   totalSy -= reserve (reserve SY routed to treasury)
+        // So: totalSyAfter == totalSyBefore - syOut - reserveAccrued.
+        // Mutation #24 makes the second subtraction `-= 1` instead of `-= reserve`.
+        uint256 expectedAfter = totalSyBefore - syOut - reserveAccrued;
+        assertEq(totalSyAfter, expectedAfter, "kill #24: totalSy delta must match -= netSyToReserve");
+    }
+
+    // ---------- kills #32 (post-expiry removeLiquidity ptToSy: * -> +) ----------
+    function test_kill_32_postExpiryRemoveLiquidityPtToSy() public {
+        // Pre-expiry remove some LP first to have a known position.
+        // Then warp past expiry, remove the rest, assert syOut --- syPortion + ptPortion
+        // (since exchangeRate=1, ptToSy --- ptPortion).
+        vm.warp(expiry + 1);
+
+        vm.startPrank(admin);
+        uint256 lpBal = IERC20(market.lp()).balanceOf(admin);
+        IERC20(market.lp()).approve(address(market), lpBal);
+        // Remove half --- at exchangeRate=1, ptToSy == ptOut. Mutation #32 makes
+        // ptToSy = (ptOut + 1e18) / 1e18 --- 1 wei (way smaller).
+        (uint256 syOut, uint256 ptOut) = market.removeLiquidity(lpBal / 2, 0, 0, admin);
+        vm.stopPrank();
+
+        // Post-expiry: ptOut MUST be 0 (auto-redeemed).
+        assertEq(ptOut, 0, "post-expiry removeLiquidity must auto-redeem PT");
+        // syOut must be sizeable --- half of ~100k SY pool plus auto-redeemed PT share.
+        // With mutation #32, syOut ~= syPortion + 1 wei (instead of + ~50k ptOut).
+        assertGt(syOut, 50_000e6, "kill #32: syOut must include ptToSy contribution");
+    }
+
+    // ---------- kills #45 (MarketMath.setInitialLnImpliedRate ttx mutation) ----------
+    function test_kill_45_setInitialLnImpliedRateTtx() public {
+        // Fresh market, fresh setTokens, partial initialize that exercises
+        // setInitialLnImpliedRate with non-zero now_ argument internally.
+        FissionMarket m5 = new FissionMarket(address(sy), block.timestamp + 90 days, SCALAR_ROOT, admin, treasury, 18, address(0));
+        m5.setTokens("PT5", "fPT5", "YT5", "fYT5", "lp5", "lp5");
+
+        // Get PT for m5 via split.
+        sy.mint(address(this), 200_000e6);
+        IERC20(syShare).approve(address(m5), type(uint256).max);
+        m5.split(100_000e6);
+        IERC20(syShare).transfer(admin, 50_000e6);
+        IERC20(m5.pt()).transfer(admin, 50_000e6);
+
+        // Warp to halfway through expiry --- now_ becomes non-zero relative to expiry.
+        vm.warp(block.timestamp + 30 days);
+
+        vm.startPrank(admin);
+        IERC20(syShare).approve(address(m5), 50_000e6);
+        IERC20(m5.pt()).approve(address(m5), 50_000e6);
+        // Mutation #45: ttx = expiry ** now_ overflows for non-zero now_ --- revert.
+        // Without mutation: initialize completes successfully.
+        m5.initialize(50_000e6, 50_000e6, INITIAL_ANCHOR, LN_FEE_ROOT, RESERVE_PCT);
+        vm.stopPrank();
+
+        // Sanity: lastLnImpliedRate set, market initialized.
+        assertGt(m5.lastLnImpliedRate(), 0, "kill #45: initialize must complete (no overflow in ttx)");
     }
 
     // ---------- kills #30 (_updateGlobalIndex deleted in removeLiquidity post-expiry) ----------
