@@ -40,17 +40,36 @@ if [ ! -d .vercel ]; then
 fi
 
 # 2. Push env vars. Read .env.local once, push each var to all 3 environments.
+#    Sensitivity: NEXT_PUBLIC_* are inlined into the client JS bundle by Next.js
+#    so they're never secret — pass --no-sensitive to keep them readable in the
+#    Vercel UI. Server-only vars (SUPABASE_SERVICE_ROLE_KEY, SESSION_SECRET, …)
+#    default to sensitive on Production/Preview which is correct.
 echo "==> Syncing .env.local → Vercel project envs…"
 while IFS='=' read -r key value; do
   [[ -z "$key" || "$key" =~ ^# ]] && continue
   # Strip surrounding quotes if any
   value="${value#\"}"
   value="${value%\"}"
-  for env in production preview development; do
+
+  # Pick sensitivity flag based on prefix.
+  if [[ "$key" =~ ^NEXT_PUBLIC_ ]]; then
+    sens="--no-sensitive"
+  else
+    sens=""   # default = sensitive on Production/Preview
+  fi
+
+  # CLI 52+: `preview` requires a Git-connected project (vercel api errors
+  # "does not have a connected Git repository"). Skip preview unless the
+  # project is connected. Production + development cover the deploy needs.
+  for env in production development; do
     # `vercel env rm` returns non-zero if the var doesn't exist yet — ignore.
     vercel env rm "$key" "$env" -y >/dev/null 2>&1 || true
-    printf '%s' "$value" | vercel env add "$key" "$env" >/dev/null
-    echo "  ✓ $key → $env"
+    # `--value` keeps the secret off any pipe/stdin redirector and out of shell
+    # history. Sensitive-by-default on production for non-public keys.
+    vercel env add "$key" "$env" --value "$value" $sens -y >/dev/null
+    label="encrypted"
+    [[ -n "$sens" ]] && label="public"
+    echo "  ✓ $key → $env ($label)"
   done
 done < <(grep -E "^[A-Z]" .env.local)
 
