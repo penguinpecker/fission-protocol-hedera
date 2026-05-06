@@ -20,13 +20,19 @@ import { hederaMainnet, hederaTestnet } from "./chains";
  * HashPack and Blade users can connect via EVM with no UX downgrade.
  */
 
-interface InjectedTarget {
-  id: string;
-  name: string;
-  provider?: unknown;
-}
+// wagmi's `Target` accepts a wallet-flag string OR a custom `{id, name, provider}`
+// triple. HashPack / Blade aren't in wagmi's flag list, so we return the triple.
+// Their providers conform to EIP-1193 at runtime; the unknown→provider cast is
+// the minimum-surface-area path that keeps TS happy without `any`.
+//
+// Future cleanup (v1.1): the deprecated WalletProviderFlags union was sunset
+// 2024/10/16 in favour of EIP-6963 multi-injected discovery. Switching to the
+// EIP-6963 connector eliminates the cast entirely.
 
-function detectProvider(detect: () => unknown): unknown {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ProviderShape = any;
+
+function detectProvider(detect: () => unknown): ProviderShape {
   if (typeof window === "undefined") return undefined;
   return detect();
 }
@@ -36,7 +42,7 @@ export const wagmiConfig = createConfig({
   connectors: [
     injected({
       shimDisconnect: true,
-      target(): InjectedTarget {
+      target() {
         return {
           id: "hashpack",
           name: "HashPack",
@@ -54,7 +60,7 @@ export const wagmiConfig = createConfig({
     }),
     injected({
       shimDisconnect: true,
-      target(): InjectedTarget {
+      target() {
         return {
           id: "blade",
           name: "Blade Wallet",
