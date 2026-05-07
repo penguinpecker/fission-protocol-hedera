@@ -25,6 +25,15 @@ const REWARDS_SY_ADDRESSES = new Set<string>(
 );
 
 export async function POST(req: NextRequest) {
+  try {
+    return await refreshMarketsCache(req);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "unknown";
+    return NextResponse.json({ error: "refresh_failed", message }, { status: 500 });
+  }
+}
+
+async function refreshMarketsCache(req: NextRequest) {
   const auth = req.headers.get("authorization");
   const expected = process.env.CRON_SECRET;
   if (!expected) {
@@ -62,35 +71,53 @@ export async function POST(req: NextRequest) {
     args: [0n, count],
   })) as readonly `0x${string}`[];
 
-  const reads = addresses.flatMap((address) => [
-    { abi: marketAbi, address, functionName: "sy" } as const,
-    { abi: marketAbi, address, functionName: "pt" } as const,
-    { abi: marketAbi, address, functionName: "yt" } as const,
-    { abi: marketAbi, address, functionName: "lp" } as const,
-    { abi: marketAbi, address, functionName: "expiry" } as const,
-    { abi: marketAbi, address, functionName: "scalarRoot" } as const,
-    { abi: marketAbi, address, functionName: "totalSy" } as const,
-    { abi: marketAbi, address, functionName: "totalPt" } as const,
-    { abi: marketAbi, address, functionName: "lastLnImpliedRate" } as const,
-  ]);
+  // Hedera's HTS-flavored EVM doesn't deploy Multicall3 at the canonical address,
+  // so use parallel readContract calls instead. Per-market reads run in parallel
+  // (Promise.all), markets fan out across Promise.all too — fine for v1's small N.
+  type SettledOk<T> = { status: "success"; result: T };
+  type SettledErr = { status: "failure" };
+  type Settled<T> = SettledOk<T> | SettledErr;
 
-  const results = await client.multicall({ contracts: reads, allowFailure: true });
+  async function readOrFail<T>(
+    address: `0x${string}`,
+    abi: readonly unknown[],
+    fn: string,
+  ): Promise<Settled<T>> {
+    try {
+      const result = (await client.readContract({
+        abi: abi as never,
+        address,
+        functionName: fn,
+      })) as T;
+      return { status: "success", result };
+    } catch {
+      return { status: "failure" };
+    }
+  }
 
-  type R = (typeof results)[number];
-  const lpReads = addresses.flatMap((_, i) => {
-    const lp = results[i * 9 + 3] as R | undefined;
-    if (!lp || lp.status !== "success" || !lp.result) return [];
-    return [
-      { abi: erc20Abi, address: lp.result as `0x${string}`, functionName: "totalSupply" } as const,
-    ];
-  });
-  const lpSupplies =
-    lpReads.length > 0
-      ? await client.multicall({ contracts: lpReads, allowFailure: true })
-      : [];
+  const perMarket = await Promise.all(
+    addresses.map(async (addr) => {
+      const [sy, pt, yt, lp, expiry, scalarRoot, totalSy, totalPt, lastLn] = await Promise.all([
+        readOrFail<`0x${string}`>(addr, marketAbi, "sy"),
+        readOrFail<`0x${string}`>(addr, marketAbi, "pt"),
+        readOrFail<`0x${string}`>(addr, marketAbi, "yt"),
+        readOrFail<`0x${string}`>(addr, marketAbi, "lp"),
+        readOrFail<bigint>(addr, marketAbi, "expiry"),
+        readOrFail<bigint>(addr, marketAbi, "scalarRoot"),
+        readOrFail<bigint>(addr, marketAbi, "totalSy"),
+        readOrFail<bigint>(addr, marketAbi, "totalPt"),
+        readOrFail<bigint>(addr, marketAbi, "lastLnImpliedRate"),
+      ]);
+      let lpSupply: bigint | null = null;
+      if (lp.status === "success") {
+        const supply = await readOrFail<bigint>(lp.result, erc20Abi, "totalSupply");
+        if (supply.status === "success") lpSupply = supply.result;
+      }
+      return { addr, sy, pt, yt, lp, expiry, scalarRoot, totalSy, totalPt, lastLn, lpSupply };
+    }),
+  );
 
-  const ok = (r: R | undefined): r is Extract<R, { status: "success" }> =>
-    r?.status === "success";
+  const ok = <T>(r: Settled<T>): r is SettledOk<T> => r.status === "success";
 
   const supa = createServiceRoleClient();
   const rows: Array<{
@@ -112,48 +139,26 @@ export async function POST(req: NextRequest) {
     last_synced: string;
   }> = [];
 
-  let lpIdx = 0;
-  for (let i = 0; i < addresses.length; i++) {
-    const marketAddr = addresses[i];
-    if (!marketAddr) continue;
-
-    const base = i * 9;
-    const sy = results[base];
-    const pt = results[base + 1];
-    const yt = results[base + 2];
-    const lp = results[base + 3];
-    const expiry = results[base + 4];
-    const scalarRoot = results[base + 5];
-    const totalSy = results[base + 6];
-    const totalPt = results[base + 7];
-    const lastLn = results[base + 8];
-
-    if (!ok(sy)) continue;
-    const syAddr = (sy.result as string).toLowerCase();
-
-    let lpSupply: bigint | null = null;
-    if (ok(lp) && lp.result) {
-      const supply = lpSupplies[lpIdx++];
-      if (ok(supply)) lpSupply = supply.result as bigint;
-    }
-
-    const lastLnVal = ok(lastLn) ? (lastLn.result as bigint) : 0n;
+  for (const m of perMarket) {
+    if (!ok(m.sy)) continue;
+    const syAddr = m.sy.result.toLowerCase();
+    const lastLnVal = ok(m.lastLn) ? m.lastLn.result : 0n;
 
     rows.push({
       chain_id: hederaMainnet.id,
-      market_address: marketAddr.toLowerCase(),
+      market_address: m.addr.toLowerCase(),
       market_type: REWARDS_SY_ADDRESSES.has(syAddr) ? "rewards" : "standard",
       factory_address: ADDRESSES.factory.toLowerCase(),
       sy_address: syAddr,
-      pt_address: ok(pt) ? (pt.result as string).toLowerCase() : null,
-      yt_address: ok(yt) ? (yt.result as string).toLowerCase() : null,
-      lp_address: ok(lp) ? (lp.result as string).toLowerCase() : null,
-      expiry: ok(expiry) ? new Date(Number(expiry.result as bigint) * 1000).toISOString() : null,
-      scalar_root_e18: ok(scalarRoot) ? (scalarRoot.result as bigint).toString() : null,
-      total_pt: ok(totalPt) ? (totalPt.result as bigint).toString() : null,
-      total_sy_shares: ok(totalSy) ? (totalSy.result as bigint).toString() : null,
+      pt_address: ok(m.pt) ? m.pt.result.toLowerCase() : null,
+      yt_address: ok(m.yt) ? m.yt.result.toLowerCase() : null,
+      lp_address: ok(m.lp) ? m.lp.result.toLowerCase() : null,
+      expiry: ok(m.expiry) ? new Date(Number(m.expiry.result) * 1000).toISOString() : null,
+      scalar_root_e18: ok(m.scalarRoot) ? m.scalarRoot.result.toString() : null,
+      total_pt: ok(m.totalPt) ? m.totalPt.result.toString() : null,
+      total_sy_shares: ok(m.totalSy) ? m.totalSy.result.toString() : null,
       last_ln_implied_rate: lastLnVal.toString(),
-      lp_total_supply: lpSupply !== null ? lpSupply.toString() : null,
+      lp_total_supply: m.lpSupply !== null ? m.lpSupply.toString() : null,
       initialized: lastLnVal !== 0n,
       last_synced: new Date().toISOString(),
     });
