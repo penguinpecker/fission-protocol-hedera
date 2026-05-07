@@ -1,15 +1,15 @@
 # Mutation testing results
 
-Ran at: `2026-05-07T01:07:54Z` — total elapsed `5150.3s`
+Ran at: `2026-05-07T03:34:57Z` — total elapsed `8108.3s`
 
-**Overall:** 90/100 killed (90.0%)
+**Overall:** 92/100 killed (92.0%)
 
 ## By file
 
 | File | Mutants | Killed | Survived | Kill % |
 |------|--------:|-------:|---------:|-------:|
 | `contracts/src/libraries/MarketMath.sol` | 50 | 48 | 2 | 96.0 |
-| `contracts/src/core/FissionMarket.sol` | 50 | 42 | 8 | 84.0 |
+| `contracts/src/core/FissionMarket.sol` | 50 | 44 | 6 | 88.0 |
 
 ## Survived mutants
 
@@ -43,14 +43,6 @@ _Test suite still passed with this mutation applied. Review the diff in_ `audits
 
 _Test suite still passed with this mutation applied. Review the diff in_ `audits/mutation/gambit-out/mutants/13/contracts/src/core/FissionMarket.sol` _and either add a test that catches it, or annotate as semantically-equivalent._
 
-### `contracts/src/core/FissionMarket.sol` mutant #14 — AssignmentMutation
-
-_Test suite still passed with this mutation applied. Review the diff in_ `audits/mutation/gambit-out/mutants/14/contracts/src/core/FissionMarket.sol` _and either add a test that catches it, or annotate as semantically-equivalent._
-
 ### `contracts/src/core/FissionMarket.sol` mutant #16 — DeleteExpressionMutation
 
 _Test suite still passed with this mutation applied. Review the diff in_ `audits/mutation/gambit-out/mutants/16/contracts/src/core/FissionMarket.sol` _and either add a test that catches it, or annotate as semantically-equivalent._
-
-### `contracts/src/core/FissionMarket.sol` mutant #21 — UnaryOperatorMutation
-
-_Test suite still passed with this mutation applied. Review the diff in_ `audits/mutation/gambit-out/mutants/21/contracts/src/core/FissionMarket.sol` _and either add a test that catches it, or annotate as semantically-equivalent._

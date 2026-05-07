@@ -9,6 +9,10 @@ import {MarketMath} from "../../src/libraries/MarketMath.sol";
 import {MockSY, MockERC20} from "../mocks/MockSY.sol";
 import {HtsTestHelper} from "../utils/HtsTestHelper.sol";
 
+interface MockHederaTokenServiceI {
+    function isFrozen(address token, address account) external view returns (bool);
+}
+
 /// @title  FissionMarketMutationKills - targeted assertions to kill specific
 ///         Gambit survivors from the 2026-05-07 full mutation run.
 /// @notice 23 FissionMarket survivors triaged at 64% baseline. This file
@@ -392,25 +396,63 @@ contract FissionMarketMutationKillsTest is Test {
         assertGt(market.globalIndex(), 1e18, "kill #30: globalIndex must update before freezing");
     }
 
-    // ---------- kills #13 (no-refreeze branch when wasFrozen && balance==0) ----------
-    function test_kill_13_postFullBurnRefreezeFlag() public {
-        // After burning full YT balance, _ytFrozen[user] must clear so the next
-        // mint correctly tracks state. Mutation #13 sets the second-arm branch
-        // to false: cleanup is skipped; _ytFrozen stays true; next mint hits
-        // unfreeze on a non-frozen account -> revert.
+    // ---------- kills #13 (refreeze-after-partial-burn branch removed) ----------
+    function test_kill_13_partialBurnMustRefreeze() public {
+        // Mutation #13 makes `if (wasFrozen && balance > 0)` -> `if (false)`.
+        // For PARTIAL burns (balance > 0 after wipe), canonical refreezes the
+        // user. Mutation skips refreeze AND skips the else-if (since outer is
+        // false but else-if checks wasFrozen separately). Wait — `else if` IS
+        // tied to the outer if's else, so if outer is false, else-if fires
+        // when its condition is true. Re-read:
+        //
+        //   if (wasFrozen && balance > 0) { freeze; }
+        //   else if (wasFrozen)           { _ytFrozen = false; }
+        //
+        // Mutation makes outer `if (false)`. Else-if then fires when
+        // wasFrozen=true (always, in this code's lifetime). So _ytFrozen
+        // gets cleared even when balance > 0. Result: _ytFrozen=false but
+        // user is still unfrozen on chain (we already unfroze at start).
+        // Next _mintYt sees _ytFrozen=false -> skips unfreeze -> transfer to
+        // unfrozen account succeeds (no revert). _mintYt then calls freeze.
+        // With strict mock, freeze on already-unfrozen-account succeeds.
+        // So the test path needs to surface state DRIFT, not a revert.
+        //
+        // The drift is: canonical leaves user FROZEN with balance after partial
+        // burn; mutation leaves user UNFROZEN. Probe via mock.isFrozen.
         address charlie = address(0xC1A2);
-        IERC20(syShare).transfer(charlie, 2_000e6);
+        IERC20(syShare).transfer(charlie, 1_000e6);
 
         vm.startPrank(charlie);
-        IERC20(syShare).approve(address(market), 2_000e6);
-        market.split(1_000e6);
-        market.merge(1_000e6);   // burns all YT, _ytFrozen[charlie] should clear
-
-        // Second split would revert under mutation #13.
-        market.split(1_000e6);
+        IERC20(syShare).approve(address(market), 1_000e6);
+        market.split(1_000e6);    // mint 1k YT, charlie frozen, _ytFrozen=true
+        market.merge(500e6);       // partial burn — 500 YT remaining
         vm.stopPrank();
 
-        assertEq(IERC20(yt).balanceOf(charlie), 1_000e6, "second mint after full burn must succeed");
+        // Canonical: charlie remains frozen on chain (refreeze branch fired).
+        // Mutation #13: charlie is left unfrozen on chain (refreeze branch skipped).
+        bool isFrozenOnChain = MockHederaTokenServiceI(precompileAddr).isFrozen(yt, charlie);
+        assertTrue(isFrozenOnChain, "kill #13: partial burn must refreeze charlie");
+    }
+
+    address constant precompileAddr = address(uint160(0x167));
+
+    // ---------- kills #12 (full-burn refreeze branch always-true) ----------
+    function test_kill_12_fullBurnLeavesUnfrozen() public {
+        // Mutation #12 makes `if (wasFrozen && balance > 0)` -> `if (true)`,
+        // which always refreezes — including in the post-full-burn case
+        // where canonical leaves charlie unfrozen (with _ytFrozen=false).
+        address dave = address(0xDA7E);
+        IERC20(syShare).transfer(dave, 1_000e6);
+        vm.startPrank(dave);
+        IERC20(syShare).approve(address(market), 1_000e6);
+        market.split(1_000e6);
+        market.merge(1_000e6);  // FULL burn — balance == 0 after
+        vm.stopPrank();
+
+        // Canonical: dave is unfrozen on chain (we unfroze in _burnYt, no refreeze).
+        // Mutation #12: dave is refrozen by always-true branch.
+        bool isFrozenOnChain = MockHederaTokenServiceI(precompileAddr).isFrozen(yt, dave);
+        assertFalse(isFrozenOnChain, "kill #12: full burn must leave user unfrozen");
     }
 
     // ------------------------------ kills #10 (_ytFrozen[to] = true --- false) ------------------------------
