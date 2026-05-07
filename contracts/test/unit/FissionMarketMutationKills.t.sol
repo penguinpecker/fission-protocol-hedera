@@ -436,6 +436,26 @@ contract FissionMarketMutationKillsTest is Test {
 
     address constant precompileAddr = address(uint160(0x167));
 
+    // ---------- kills #14 (_ytFrozen[from] = false -> true after full burn) ----------
+    function test_kill_14_fullBurnClearsFlagSoNextMintWorks() public {
+        // Mutation #14 leaves _ytFrozen[user]=true after full burn (canonical
+        // sets it false). Combined with strict HTS mock: the next _mintYt
+        // sees _ytFrozen=true, calls unfreeze on already-unfrozen-account
+        // -> 197 revert.
+        address eve = address(0xE7E);
+        IERC20(syShare).transfer(eve, 2_000e6);
+        vm.startPrank(eve);
+        IERC20(syShare).approve(address(market), 2_000e6);
+        market.split(1_000e6);
+        market.merge(1_000e6);  // full burn -> canonical _ytFrozen=false
+        // Second split must succeed under canonical. Under mutation #14,
+        // _ytFrozen stays true and the next _mintYt's unfreeze 197-reverts.
+        market.split(1_000e6);
+        vm.stopPrank();
+
+        assertEq(IERC20(yt).balanceOf(eve), 1_000e6, "kill #14: second mint must succeed");
+    }
+
     // ---------- kills #12 (full-burn refreeze branch always-true) ----------
     function test_kill_12_fullBurnLeavesUnfrozen() public {
         // Mutation #12 makes `if (wasFrozen && balance > 0)` -> `if (true)`,

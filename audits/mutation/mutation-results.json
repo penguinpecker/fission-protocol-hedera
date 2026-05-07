@@ -1,11 +1,11 @@
 {
-  "ran_at": "2026-05-07T03:34:57Z",
-  "total_elapsed_s": 8108.3,
+  "ran_at": "2026-05-07T05:39:31Z",
+  "total_elapsed_s": 7054.4,
   "overall": {
     "mutants_run": 100,
-    "killed": 92,
-    "survived": 8,
-    "kill_rate_percent": 92.0
+    "killed": 93,
+    "survived": 7,
+    "kill_rate_percent": 93.0
   },
   "by_file": {
     "contracts/src/libraries/MarketMath.sol": {
@@ -16,9 +16,9 @@
     },
     "contracts/src/core/FissionMarket.sol": {
       "mutants_run": 50,
-      "killed": 44,
-      "survived": 6,
-      "kill_rate_percent": 88.0
+      "killed": 45,
+      "survived": 5,
+      "kill_rate_percent": 90.0
     }
   },
   "details": [
@@ -27,7 +27,7 @@
       "id": "1",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 56.5,
+      "elapsed_s": 57.7,
       "tail": ""
     },
     {
@@ -35,7 +35,7 @@
       "id": "2",
       "description": "SwapArgumentsOperatorMutation",
       "killed": true,
-      "elapsed_s": 63.9,
+      "elapsed_s": 58.2,
       "tail": ""
     },
     {
@@ -43,7 +43,7 @@
       "id": "3",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 56.9,
+      "elapsed_s": 57.6,
       "tail": ""
     },
     {
@@ -51,7 +51,7 @@
       "id": "4",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 63.9,
+      "elapsed_s": 59.0,
       "tail": ""
     },
     {
@@ -59,7 +59,7 @@
       "id": "5",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 44.2,
+      "elapsed_s": 54.7,
       "tail": ""
     },
     {
@@ -67,7 +67,7 @@
       "id": "6",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 55.0,
+      "elapsed_s": 63.5,
       "tail": ""
     },
     {
@@ -75,7 +75,7 @@
       "id": "7",
       "description": "SwapArgumentsOperatorMutation",
       "killed": true,
-      "elapsed_s": 57.1,
+      "elapsed_s": 53.1,
       "tail": ""
     },
     {
@@ -83,7 +83,7 @@
       "id": "8",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 52.3,
+      "elapsed_s": 62.6,
       "tail": ""
     },
     {
@@ -91,308 +91,12 @@
       "id": "9",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 47.4,
+      "elapsed_s": 44.5,
       "tail": ""
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
       "id": "10",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 44.7,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "11",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 56.9,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "12",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 49.9,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "13",
-      "description": "SwapArgumentsOperatorMutation",
-      "killed": true,
-      "elapsed_s": 52.3,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "14",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 53.6,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "15",
-      "description": "IfStatementMutation",
-      "killed": true,
-      "elapsed_s": 57.3,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "16",
-      "description": "DeleteExpressionMutation",
-      "killed": true,
-      "elapsed_s": 56.9,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "17",
-      "description": "AssignmentMutation",
-      "killed": true,
-      "elapsed_s": 67.2,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "18",
-      "description": "AssignmentMutation",
-      "killed": true,
-      "elapsed_s": 73.9,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "19",
-      "description": "AssignmentMutation",
-      "killed": true,
-      "elapsed_s": 56.4,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "20",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 56.9,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "21",
-      "description": "AssignmentMutation",
-      "killed": true,
-      "elapsed_s": 57.0,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "22",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 50.9,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "23",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 57.1,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "24",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 64.0,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "25",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 57.2,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "26",
-      "description": "SwapArgumentsOperatorMutation",
-      "killed": true,
-      "elapsed_s": 62.1,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "27",
-      "description": "IfStatementMutation",
-      "killed": true,
-      "elapsed_s": 56.7,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "28",
-      "description": "IfStatementMutation",
-      "killed": true,
-      "elapsed_s": 56.9,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "29",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 57.2,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "30",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 57.1,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "31",
-      "description": "AssignmentMutation",
-      "killed": true,
-      "elapsed_s": 57.0,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "32",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 57.1,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "33",
-      "description": "DeleteExpressionMutation",
-      "killed": true,
-      "elapsed_s": 56.9,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "34",
-      "description": "AssignmentMutation",
-      "killed": true,
-      "elapsed_s": 56.2,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "35",
-      "description": "AssignmentMutation",
-      "killed": true,
-      "elapsed_s": 402.0,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "36",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 1035.1,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "37",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 53.7,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "38",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 57.9,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "39",
-      "description": "DeleteExpressionMutation",
-      "killed": true,
-      "elapsed_s": 61.5,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "40",
-      "description": "AssignmentMutation",
-      "killed": true,
-      "elapsed_s": 56.1,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "41",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 61.8,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "42",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 59.8,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "43",
-      "description": "UnaryOperatorMutation",
-      "killed": false,
-      "elapsed_s": 76.2,
-      "tail": " | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 49.91s (107.49s CPU time)\n\nRan 16 test suites in 49.91s (169.54s CPU time): 290 tests passed, 0 failed, 0 skipped (290 total tests)\n"
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "44",
-      "description": "UnaryOperatorMutation",
-      "killed": false,
-      "elapsed_s": 62.8,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 36.53s (78.68s CPU time)\n\nRan 16 test suites in 36.53s (143.42s CPU time): 290 tests passed, 0 failed, 0 skipped (290 total tests)\n"
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "45",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 58.2,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "46",
-      "description": "BinaryOpMutation",
-      "killed": true,
-      "elapsed_s": 47.9,
-      "tail": ""
-    },
-    {
-      "file": "contracts/src/libraries/MarketMath.sol",
-      "id": "47",
       "description": "BinaryOpMutation",
       "killed": true,
       "elapsed_s": 47.7,
@@ -400,10 +104,306 @@
     },
     {
       "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "11",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 59.0,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "12",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 58.1,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "13",
+      "description": "SwapArgumentsOperatorMutation",
+      "killed": true,
+      "elapsed_s": 53.7,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "14",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 98.6,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "15",
+      "description": "IfStatementMutation",
+      "killed": true,
+      "elapsed_s": 71.1,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "16",
+      "description": "DeleteExpressionMutation",
+      "killed": true,
+      "elapsed_s": 62.3,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "17",
+      "description": "AssignmentMutation",
+      "killed": true,
+      "elapsed_s": 56.2,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "18",
+      "description": "AssignmentMutation",
+      "killed": true,
+      "elapsed_s": 63.7,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "19",
+      "description": "AssignmentMutation",
+      "killed": true,
+      "elapsed_s": 90.9,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "20",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 62.3,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "21",
+      "description": "AssignmentMutation",
+      "killed": true,
+      "elapsed_s": 68.9,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "22",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 69.5,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "23",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 71.7,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "24",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 72.5,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "25",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 72.1,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "26",
+      "description": "SwapArgumentsOperatorMutation",
+      "killed": true,
+      "elapsed_s": 71.7,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "27",
+      "description": "IfStatementMutation",
+      "killed": true,
+      "elapsed_s": 72.9,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "28",
+      "description": "IfStatementMutation",
+      "killed": true,
+      "elapsed_s": 71.2,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "29",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 65.7,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "30",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 71.0,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "31",
+      "description": "AssignmentMutation",
+      "killed": true,
+      "elapsed_s": 80.4,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "32",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 69.1,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "33",
+      "description": "DeleteExpressionMutation",
+      "killed": true,
+      "elapsed_s": 70.7,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "34",
+      "description": "AssignmentMutation",
+      "killed": true,
+      "elapsed_s": 70.1,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "35",
+      "description": "AssignmentMutation",
+      "killed": true,
+      "elapsed_s": 70.6,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "36",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 73.7,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "37",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 73.6,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "38",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 71.7,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "39",
+      "description": "DeleteExpressionMutation",
+      "killed": true,
+      "elapsed_s": 69.5,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "40",
+      "description": "AssignmentMutation",
+      "killed": true,
+      "elapsed_s": 69.2,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "41",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 65.0,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "42",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 72.5,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "43",
+      "description": "UnaryOperatorMutation",
+      "killed": false,
+      "elapsed_s": 70.1,
+      "tail": "43.74s (172.85s CPU time): 291 tests passed, 0 failed, 0 skipped (291 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "44",
+      "description": "UnaryOperatorMutation",
+      "killed": false,
+      "elapsed_s": 71.9,
+      "tail": "45.53s (106.49s CPU time): 291 tests passed, 0 failed, 0 skipped (291 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "45",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 69.8,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "46",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 50.8,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
+      "id": "47",
+      "description": "BinaryOpMutation",
+      "killed": true,
+      "elapsed_s": 49.7,
+      "tail": ""
+    },
+    {
+      "file": "contracts/src/libraries/MarketMath.sol",
       "id": "48",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 68.9,
+      "elapsed_s": 1009.0,
       "tail": ""
     },
     {
@@ -411,7 +411,7 @@
       "id": "49",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 63.0,
+      "elapsed_s": 57.3,
       "tail": ""
     },
     {
@@ -419,7 +419,7 @@
       "id": "50",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 59.8,
+      "elapsed_s": 66.1,
       "tail": ""
     },
     {
@@ -427,7 +427,7 @@
       "id": "1",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 56.4,
+      "elapsed_s": 56.9,
       "tail": ""
     },
     {
@@ -435,7 +435,7 @@
       "id": "2",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 2.8,
+      "elapsed_s": 2.7,
       "tail": ""
     },
     {
@@ -443,7 +443,7 @@
       "id": "3",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 53.9,
+      "elapsed_s": 51.0,
       "tail": ""
     },
     {
@@ -451,7 +451,7 @@
       "id": "4",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 68.8,
+      "elapsed_s": 41.1,
       "tail": ""
     },
     {
@@ -459,7 +459,7 @@
       "id": "5",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 43.6,
+      "elapsed_s": 40.8,
       "tail": ""
     },
     {
@@ -467,15 +467,15 @@
       "id": "6",
       "description": "BinaryOpMutation",
       "killed": false,
-      "elapsed_s": 53.1,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 35.95s (88.98s CPU time)\n\nRan 16 test suites in 35.95s (201.33s CPU time): 290 tests passed, 0 failed, 0 skipped (290 total tests)\n"
+      "elapsed_s": 56.3,
+      "tail": "39.16s (143.80s CPU time): 291 tests passed, 0 failed, 0 skipped (291 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "7",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 47.0,
+      "elapsed_s": 38.7,
       "tail": ""
     },
     {
@@ -483,15 +483,15 @@
       "id": "8",
       "description": "IfStatementMutation",
       "killed": false,
-      "elapsed_s": 54.2,
-      "tail": "S] test_yieldAccrual_basic() (gas: 298571)\n[PASS] test_yt_frozen_userToUserTransferReverts() (gas: 304182)\nSuite result: ok. 48 passed; 0 failed; 0 skipped; finished in 37.12s (3.28ms CPU time)\n\nRan 16 test suites in 37.12s (335.13s CPU time): 290 tests passed, 0 failed, 0 skipped (290 total tests)\n"
+      "elapsed_s": 51.0,
+      "tail": "33.84s (150.59s CPU time): 291 tests passed, 0 failed, 0 skipped (291 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "9",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 55.6,
+      "elapsed_s": 43.2,
       "tail": ""
     },
     {
@@ -499,7 +499,7 @@
       "id": "10",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 68.7,
+      "elapsed_s": 46.0,
       "tail": ""
     },
     {
@@ -507,39 +507,39 @@
       "id": "11",
       "description": "IfStatementMutation",
       "killed": false,
-      "elapsed_s": 59.6,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 42.58s (83.17s CPU time)\n\nRan 16 test suites in 42.58s (106.49s CPU time): 290 tests passed, 0 failed, 0 skipped (290 total tests)\n"
+      "elapsed_s": 45.8,
+      "tail": "28.63s (168.09s CPU time): 291 tests passed, 0 failed, 0 skipped (291 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "12",
       "description": "IfStatementMutation",
-      "killed": false,
-      "elapsed_s": 58.8,
-      "tail": "| 21223 | 0       | 0        |\n\u2570--------------------------+----------------+-------+---------+----------\u256f\n\nSuite result: ok. 5 passed; 0 failed; 0 skipped; finished in 41.85s (162.49s CPU time)\n\nRan 16 test suites in 41.85s (142.23s CPU time): 290 tests passed, 0 failed, 0 skipped (290 total tests)\n"
+      "killed": true,
+      "elapsed_s": 46.0,
+      "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "13",
       "description": "IfStatementMutation",
-      "killed": false,
-      "elapsed_s": 63.1,
-      "tail": "T | 21397 | 0       | 0        |\n\u2570-----------------------------+------------+-------+---------+----------\u256f\n\nSuite result: ok. 3 passed; 0 failed; 0 skipped; finished in 46.04s (92.42s CPU time)\n\nRan 16 test suites in 46.04s (138.05s CPU time): 290 tests passed, 0 failed, 0 skipped (290 total tests)\n"
+      "killed": true,
+      "elapsed_s": 52.0,
+      "tail": ""
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "14",
       "description": "AssignmentMutation",
-      "killed": true,
-      "elapsed_s": 62.8,
-      "tail": ""
+      "killed": false,
+      "elapsed_s": 54.0,
+      "tail": "36.74s (131.70s CPU time): 291 tests passed, 0 failed, 0 skipped (291 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "15",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 61.4,
+      "elapsed_s": 54.8,
       "tail": ""
     },
     {
@@ -547,15 +547,15 @@
       "id": "16",
       "description": "DeleteExpressionMutation",
       "killed": false,
-      "elapsed_s": 57.3,
-      "tail": "| 21223 | 0       | 0        |\n\u2570--------------------------+----------------+-------+---------+----------\u256f\n\nSuite result: ok. 5 passed; 0 failed; 0 skipped; finished in 40.26s (159.66s CPU time)\n\nRan 16 test suites in 40.26s (297.02s CPU time): 290 tests passed, 0 failed, 0 skipped (290 total tests)\n"
+      "elapsed_s": 58.3,
+      "tail": "41.13s (141.53s CPU time): 291 tests passed, 0 failed, 0 skipped (291 total tests)\nWarning: Failure from \"/Users/pp/Desktop/Projects/fission-protocol-hedera/contracts/cache/invariant/failures/FissionMarketInvariantTest/invariant_solvency\" file was ignored because test contract bytecode has changed.\n"
     },
     {
       "file": "contracts/src/core/FissionMarket.sol",
       "id": "17",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 63.1,
+      "elapsed_s": 50.0,
       "tail": ""
     },
     {
@@ -563,7 +563,7 @@
       "id": "18",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 62.3,
+      "elapsed_s": 56.3,
       "tail": ""
     },
     {
@@ -571,7 +571,7 @@
       "id": "19",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 61.7,
+      "elapsed_s": 58.3,
       "tail": ""
     },
     {
@@ -579,7 +579,7 @@
       "id": "20",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 62.8,
+      "elapsed_s": 57.7,
       "tail": ""
     },
     {
@@ -587,7 +587,7 @@
       "id": "21",
       "description": "UnaryOperatorMutation",
       "killed": true,
-      "elapsed_s": 75.5,
+      "elapsed_s": 57.6,
       "tail": ""
     },
     {
@@ -595,7 +595,7 @@
       "id": "22",
       "description": "SwapArgumentsOperatorMutation",
       "killed": true,
-      "elapsed_s": 67.0,
+      "elapsed_s": 60.7,
       "tail": ""
     },
     {
@@ -603,7 +603,7 @@
       "id": "23",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 61.5,
+      "elapsed_s": 62.3,
       "tail": ""
     },
     {
@@ -611,7 +611,7 @@
       "id": "24",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 56.3,
+      "elapsed_s": 61.3,
       "tail": ""
     },
     {
@@ -619,7 +619,7 @@
       "id": "25",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 63.8,
+      "elapsed_s": 61.9,
       "tail": ""
     },
     {
@@ -627,7 +627,7 @@
       "id": "26",
       "description": "SwapArgumentsOperatorMutation",
       "killed": true,
-      "elapsed_s": 61.9,
+      "elapsed_s": 62.7,
       "tail": ""
     },
     {
@@ -635,7 +635,7 @@
       "id": "27",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 71.2,
+      "elapsed_s": 62.2,
       "tail": ""
     },
     {
@@ -643,7 +643,7 @@
       "id": "28",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 61.7,
+      "elapsed_s": 63.7,
       "tail": ""
     },
     {
@@ -651,7 +651,7 @@
       "id": "29",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 62.5,
+      "elapsed_s": 56.1,
       "tail": ""
     },
     {
@@ -659,7 +659,7 @@
       "id": "30",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 55.7,
+      "elapsed_s": 62.6,
       "tail": ""
     },
     {
@@ -667,7 +667,7 @@
       "id": "31",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 60.6,
+      "elapsed_s": 61.1,
       "tail": ""
     },
     {
@@ -675,7 +675,7 @@
       "id": "32",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 62.2,
+      "elapsed_s": 58.3,
       "tail": ""
     },
     {
@@ -683,7 +683,7 @@
       "id": "33",
       "description": "SwapArgumentsOperatorMutation",
       "killed": true,
-      "elapsed_s": 62.1,
+      "elapsed_s": 60.4,
       "tail": ""
     },
     {
@@ -691,7 +691,7 @@
       "id": "34",
       "description": "SwapArgumentsOperatorMutation",
       "killed": true,
-      "elapsed_s": 55.5,
+      "elapsed_s": 65.0,
       "tail": ""
     },
     {
@@ -699,7 +699,7 @@
       "id": "35",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 61.5,
+      "elapsed_s": 60.2,
       "tail": ""
     },
     {
@@ -707,7 +707,7 @@
       "id": "36",
       "description": "IfStatementMutation",
       "killed": true,
-      "elapsed_s": 61.5,
+      "elapsed_s": 64.4,
       "tail": ""
     },
     {
@@ -715,7 +715,7 @@
       "id": "37",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 55.5,
+      "elapsed_s": 59.2,
       "tail": ""
     },
     {
@@ -723,7 +723,7 @@
       "id": "38",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 63.1,
+      "elapsed_s": 60.2,
       "tail": ""
     },
     {
@@ -731,7 +731,7 @@
       "id": "39",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 66.3,
+      "elapsed_s": 61.0,
       "tail": ""
     },
     {
@@ -739,7 +739,7 @@
       "id": "40",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 61.3,
+      "elapsed_s": 59.9,
       "tail": ""
     },
     {
@@ -747,7 +747,7 @@
       "id": "41",
       "description": "SwapArgumentsOperatorMutation",
       "killed": true,
-      "elapsed_s": 61.0,
+      "elapsed_s": 70.7,
       "tail": ""
     },
     {
@@ -755,7 +755,7 @@
       "id": "42",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 56.6,
+      "elapsed_s": 67.5,
       "tail": ""
     },
     {
@@ -763,7 +763,7 @@
       "id": "43",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 62.9,
+      "elapsed_s": 62.8,
       "tail": ""
     },
     {
@@ -771,7 +771,7 @@
       "id": "44",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 61.2,
+      "elapsed_s": 62.6,
       "tail": ""
     },
     {
@@ -779,7 +779,7 @@
       "id": "45",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 64.1,
+      "elapsed_s": 61.8,
       "tail": ""
     },
     {
@@ -787,7 +787,7 @@
       "id": "46",
       "description": "BinaryOpMutation",
       "killed": true,
-      "elapsed_s": 61.7,
+      "elapsed_s": 61.9,
       "tail": ""
     },
     {
@@ -795,7 +795,7 @@
       "id": "47",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 1047.5,
+      "elapsed_s": 64.8,
       "tail": ""
     },
     {
@@ -803,7 +803,7 @@
       "id": "48",
       "description": "AssignmentMutation",
       "killed": true,
-      "elapsed_s": 49.5,
+      "elapsed_s": 61.4,
       "tail": ""
     },
     {
@@ -811,7 +811,7 @@
       "id": "49",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 39.2,
+      "elapsed_s": 64.5,
       "tail": ""
     },
     {
@@ -819,7 +819,7 @@
       "id": "50",
       "description": "DeleteExpressionMutation",
       "killed": true,
-      "elapsed_s": 41.7,
+      "elapsed_s": 52.1,
       "tail": ""
     }
   ]
