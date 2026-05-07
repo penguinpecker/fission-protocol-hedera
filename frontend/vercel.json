@@ -15,5 +15,8 @@
         { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" }
       ]
     }
+  ],
+  "crons": [
+    { "path": "/api/markets/refresh", "schedule": "*/5 * * * *" }
   ]
 }

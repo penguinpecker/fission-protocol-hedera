@@ -5,6 +5,17 @@
 > a mainnet deploy is at the operator's risk until at least Phase 9 audit pipeline
 > completes (see `docs/IMPLEMENTATION_PLAN.md`).
 
+> **v1.0 launch decision (2026-05-08):** the bootstrap factory at
+> `0x00000000000000000000000000000000009fb0b3` (`SY_REVIEW_WINDOW=0`) is
+> being adopted as the production factory. Penpie defence is dropped from
+> v1 because admin is already a Hedera 2-of-2 ThresholdKey + 48h Timelock —
+> a malicious SY proposal would require both cosigner sigs AND a 48h waiting
+> period before it could be confirmed, judged sufficient defense-in-depth
+> for v1. **Steps 1-7 below describe a fresh redeploy** and are reference
+> material; for v1.0 follow the operator-first flow: build/seed under
+> deployer EOA admin, then run only Step 8 (handoff). Appendix B Phase C is
+> only relevant if v1.1 requires a redeploy with the 7-day window.
+
 ## Pre-deploy gates
 
 These MUST be satisfied before running any broadcast tx.
@@ -383,7 +394,7 @@ has been transferred to it (only the default admin can revoke):
 #   factory:  ADMIN_ROLE  (proposeSY / confirmSY / setProtocolFee)
 #   markets:  ADMIN_ROLE, PAUSER_ROLE
 #   SYs:      ADMIN_ROLE, PAUSER_ROLE, KEEPER_ROLE  (KEEPER moves to dedicated EOA)
-# Use `scripts/prep-safe-handoff.mjs` to dump the full Tx Builder JSON.
+# Use `scripts/prep-handoff.mjs` to dump the full Tx Builder JSON.
 ```
 
 Confirm with:
@@ -624,9 +635,9 @@ node scripts/grant-keeper.mjs <new-sy-hbarx-evm> $KEEPER_ADDRESS
 # then start the keeper service per Step 6
 ```
 
-#### Day 8+ — handoff to Safe
+#### Day 8+ — handoff to ThresholdKey-controlled Timelock
 
-C-14/C-15/C-16. Run `node scripts/prep-safe-handoff.mjs` to dump the
+C-14/C-15/C-16. Run `node scripts/prep-handoff.mjs` to dump the
 a Hedera-native batch: a `Timelock.scheduleBatch()` proposal signed 2-of-2,
 followed 48h later by a `Timelock.executeBatch()` signed 2-of-2. The
 helper script outputs both Hedera-SDK ContractExecuteTransaction snippets.

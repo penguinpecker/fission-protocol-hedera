@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
+import { useChainId } from "wagmi";
 import { Nav } from "@/components/Nav";
 import { ADDRESSES, isDeployed } from "@/lib/addresses";
 import {
@@ -13,20 +15,32 @@ import {
   daysUntil,
   formatBigInt,
 } from "@/hooks/useMarkets";
+import { useWatchlist } from "@/hooks/useWatchlist";
+import { useCachedMarkets } from "@/hooks/useCachedMarkets";
 
 const factoryDeployed = isDeployed(ADDRESSES.factory);
 
 export default function MarketsPage() {
+  const chainId = useChainId();
+
+  // Fast path: read pre-indexed market state from /api/markets. Falls back to
+  // on-chain reads via wagmi when the cache is empty or hasn't been populated
+  // yet (first deploy, or before the indexer cron runs).
+  const { markets: cached, loading: cachedLoading } = useCachedMarkets();
+  const useChainFallback = !cachedLoading && (cached === null || cached.length === 0);
+
   const { data: countRaw } = useMarketCount();
   const count = countRaw as bigint | undefined;
 
-  const { data: addressesRaw } = useMarketAddresses(count);
+  const { data: addressesRaw } = useMarketAddresses(useChainFallback ? count : undefined);
   const addresses = addressesRaw as readonly `0x${string}`[] | undefined;
 
   // Post-HTS-migration: 6 market reads (sy, lp, expiry, totalSy, totalPt, lastLn).
   // Then a second pass reads LP name/symbol/totalSupply via ERC-20 facade and
   // SY shareToken/decimals.
-  const { data: detailsRaw, isLoading: detailsLoading } = useMarketDetails(addresses);
+  const { data: detailsRaw, isLoading: detailsLoading } = useMarketDetails(
+    useChainFallback ? addresses : undefined,
+  );
   const syAddrs =
     addresses && detailsRaw
       ? addresses.map((_, i) => detailsRaw[i * 6] as `0x${string}`)
@@ -38,64 +52,165 @@ export default function MarketsPage() {
   const { data: syMetaRaw } = useSyMetadata(syAddrs);
   const { data: lpMetaRaw } = useLpMetadata(lpAddrs);
 
-  const markets = buildMarketRows(addresses, detailsRaw, syMetaRaw, lpMetaRaw);
+  const allMarkets =
+    cached && cached.length > 0
+      ? buildRowsFromCache(cached)
+      : buildMarketRows(addresses, detailsRaw, syMetaRaw, lpMetaRaw);
+
+  const { isWatched, toggle, signedIn, items } = useWatchlist();
+  const [showWatchedOnly, setShowWatchedOnly] = useState(false);
+
+  const markets = showWatchedOnly
+    ? allMarkets.filter((m) => isWatched(chainId, m.address))
+    : allMarkets;
 
   return (
     <main className="min-h-screen">
       <Nav />
 
       <section className="mx-auto max-w-[1100px] px-6 py-10">
-        <header className="mb-10">
-          <h1 className="text-[32px] font-light tracking-[-1px]">
-            Yield <span className="font-serif italic">markets</span>
-          </h1>
-          <p className="mt-2 text-sm font-light text-textDim">
-            Split yield-bearing Hedera DeFi tokens into tradeable Principal and Yield components.
-          </p>
+        <header className="mb-10 flex items-end justify-between gap-6">
+          <div>
+            <h1 className="text-[32px] font-light tracking-[-1px]">
+              Yield <span className="font-serif italic">markets</span>
+            </h1>
+            <p className="mt-2 text-sm font-light text-textDim">
+              Split yield-bearing Hedera DeFi tokens into tradeable Principal and Yield components.
+            </p>
+          </div>
+          {signedIn && allMarkets.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowWatchedOnly((v) => !v)}
+              className={`rounded-xl border px-4 py-2 text-[12px] font-medium transition ${
+                showWatchedOnly
+                  ? "border-borderHover bg-white/[0.04] text-text"
+                  : "border-border text-textSec hover:border-borderHover hover:text-text"
+              }`}
+            >
+              {showWatchedOnly ? "All markets" : `My watchlist (${items.length})`}
+            </button>
+          )}
         </header>
 
         {!factoryDeployed && <NotDeployed />}
 
-        {factoryDeployed && count === 0n && <EmptyState />}
+        {factoryDeployed && useChainFallback && count === 0n && <EmptyState />}
 
-        {factoryDeployed && detailsLoading && <Loading />}
+        {factoryDeployed && (cachedLoading || (useChainFallback && detailsLoading)) && <Loading />}
+
+        {factoryDeployed && !detailsLoading && allMarkets.length > 0 && markets.length === 0 && (
+          <WatchlistEmpty onShowAll={() => setShowWatchedOnly(false)} />
+        )}
 
         {markets.length > 0 && (
           <div className="flex flex-col gap-2">
             {markets.map((m) => (
-              <Link
+              <div
                 key={m.address}
-                href={`/markets/${m.address}`}
-                className="grid grid-cols-[2.2fr_1fr_1fr_1fr_1fr] items-center gap-4 rounded-2xl border border-border bg-bgCard px-6 py-5 transition hover:border-borderHover hover:bg-white/[0.02]"
+                className="relative grid grid-cols-[auto_2.2fr_1fr_1fr_1fr_1fr] items-center gap-4 rounded-2xl border border-border bg-bgCard px-6 py-5 transition hover:border-borderHover hover:bg-white/[0.02]"
               >
-                <div>
+                <StarButton
+                  watched={isWatched(chainId, m.address)}
+                  signedIn={signedIn}
+                  onClick={() => toggle(chainId, m.address)}
+                />
+                <Link
+                  href={`/markets/${m.address}`}
+                  className="absolute inset-0 rounded-2xl"
+                  aria-label={`View ${m.syName ?? m.symbol}`}
+                />
+                <div className="pointer-events-none">
                   <div className="text-[15px] font-semibold">{m.syName ?? m.symbol}</div>
                   <div className="text-xs text-textDim">
                     {m.daysLeft}d to maturity · {m.expiryDate}
                   </div>
                 </div>
-                <Stat label="Implied APY" value={`${m.impliedApy.toFixed(2)}%`} accent="white" />
-                <Stat
-                  label="SY locked"
-                  value={`${formatBigInt(m.totalSy, m.syDecimals, 2)}`}
-                  accent="silver"
-                />
-                <Stat
-                  label="PT in pool"
-                  value={`${formatBigInt(m.totalPt, m.syDecimals, 2)}`}
-                  accent="silver"
-                />
-                <Stat
-                  label="LP supply"
-                  value={`${formatBigInt(m.lpSupply, 18, 2)}`}
-                  accent="silver"
-                />
-              </Link>
+                <div className="pointer-events-none">
+                  <Stat label="Implied APY" value={`${m.impliedApy.toFixed(2)}%`} accent="white" />
+                </div>
+                <div className="pointer-events-none">
+                  <Stat
+                    label="SY locked"
+                    value={`${formatBigInt(m.totalSy, m.syDecimals, 2)}`}
+                    accent="silver"
+                  />
+                </div>
+                <div className="pointer-events-none">
+                  <Stat
+                    label="PT in pool"
+                    value={`${formatBigInt(m.totalPt, m.syDecimals, 2)}`}
+                    accent="silver"
+                  />
+                </div>
+                <div className="pointer-events-none">
+                  <Stat
+                    label="LP supply"
+                    value={`${formatBigInt(m.lpSupply, 18, 2)}`}
+                    accent="silver"
+                  />
+                </div>
+              </div>
             ))}
           </div>
         )}
       </section>
     </main>
+  );
+}
+
+function StarButton({
+  watched,
+  signedIn,
+  onClick,
+}: {
+  watched: boolean;
+  signedIn: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      }}
+      disabled={!signedIn}
+      title={signedIn ? (watched ? "Remove from watchlist" : "Add to watchlist") : "Sign in to use watchlist"}
+      className={`relative z-10 -ml-1 grid size-8 place-items-center rounded-lg transition ${
+        signedIn
+          ? watched
+            ? "text-warning hover:bg-white/[0.05]"
+            : "text-textDim hover:bg-white/[0.05] hover:text-text"
+          : "cursor-not-allowed text-textDim opacity-40"
+      }`}
+      aria-pressed={watched}
+      aria-label={watched ? "Remove from watchlist" : "Add to watchlist"}
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill={watched ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+      </svg>
+    </button>
+  );
+}
+
+function WatchlistEmpty({ onShowAll }: { onShowAll: () => void }) {
+  return (
+    <div className="flex min-h-[260px] flex-col items-center justify-center rounded-2xl border border-border bg-bgCard p-10 text-center">
+      <div className="mb-2 text-base font-semibold">No watched markets yet</div>
+      <p className="mb-5 max-w-[420px] text-sm text-textSec">
+        Star a market on the all-markets view to add it here. Your watchlist is per-wallet and
+        synced across devices once you&rsquo;re signed in.
+      </p>
+      <button
+        type="button"
+        onClick={onShowAll}
+        className="rounded-xl border border-borderHover px-4 py-2 text-[12px] font-medium text-text transition hover:bg-white/[0.03]"
+      >
+        Show all markets
+      </button>
+    </div>
   );
 }
 
@@ -197,6 +312,30 @@ interface MarketRow {
   impliedApy: number;
   daysLeft: number;
   expiryDate: string;
+}
+
+function buildRowsFromCache(cached: readonly import("@/hooks/useCachedMarkets").CachedMarket[]): MarketRow[] {
+  return cached.map((m) => {
+    const lastLn = m.last_ln_implied_rate ? BigInt(m.last_ln_implied_rate) : 0n;
+    const expiryDate = m.expiry ? new Date(m.expiry) : null;
+    const daysLeft = expiryDate
+      ? Math.max(0, Math.floor((expiryDate.getTime() - Date.now()) / 86_400_000))
+      : 0;
+    return {
+      address: m.market_address,
+      syName: undefined,
+      syDecimals: 18,
+      symbol: m.market_type === "rewards" ? "fLP-rwd" : "fLP",
+      totalSy: m.total_sy_shares ? BigInt(m.total_sy_shares) : 0n,
+      totalPt: m.total_pt ? BigInt(m.total_pt) : 0n,
+      lpSupply: m.lp_total_supply ? BigInt(m.lp_total_supply) : 0n,
+      impliedApy: impliedApyPct(lastLn),
+      daysLeft,
+      expiryDate: expiryDate
+        ? expiryDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+        : "—",
+    };
+  });
 }
 
 function buildMarketRows(

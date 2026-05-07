@@ -28,6 +28,41 @@
   },
   "deployer": "0.0.10463169",
   "deployerEvm": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
+  "governance": {
+    "threshold": {
+      "id": "0.0.10469822",
+      "evm": "0x00000000000000000000000000000000009fc1be",
+      "signers": [
+        {
+          "label": "operator",
+          "type": "ECDSA_SECP256K1",
+          "evm": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
+          "id": "0.0.10463169",
+          "pubkey": "302d300706052b8104000a032200036e6f458fd4592b80423f61e12e383dd758ec132a4667eea88f90bce595e5a231"
+        },
+        {
+          "label": "cosigner",
+          "type": "ED25519",
+          "evm": "0x00000000000000000000000000000000009f90dd",
+          "id": "0.0.10457309",
+          "pubkey": "302a300506032b6570032100fa5ba1dbf305d3bc5d6c5508a188b5525867fa5fdc6aef8939fe1fe77cf2e504"
+        }
+      ],
+      "createdAt": "2026-05-08",
+      "createTxId": "0.0.10463169@1778182893.195201478"
+    },
+    "timelock": {
+      "id": "0.0.10469824",
+      "evm": "0x00000000000000000000000000000000009fc1c0",
+      "minDelay": 0,
+      "minDelayPlanned": 172800,
+      "proposers": ["0x00000000000000000000000000000000009fc1be"],
+      "executors": ["0x00000000000000000000000000000000009fc1be"],
+      "admin": "0x0000000000000000000000000000000000000000",
+      "deployedAt": "2026-05-08",
+      "deployTxId": "0.0.10463169@1778182990.906214243"
+    }
+  },
   "factoryAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "marketAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "marketTreasury": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
