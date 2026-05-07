@@ -1,24 +1,29 @@
 import { createConfig, http } from "wagmi";
-import { injected } from "wagmi/connectors";
+import { injected, walletConnect } from "wagmi/connectors";
 import { hederaMainnet, hederaTestnet } from "./chains";
 
 /**
- * Wagmi config — multi-wallet EVM connectors for Hedera.
+ * Wagmi config — multi-wallet connectors for Hedera.
  *
- * Each supported Hedera wallet exposes an EIP-1193 provider on `window.*`. We
- * declare a separate `injected` connector per wallet so the user sees ALL their
- * installed options in the wallet picker, instead of a generic "Connect" button
- * grabbing whichever provider loaded into `window.ethereum` first.
+ * Two connection paths:
  *
- *   - **HashPack**: `window.hashpack` or `window.ethereum.isHashPack`
- *   - **Blade**:    `window.bladeWallet` or `window.ethereum.isBlade`
- *   - **MetaMask**: `window.ethereum.isMetaMask`
- *   - **Generic**:  fallback for any other EIP-1193 wallet
+ * 1. **WalletConnect** — the universal Hedera path. HashPack mobile + HashPack
+ *    extension + Blade + Kabila all support WalletConnect v2; user scans a QR
+ *    or picks the wallet from Reown's modal. Requires
+ *    `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` (free signup at cloud.reown.com).
+ *    Without that env var the connector is omitted and only injected EVM
+ *    wallets (e.g. MetaMask) work.
  *
- * HashPack and Blade both ship native EIP-1193 providers as of 2024+. Native
- * HashConnect (non-EVM) support is a separate path — left out here because both
- * HashPack and Blade users can connect via EVM with no UX downgrade.
+ * 2. **Injected (EIP-1193)** — for browser extensions that auto-inject
+ *    `window.ethereum`. HashPack 2024+ does NOT inject by default — only when
+ *    "EVM mode" is toggled on in extension settings. So in practice this lane
+ *    catches MetaMask + any user who's enabled HashPack/Blade EVM mode.
+ *
+ * Listing WalletConnect first means it shows up at the top of the wallet
+ * picker — users with HashPack-no-EVM-mode see WalletConnect and connect
+ * via QR.
  */
+const wcProjectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
 
 // wagmi's `Target` accepts a wallet-flag string OR a custom `{id, name, provider}`
 // triple. HashPack / Blade aren't in wagmi's flag list, so we return the triple.
@@ -40,12 +45,31 @@ function detectProvider(detect: () => unknown): ProviderShape {
 export const wagmiConfig = createConfig({
   chains: [hederaMainnet, hederaTestnet],
   connectors: [
+    // WalletConnect first — works with HashPack/Blade/Kabila on every OS,
+    // including HashPack extension when EVM mode is OFF. Skipped at config
+    // time if no projectId is set so we don't initialize a broken connector.
+    ...(wcProjectId
+      ? [
+          walletConnect({
+            projectId: wcProjectId,
+            metadata: {
+              name: "Fission Protocol",
+              description: "Yield-stripping AMM on Hedera",
+              url: "https://www.fissionp.com",
+              icons: ["https://www.fissionp.com/icon.png"],
+            },
+            showQrModal: true,
+          }),
+        ]
+      : []),
+    // Injected paths — kept for HashPack/Blade users who've enabled EVM mode
+    // in their extension settings, and for MetaMask.
     injected({
       shimDisconnect: true,
       target() {
         return {
           id: "hashpack",
-          name: "HashPack",
+          name: "HashPack (EVM mode)",
           provider: detectProvider(() => {
             const w = window as unknown as {
               hashpack?: unknown;
@@ -63,7 +87,7 @@ export const wagmiConfig = createConfig({
       target() {
         return {
           id: "blade",
-          name: "Blade Wallet",
+          name: "Blade Wallet (EVM mode)",
           provider: detectProvider(() => {
             const w = window as unknown as {
               bladeWallet?: unknown;
