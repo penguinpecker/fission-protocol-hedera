@@ -149,21 +149,13 @@ library HtsHelpers {
         _check(code);
     }
 
-    /// @notice Atomic unfreeze → transfer → freeze. Used by Market.transferYT and
-    ///         by mint-to-frozen-user paths. The 3 ops MUST be in the same tx; if
-    ///         any reverts, the whole tx unwinds and the freeze state is preserved.
-    function transferThroughFreeze(
-        address token,
-        address from,
-        address to,
-        uint256 amount
-    ) internal {
-        unfreeze(token, from);
-        unfreeze(token, to);
-        transfer(token, from, to, amount);
-        freeze(token, from);
-        freeze(token, to);
-    }
+    // transferThroughFreeze removed 2026-05-07: was dead code (no production
+    // caller) and inherently broken — unconditional unfreeze/freeze on both
+    // sides would 197-revert on Hedera mainnet whenever either party was not
+    // already frozen (e.g. unfrozen treasury). Live YT mint/burn paths
+    // (FissionMarket._mintYt / _burnYt) implement the unfreeze→op→refreeze
+    // sequence with the necessary `if (wasFrozen)` checks; that's the safe
+    // pattern to copy if a similar helper is ever needed again.
 
     // ───────────────────── allowance ─────────────────────
 

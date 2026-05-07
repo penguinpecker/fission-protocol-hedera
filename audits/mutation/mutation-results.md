@@ -1,15 +1,15 @@
 # Mutation testing results
 
-Ran at: `2026-05-06T23:30:27Z` — total elapsed `5062.7s`
+Ran at: `2026-05-07T01:07:54Z` — total elapsed `5150.3s`
 
-**Overall:** 85/100 killed (85.0%)
+**Overall:** 90/100 killed (90.0%)
 
 ## By file
 
 | File | Mutants | Killed | Survived | Kill % |
 |------|--------:|-------:|---------:|-------:|
-| `contracts/src/libraries/MarketMath.sol` | 50 | 47 | 3 | 94.0 |
-| `contracts/src/core/FissionMarket.sol` | 50 | 38 | 12 | 76.0 |
+| `contracts/src/libraries/MarketMath.sol` | 50 | 48 | 2 | 96.0 |
+| `contracts/src/core/FissionMarket.sol` | 50 | 42 | 8 | 84.0 |
 
 ## Survived mutants
 
@@ -22,10 +22,6 @@ _Test suite still passed with this mutation applied. Review the diff in_ `audits
 ### `contracts/src/libraries/MarketMath.sol` mutant #44 — UnaryOperatorMutation
 
 _Test suite still passed with this mutation applied. Review the diff in_ `audits/mutation/gambit-out/mutants/44/contracts/src/libraries/MarketMath.sol` _and either add a test that catches it, or annotate as semantically-equivalent._
-
-### `contracts/src/libraries/MarketMath.sol` mutant #45 — BinaryOpMutation
-
-_Test suite still passed with this mutation applied. Review the diff in_ `audits/mutation/gambit-out/mutants/45/contracts/src/libraries/MarketMath.sol` _and either add a test that catches it, or annotate as semantically-equivalent._
 
 ### `contracts/src/core/FissionMarket.sol` mutant #6 — BinaryOpMutation
 
@@ -55,22 +51,6 @@ _Test suite still passed with this mutation applied. Review the diff in_ `audits
 
 _Test suite still passed with this mutation applied. Review the diff in_ `audits/mutation/gambit-out/mutants/16/contracts/src/core/FissionMarket.sol` _and either add a test that catches it, or annotate as semantically-equivalent._
 
-### `contracts/src/core/FissionMarket.sol` mutant #20 — IfStatementMutation
-
-_Test suite still passed with this mutation applied. Review the diff in_ `audits/mutation/gambit-out/mutants/20/contracts/src/core/FissionMarket.sol` _and either add a test that catches it, or annotate as semantically-equivalent._
-
 ### `contracts/src/core/FissionMarket.sol` mutant #21 — UnaryOperatorMutation
 
 _Test suite still passed with this mutation applied. Review the diff in_ `audits/mutation/gambit-out/mutants/21/contracts/src/core/FissionMarket.sol` _and either add a test that catches it, or annotate as semantically-equivalent._
-
-### `contracts/src/core/FissionMarket.sol` mutant #24 — AssignmentMutation
-
-_Test suite still passed with this mutation applied. Review the diff in_ `audits/mutation/gambit-out/mutants/24/contracts/src/core/FissionMarket.sol` _and either add a test that catches it, or annotate as semantically-equivalent._
-
-### `contracts/src/core/FissionMarket.sol` mutant #27 — IfStatementMutation
-
-_Test suite still passed with this mutation applied. Review the diff in_ `audits/mutation/gambit-out/mutants/27/contracts/src/core/FissionMarket.sol` _and either add a test that catches it, or annotate as semantically-equivalent._
-
-### `contracts/src/core/FissionMarket.sol` mutant #32 — BinaryOpMutation
-
-_Test suite still passed with this mutation applied. Review the diff in_ `audits/mutation/gambit-out/mutants/32/contracts/src/core/FissionMarket.sol` _and either add a test that catches it, or annotate as semantically-equivalent._

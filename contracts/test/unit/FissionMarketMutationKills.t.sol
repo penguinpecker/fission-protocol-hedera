@@ -283,7 +283,9 @@ contract FissionMarketMutationKillsTest is Test {
         // bitwise NOT. Pin syOut % 1e6 --- under mutation it shifts noticeably.
         // Actual canonical 1000 PT @ ~5% rate: should net ~951 SY plus change.
         // We hard-pin a tight integer band to surface even tiny drift.
-        assertEq(syOut1 / 1e3, 952_280, "kill #21: syOut/1e3 must match canonical exactly");
+        // EXACT canonical syOut. ~int256(x) = -x - 1, so a 1-wei input shift
+        // produces ~1 wei syOut shift. Asserting exact wei surfaces it.
+        assertEq(syOut1, 952_280_835, "kill #21: syOut must match canonical to the wei");
     }
 
     // ---------- kills #24 (totalSy -= 1 instead of -= netSyToReserve) ----------

@@ -127,6 +127,9 @@ contract MockHederaTokenService is IHederaTokenService, IMockHederaForFacade, IM
         if (t.wipeKey == address(0) || msg.sender != t.wipeKey) {
             return HederaResponseCodes.TOKEN_HAS_NO_WIPE_KEY;
         }
+        // Match Hedera mainnet: wipe on a frozen account is rejected (code 165).
+        // This is the constraint that forces _burnYt to unfreeze first.
+        if (_frozen[token][account]) return HederaResponseCodes.ACCOUNT_FROZEN_FOR_TOKEN;
 
         uint256 amt = uint256(uint64(amount));
         if (_balanceOf[token][account] < amt) return HederaResponseCodes.INSUFFICIENT_TOKEN_BALANCE;
@@ -238,6 +241,10 @@ contract MockHederaTokenService is IHederaTokenService, IMockHederaForFacade, IM
         if (t.freezeKey == address(0) || msg.sender != t.freezeKey) {
             return HederaResponseCodes.TOKEN_HAS_NO_FREEZE_KEY;
         }
+        // Match Hedera mainnet: freezing an already-frozen account is rejected.
+        // Surfaces mutations that double-freeze (e.g. always taking the
+        // refreeze branch in _burnYt when balance is 0).
+        if (_frozen[token][account]) return HederaResponseCodes.ACCOUNT_FROZEN_FOR_TOKEN;
         _frozen[token][account] = true;
         return HederaResponseCodes.SUCCESS;
     }
@@ -248,6 +255,11 @@ contract MockHederaTokenService is IHederaTokenService, IMockHederaForFacade, IM
         if (t.freezeKey == address(0) || msg.sender != t.freezeKey) {
             return HederaResponseCodes.TOKEN_HAS_NO_FREEZE_KEY;
         }
+        // Match Hedera mainnet: unfreezing a not-frozen account is rejected
+        // (response code 197 = ACCOUNT_NOT_FROZEN_FOR_TOKEN).
+        // Surfaces mutations that always-unfreeze (e.g. `if (true) unfreeze`
+        // in _burnYt where wasFrozen is sometimes false).
+        if (!_frozen[token][account]) return int32(197); // ACCOUNT_NOT_FROZEN_FOR_TOKEN
         _frozen[token][account] = false;
         return HederaResponseCodes.SUCCESS;
     }

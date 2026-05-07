@@ -105,31 +105,35 @@ contract HtsHelpersTest is Test {
         assertEq(code, HederaResponseCodes.ACCOUNT_FROZEN_FOR_TOKEN);
     }
 
-    function test_transferThroughFreeze_succeedsWithFreezeDefault() public {
-        // Use the unfreeze→transfer→freeze atomic helper to deliver YT-style tokens.
+    /// @notice Wipe on Hedera mainnet REJECTS frozen accounts with code 165.
+    ///         Replaces an earlier test_wipe_bypassesFreeze that asserted the
+    ///         opposite — incorrect about real Hedera behavior. The
+    ///         FissionMarket._burnYt unfreeze→wipe→refreeze sequence exists
+    ///         specifically because of this constraint.
+    function test_wipe_rejectsFrozen() public {
         address t = _deployToken(true, true, address(this));
         HtsHelpers.mintToTreasury(t, 1_000e8);
-
-        // First we need ALICE associated; transferThroughFreeze assumes she's already
-        // associated. Trigger association via a no-op pre-call: explicitly associate.
         HtsHelpers.associate(ALICE, t);
-        // After associate, ALICE has freezeDefault → frozen.
+        // _deployToken(freezeDefault=true) means ALICE is frozen post-associate.
         assertTrue(MockHederaTokenService(PRECOMPILE).isFrozen(t, ALICE));
 
-        HtsHelpers.transferThroughFreeze(t, address(this), ALICE, 100e8);
-        // Post-transfer, ALICE is back to frozen.
-        assertEq(MockHederaTokenService(PRECOMPILE).balanceOf(t, ALICE), 100e8);
-        assertTrue(MockHederaTokenService(PRECOMPILE).isFrozen(t, ALICE));
+        // Library calls are JUMP, not external CALL — vm.expectRevert won't
+        // intercept the internal _check revert. Wrap via this.wipeExt.
+        vm.expectRevert(abi.encodeWithSelector(HtsHelpers.HtsCallFailed.selector, int32(165)));
+        this.wipeExt(t, ALICE, 200e8);
     }
 
-    function test_wipe_bypassesFreeze() public {
+    function wipeExt(address token, address account, uint256 amount) external {
+        HtsHelpers.wipeFrom(token, account, amount);
+    }
+
+    function test_wipe_succeedsWhenUnfrozen() public {
         address t = _deployToken(true, true, address(this));
         HtsHelpers.mintToTreasury(t, 1_000e8);
         HtsHelpers.associate(ALICE, t);
-        HtsHelpers.transferThroughFreeze(t, address(this), ALICE, 200e8);
-
-        assertTrue(MockHederaTokenService(PRECOMPILE).isFrozen(t, ALICE));
-        // Wipe ALICE's balance without unfreezing — works because of wipeKey.
+        HtsHelpers.unfreeze(t, ALICE);
+        HtsHelpers.transfer(t, address(this), ALICE, 200e8);
+        // Post-transfer ALICE remains unfrozen — wipe succeeds.
         HtsHelpers.wipeFrom(t, ALICE, 200e8);
         assertEq(MockHederaTokenService(PRECOMPILE).balanceOf(t, ALICE), 0);
         assertEq(MockHederaTokenService(PRECOMPILE).totalSupply(t), 800e8);
