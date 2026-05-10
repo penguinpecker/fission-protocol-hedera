@@ -1,43 +1,41 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { useAccount, useConnect, useDisconnect } from "wagmi";
-import type { Connector } from "wagmi";
+import { useEffect } from "react";
+import { useAccount, useChainId, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { FissionLogo } from "./FissionLogo";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
+import { HEDERA_MAINNET_CHAIN_ID } from "@/lib/wagmi";
 
 function shortAddr(addr: string): string {
   return addr.slice(0, 6) + "…" + addr.slice(-4);
 }
 
-function connectorLabel(c: Connector): string {
-  return c.name || c.id;
-}
-
-function isAvailable(c: Connector): boolean {
-  return Boolean(c);
-}
-
 export function Nav() {
   const { address, isConnected } = useAccount();
+  const chainId = useChainId();
   const { connectors, connect, isPending } = useConnect();
   const { disconnect } = useDisconnect();
+  const { switchChain } = useSwitchChain();
   const { state: auth, signIn, signOut } = useSiweAuth();
 
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const pickerRef = useRef<HTMLDivElement>(null);
+  // Single connector by config — WalletConnect when project ID is set, else none.
+  const wcConnector = connectors[0];
+  const wcAvailable = Boolean(wcConnector);
 
+  // Auto-switch to Hedera mainnet whenever a connected wallet drifts off-chain.
+  // Some wallets refuse the prompt; that case surfaces as a persistent banner.
+  const onWrongChain = isConnected && chainId !== HEDERA_MAINNET_CHAIN_ID;
   useEffect(() => {
-    if (!pickerOpen) return;
-    function onClick(e: MouseEvent) {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setPickerOpen(false);
-      }
+    if (onWrongChain) {
+      switchChain({ chainId: HEDERA_MAINNET_CHAIN_ID });
     }
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [pickerOpen]);
+  }, [onWrongChain, switchChain]);
+
+  const handleConnect = () => {
+    if (!wcConnector) return;
+    connect({ connector: wcConnector, chainId: HEDERA_MAINNET_CHAIN_ID });
+  };
 
   const handleDisconnect = async () => {
     if (auth.status === "authenticated") await signOut();
@@ -45,92 +43,87 @@ export function Nav() {
   };
 
   return (
-    <nav className="sticky top-0 z-50 flex items-center justify-between border-b border-border bg-bg/80 px-8 py-3 backdrop-blur">
-      <Link href="/" className="flex items-center gap-2.5">
-        <FissionLogo size={26} />
-        <span className="text-[17px] font-semibold tracking-tight text-text">Fission</span>
-      </Link>
-
-      <div className="flex items-center gap-6">
-        <Link href="/markets" className="text-[13px] font-medium text-textSec hover:text-text">
-          Markets
+    <>
+      <nav className="sticky top-0 z-50 flex items-center justify-between border-b border-border bg-bg/80 px-8 py-3 backdrop-blur">
+        <Link href="/" className="flex items-center gap-2.5">
+          <FissionLogo size={26} />
+          <span className="text-[17px] font-semibold tracking-tight text-text">Fission</span>
         </Link>
 
-        {isConnected && address ? (
-          auth.status === "authenticated" ? (
-            <div className="flex items-center gap-3">
-              <Link
-                href="/profile"
-                className="text-[13px] font-medium text-textSec hover:text-text"
-              >
-                Profile
-              </Link>
-              <button
-                type="button"
-                onClick={handleDisconnect}
-                className="flex items-center gap-1.5 rounded-[10px] border border-borderHover bg-white/[0.04] px-3.5 py-1.5 font-mono text-xs text-text"
-              >
-                <span className="size-[5px] rounded-full bg-success" />
-                {shortAddr(address)}
-              </button>
-            </div>
-          ) : auth.status === "loading" ? (
-            <button
-              type="button"
-              disabled
-              className="rounded-[10px] bg-white/10 px-5 py-2 text-[13px] font-semibold text-textSec"
-            >
-              Signing…
-            </button>
-          ) : (
-            <div className="flex items-center gap-2.5">
-              <span className="font-mono text-xs text-textSec">{shortAddr(address)}</span>
-              <button
-                type="button"
-                onClick={signIn}
-                className="rounded-[10px] bg-white px-4 py-1.5 text-[13px] font-semibold text-bg transition hover:opacity-90"
-              >
-                Sign In
-              </button>
-            </div>
-          )
-        ) : (
-          <div ref={pickerRef} className="relative">
-            <button
-              type="button"
-              onClick={() => setPickerOpen((v) => !v)}
-              disabled={isPending}
-              className="rounded-[10px] bg-white px-5 py-2 text-[13px] font-semibold text-bg transition hover:opacity-90 disabled:opacity-50"
-            >
-              {isPending ? "Connecting…" : "Connect"}
-            </button>
+        <div className="flex items-center gap-6">
+          <Link href="/markets" className="text-[13px] font-medium text-textSec hover:text-text">
+            Markets
+          </Link>
 
-            {pickerOpen && (
-              <div className="absolute right-0 mt-2 w-[220px] overflow-hidden rounded-xl border border-border bg-bgCard shadow-2xl">
-                <div className="border-b border-border px-3 py-2 text-[10px] uppercase tracking-[1px] text-textDim">
-                  Choose wallet
-                </div>
-                {connectors.filter(isAvailable).map((c) => (
-                  <button
-                    key={c.uid}
-                    type="button"
-                    onClick={() => {
-                      connect({ connector: c });
-                      setPickerOpen(false);
-                    }}
-                    className="block w-full px-3 py-2.5 text-left text-[13px] text-text transition hover:bg-white/[0.04]"
-                  >
-                    {connectorLabel(c)}
-                  </button>
-                ))}
-                <div className="border-t border-border px-3 py-2 text-[10px] leading-relaxed text-textDim">
-                  HashPack / Blade users:&nbsp;install&nbsp;the&nbsp;extension if not listed.
-                </div>
+          {isConnected && address ? (
+            auth.status === "authenticated" ? (
+              <div className="flex items-center gap-3">
+                <Link
+                  href="/profile"
+                  className="text-[13px] font-medium text-textSec hover:text-text"
+                >
+                  Profile
+                </Link>
+                <button
+                  type="button"
+                  onClick={handleDisconnect}
+                  className="flex items-center gap-1.5 rounded-[10px] border border-borderHover bg-white/[0.04] px-3.5 py-1.5 font-mono text-xs text-text"
+                >
+                  <span className="size-[5px] rounded-full bg-success" />
+                  {shortAddr(address)}
+                </button>
               </div>
-            )}
-          </div>
-        )}
-      </div>
-    </nav>
+            ) : auth.status === "loading" ? (
+              <button
+                type="button"
+                disabled
+                className="rounded-[10px] bg-white/10 px-5 py-2 text-[13px] font-semibold text-textSec"
+              >
+                Signing…
+              </button>
+            ) : (
+              <div className="flex items-center gap-2.5">
+                <span className="font-mono text-xs text-textSec">{shortAddr(address)}</span>
+                <button
+                  type="button"
+                  onClick={signIn}
+                  disabled={onWrongChain}
+                  className="rounded-[10px] bg-white px-4 py-1.5 text-[13px] font-semibold text-bg transition hover:opacity-90 disabled:opacity-50"
+                >
+                  Sign In
+                </button>
+              </div>
+            )
+          ) : (
+            <button
+              type="button"
+              onClick={handleConnect}
+              disabled={isPending || !wcAvailable}
+              title={
+                !wcAvailable
+                  ? "WalletConnect not configured (NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID missing)"
+                  : "Connect via WalletConnect (HashPack, Blade, Kabila)"
+              }
+              className="rounded-[10px] bg-white px-5 py-2 text-[13px] font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isPending ? "Connecting…" : !wcAvailable ? "Wallet unavailable" : "Connect"}
+            </button>
+          )}
+        </div>
+      </nav>
+
+      {onWrongChain && (
+        <div className="border-b border-error/30 bg-error/10 px-8 py-2 text-center text-[12px] text-error">
+          Wrong network — Fission only operates on Hedera Mainnet (chain 295).{" "}
+          <button
+            type="button"
+            onClick={() => switchChain({ chainId: HEDERA_MAINNET_CHAIN_ID })}
+            className="underline underline-offset-2"
+          >
+            Switch network
+          </button>
+        </div>
+      )}
+    </>
   );
 }
