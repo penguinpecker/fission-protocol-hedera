@@ -198,12 +198,10 @@ function BgGradient() {
 function AtomVisual() {
   return (
     <div className="relative size-[140px]">
-      <div className="absolute inset-0 animate-[orbit_24s_linear_infinite]">
-        <FissionLogo size={140} color="rgba(255,255,255,0.95)" strokeWidth={2.6} />
-      </div>
+      <FissionLogo size={140} color="rgba(255,255,255,0.95)" strokeWidth={2.6} animate />
       <div
         aria-hidden
-        className="absolute inset-0 animate-[pulseGlow_3.5s_ease-in-out_infinite] rounded-full blur-2xl"
+        className="pointer-events-none absolute inset-0 animate-[pulseGlow_3.5s_ease-in-out_infinite] rounded-full blur-2xl"
         style={{ background: "radial-gradient(circle, rgba(125,211,252,0.28), transparent 60%)" }}
       />
     </div>

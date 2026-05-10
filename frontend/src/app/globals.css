@@ -25,6 +25,16 @@
   to   { transform: rotate(360deg); }
 }
 
+/* FissionLogo orbital animations — each <g> rotates around the SVG center
+   (50,50 in the 0 0 100 100 viewBox). Different durations + one reverse
+   create the "planetary" multi-orbit effect; nucleus has its own quicker
+   spin to suggest protons. transform-origin must be in viewBox units, not
+   percent, because SVG inner-group bounding boxes confuse fill-box. */
+.fl-orbit-1 { transform-origin: 50px 50px; animation: orbit 14s linear infinite; }
+.fl-orbit-2 { transform-origin: 50px 50px; animation: orbit 22s linear infinite reverse; }
+.fl-orbit-3 { transform-origin: 50px 50px; animation: orbit 9s  linear infinite; }
+.fl-nucleus { transform-origin: 50px 50px; animation: orbit 4s  linear infinite; }
+
 @keyframes pulseGlow {
   0%, 100% { opacity: 0.6; transform: scale(0.95); }
   50%      { opacity: 1;   transform: scale(1.05); }
