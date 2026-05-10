@@ -21,6 +21,17 @@ const PatchSchema = z.object({
     .string()
     .url()
     .max(2048)
+    .refine(
+      (u) => {
+        try {
+          const proto = new URL(u).protocol;
+          return proto === "http:" || proto === "https:";
+        } catch {
+          return false;
+        }
+      },
+      { message: "avatar_url must be http(s)" }
+    )
     .nullable()
     .optional(),
   twitter_handle: z

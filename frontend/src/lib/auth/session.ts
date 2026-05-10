@@ -34,6 +34,11 @@ function getSecret(): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
+// Fail fast at module import: if SESSION_SECRET is missing or too short,
+// surface the error on first import rather than letting a silently-
+// misconfigured server hand out invalid sessions on the first auth request.
+getSecret();
+
 export interface Session {
   address: string; // lowercased EVM hex
   siwe_at: number;
