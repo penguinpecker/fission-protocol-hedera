@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useState } from "react";
 import { useChainId } from "wagmi";
 import { Nav } from "@/components/Nav";
+import { Footer } from "@/components/Footer";
+import { WalletGate } from "@/components/WalletGate";
 import { ADDRESSES, isDeployed } from "@/lib/addresses";
 import {
   useMarketCount,
@@ -68,6 +70,7 @@ export default function MarketsPage() {
     <main className="min-h-screen">
       <Nav />
 
+      <WalletGate>
       <section className="mx-auto max-w-[1100px] px-6 py-10">
         <header className="mb-10 flex items-end justify-between gap-6">
           <div>
@@ -155,6 +158,8 @@ export default function MarketsPage() {
           </div>
         )}
       </section>
+      </WalletGate>
+      <Footer />
     </main>
   );
 }

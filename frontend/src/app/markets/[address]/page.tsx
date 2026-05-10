@@ -5,6 +5,8 @@ import { use, useMemo, useState } from "react";
 import { useAccount, useWriteContract } from "wagmi";
 import { parseUnits } from "viem";
 import { Nav } from "@/components/Nav";
+import { Footer } from "@/components/Footer";
+import { WalletGate } from "@/components/WalletGate";
 import { useMarketDetail, useUserPosition, MarketDetail } from "@/hooks/useMarket";
 import { ADDRESSES, isDeployed } from "@/lib/addresses";
 import { erc20WriteAbi, routerAbi, marketWriteAbi } from "@/lib/abis-write";
@@ -43,9 +45,12 @@ export default function MarketDetailPage({ params }: { params: Promise<{ address
     return (
       <main className="min-h-screen">
         <Nav />
-        <div className="mx-auto max-w-[1100px] px-6 py-10">
-          <div className="h-32 animate-pulse rounded-2xl border border-border bg-bgCard" />
-        </div>
+        <WalletGate>
+          <div className="mx-auto max-w-[1100px] px-6 py-10">
+            <div className="h-32 animate-pulse rounded-2xl border border-border bg-bgCard" />
+          </div>
+        </WalletGate>
+        <Footer />
       </main>
     );
   }
@@ -57,6 +62,7 @@ export default function MarketDetailPage({ params }: { params: Promise<{ address
     <main className="min-h-screen">
       <Nav />
 
+      <WalletGate>
       <div className="mx-auto max-w-[1100px] px-6 py-7">
         <div className="mb-7 flex items-center gap-2 text-[13px] text-textSec">
           <Link href="/markets" className="hover:text-text">
@@ -118,6 +124,8 @@ export default function MarketDetailPage({ params }: { params: Promise<{ address
           <PostExpiryActions market={market} position={position} />
         )}
       </div>
+      </WalletGate>
+      <Footer />
     </main>
   );
 }

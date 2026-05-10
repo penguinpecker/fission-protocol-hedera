@@ -5,8 +5,8 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Fission Protocol — yield tokenization on Hedera",
   description:
-    "Split yield-bearing positions (HBARX liquid staking, SaucerSwap V2 LP) into tradeable Principal and Yield tokens. Pendle V2-faithful, audit-gated.",
-  metadataBase: new URL("https://fission.example"),
+    "Split SaucerSwap V2 LP yield into fixed-rate Principal Tokens (PT) and variable-yield tokens (YT). Pendle V2-faithful, HTS-native, live on Hedera mainnet.",
+  metadataBase: new URL("https://www.fissionp.com"),
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

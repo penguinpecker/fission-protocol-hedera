@@ -307,3 +307,39 @@ cast call 0x...009fb0b3 "hasRole(bytes32,address)(bool)" \
   0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90 \
   --rpc-url $HASHIO_RPC
 ```
+
+---
+
+## Appendix B — Known frontend issues (2026-05-10 audit)
+
+Captured during the launch audit. All non-blocking for v1; flag for v1.1 polish.
+
+### B-1 — Slippage `minOut` math is dimensionally wrong on Buy PT / Buy YT
+
+**Where:** `frontend/src/app/markets/[address]/page.tsx` TradeCard.onTrade
+
+**Symptom:** the user enters a SY amount; the code computes `minOut = (amt * (10_000 - slippageBps)) / 10_000` and passes that as the `minOut` arg to `swapExactSyForPt(...)` and `buyYT(...)`. But `minOut` is denominated in PT / YT units, not SY units — at any non-trivial price (PT ≠ 1.0 SY), the protection is either trivially loose (PT trades below par → SY-units > PT-units → minOut effectively zero protection) or trivially tight (post-expiry pull-to-par).
+
+**Impact:** users do not get the slippage protection they think they're getting. No fund loss — the worst case is a swap that should have been blocked goes through.
+
+**Fix (v1.1):** add an off-chain quote step (`useReadContract` for a static-call preview of the swap) and compute `minOut` in the correct units.
+
+### B-2 — No allowance / association preview before trade
+
+**Where:** TradeCard
+
+**Symptom:** the trade button fires `writeContract` directly. If the user has not approved the router for SY transfers OR has not associated PT/YT/LP HTS tokens with their account, the tx reverts with an unhelpful error.
+
+**Fix (v1.1):** preflight `IERC20.allowance(user, router)` and `Mirror Node /accounts/{id}/tokens` to check association. Show "Approve" / "Associate tokens" CTAs before "Buy".
+
+### B-3 — Trade success has no toast / activity log
+
+Tx hash is computed but `isPending` is the only post-submit state. No success toast, no link to HashScan, no balance refetch indicator.
+
+### B-4 — `/markets` and `/markets/[address]` do not show banner during chain mismatch
+
+The Nav shows the wrong-chain banner, but a user landing directly on a market URL while on the wrong chain may not realize the trade button is disabled because of network mismatch. Consider per-page banner echo.
+
+### B-5 — Implied APY ≠ realized APY clarification
+
+The market detail page shows `Implied APY` (derived from `lastLnImpliedRate`). It does NOT show realized YT yield from harvested fees. New users may conflate the two. Consider adding "Realized 7d / 30d" stats once the indexer accumulates history.
