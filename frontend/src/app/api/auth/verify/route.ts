@@ -34,23 +34,41 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "siwe_parse" }, { status: 400 });
   }
 
-  // Domain pinning: the SIWE message must claim our origin.
-  const expectedDomain =
-    process.env.NEXT_PUBLIC_APP_DOMAIN ||
-    new URL(req.headers.get("origin") || `http://${req.headers.get("host") ?? "localhost"}`).host;
+  // Domain pinning: the SIWE message must claim our origin. Derive from the
+  // actual request to avoid env-mismatch traps. We accept `fissionp.com`,
+  // `www.fissionp.com`, or any localhost/preview host the request came from.
+  const originHost = (() => {
+    const origin = req.headers.get("origin");
+    if (origin) {
+      try {
+        return new URL(origin).host;
+      } catch {
+        /* fall through */
+      }
+    }
+    return req.headers.get("host") ?? "localhost";
+  })();
 
   let verified;
   try {
     verified = await siwe.verify({
       signature,
-      domain: expectedDomain,
+      domain: originHost,
       nonce: siwe.nonce,
     });
-  } catch {
-    return NextResponse.json({ error: "siwe_verify" }, { status: 401 });
+  } catch (e) {
+    console.error("siwe verify threw", { originHost, msgDomain: siwe.domain, err: String(e) });
+    return NextResponse.json(
+      { error: "siwe_verify_threw", expected: originHost, gotInMessage: siwe.domain, detail: String(e) },
+      { status: 401 },
+    );
   }
   if (!verified.success) {
-    return NextResponse.json({ error: "siwe_verify" }, { status: 401 });
+    console.error("siwe verify failed", { originHost, msgDomain: siwe.domain });
+    return NextResponse.json(
+      { error: "siwe_verify_failed", expected: originHost, gotInMessage: siwe.domain },
+      { status: 401 },
+    );
   }
   if (siwe.chainId !== EXPECTED_CHAIN_ID) {
     return NextResponse.json({ error: "wrong_chain" }, { status: 400 });

@@ -84,13 +84,21 @@ export function Nav() {
             ) : (
               <div className="flex items-center gap-2.5">
                 <span className="font-mono text-xs text-textSec">{shortAddr(address)}</span>
+                {auth.status === "error" && (
+                  <span
+                    title={auth.error}
+                    className="max-w-[200px] truncate rounded border border-warning/30 bg-warning/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[1px] text-warning"
+                  >
+                    {auth.error}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={signIn}
                   disabled={onWrongChain}
                   className="rounded-[10px] bg-white px-4 py-1.5 text-[13px] font-semibold text-bg transition hover:opacity-90 disabled:opacity-50"
                 >
-                  Sign In
+                  {auth.status === "error" ? "Try again" : "Sign In"}
                 </button>
               </div>
             )

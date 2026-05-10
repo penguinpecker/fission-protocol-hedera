@@ -28,14 +28,16 @@ export function useSiweAuth() {
   const { signMessageAsync } = useSignMessage();
   const [state, setState] = useState<SiweAuthState>({ status: "idle" });
 
-  // On mount, ask the server who we are (cookie-based).
+  // Ask the server who we are (cookie-based) on mount AND whenever the wallet
+  // connection state changes — keeps Nav and Profile instances in sync after
+  // a successful sign-in even if they mounted before the cookie existed.
   useEffect(() => {
     let cancelled = false;
     fetch("/api/auth/me", { credentials: "include" })
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
-        if (cancelled || !data) return;
-        if (typeof data.address === "string" && /^0x[a-f0-9]{40}$/.test(data.address)) {
+        if (cancelled) return;
+        if (data && typeof data.address === "string" && /^0x[a-f0-9]{40}$/.test(data.address)) {
           setState({ status: "authenticated", address: data.address as `0x${string}` });
         }
       })
@@ -43,7 +45,7 @@ export function useSiweAuth() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isConnected, address]);
 
   // Wallet disconnect or address change → clear server session.
   useEffect(() => {
@@ -96,7 +98,14 @@ export function useSiweAuth() {
       });
       if (!verifyRes.ok) {
         const j = await verifyRes.json().catch(() => ({}));
-        throw new Error((j as { error?: string }).error ?? "verify_failed");
+        const j2 = j as { error?: string; expected?: string; gotInMessage?: string; detail?: string };
+        const parts = [
+          j2.error ?? `http_${verifyRes.status}`,
+          j2.expected ? `expected=${j2.expected}` : null,
+          j2.gotInMessage ? `got=${j2.gotInMessage}` : null,
+          j2.detail ? `detail=${j2.detail.slice(0, 80)}` : null,
+        ].filter(Boolean);
+        throw new Error(parts.join(" · "));
       }
       setState({ status: "authenticated", address: address as `0x${string}` });
     } catch (e) {
