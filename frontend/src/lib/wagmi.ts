@@ -38,6 +38,24 @@ export const wagmiConfig = createConfig({
             icons: ["https://www.fissionp.com/icon.png"],
           },
           showQrModal: true,
+          // Reown explorer wallet IDs — verified against
+          // https://explorer-api.walletconnect.com/v3/wallets?search=...
+          // HashPack and Kabila both advertise eip155:295 (Hedera mainnet EVM)
+          // so they will negotiate the wagmi session correctly. Blade is
+          // omitted: its Reown listing currently exposes hedera:mainnet but
+          // NOT eip155:295, so featuring it would lead to dead-clicks.
+          qrModalOptions: {
+            themeMode: "dark",
+            // wagmi v2 ships @walletconnect/modal v2 (legacy API), so the
+            // option name is explorerRecommendedWalletIds, not featuredWalletIds
+            // (Reown AppKit's newer naming).
+            explorerRecommendedWalletIds: [
+              // HashPack
+              "a29498d225fa4b13468ff4d6cf4ae0ea4adcbd95f07ce8a843a1dee10b632f3f",
+              // Kabila
+              "c40c24b39500901a330a025938552d70def4890fffe9bd315046bd33a2ece24d",
+            ],
+          },
         }),
       ]
     : [],
