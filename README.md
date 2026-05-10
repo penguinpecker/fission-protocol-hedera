@@ -31,6 +31,13 @@ deployments/ Per-network address ledger
 | `ActionRouter`          | Multi-step user flows (deposit → split → swap)                         |
 | 2-of-2 ThresholdKey + OZ Timelock | Hedera-native 2-of-2 account → 48h Timelock → admin of every contract |
 
+## Docs
+
+- [`docs/ECONOMICS.md`](docs/ECONOMICS.md) — how PT, YT, LP, and SY actually accumulate value. Worked examples for every role and scenario. Required reading before using the UI.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system design and contract topology.
+- [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) — phased build plan and current state.
+- [`docs/MAINNET_DEPLOY.md`](docs/MAINNET_DEPLOY.md) — operator runbook for mainnet ops.
+
 ## License
 
 MIT

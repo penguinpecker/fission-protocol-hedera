@@ -99,7 +99,7 @@ export default function MarketDetailPage({ params }: { params: Promise<{ address
         )}
 
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_360px]">
-          <PositionInfoCard detail={detail} expired={expired} />
+          <PositionInfoCard detail={detail} expired={expired} strategy={strategy} />
 
           <TradeCard
             market={market}
@@ -140,30 +140,101 @@ function UserStat({ label, v, accent }: { label: string; v: string; accent?: "su
   );
 }
 
-function PositionInfoCard({ detail, expired }: { detail: MarketDetail; expired: boolean }) {
+function PositionInfoCard({ detail, expired, strategy }: { detail: MarketDetail; expired: boolean; strategy: Strategy }) {
+  const content = STRATEGY_EXPLAINERS[strategy];
   return (
     <div className="rounded-2xl border border-border bg-bgCard p-6">
-      <h3 className="mb-3 text-sm font-semibold">Strategy guide</h3>
-      <ul className="space-y-3 text-[13px] leading-relaxed text-textSec">
-        <li>
-          <span className="text-text">Buy PT</span> — lock in fixed yield. PT trades at a discount and redeems for{" "}
-          <code className="text-xs text-textDim">amount · 1e18 / globalIndex</code> SY at maturity.
-        </li>
-        <li>
-          <span className="text-text">Buy YT</span> — leverage on rising rates. The router splits your SY, sells PT in
-          the pool, and returns YT + the SY proceeds. Your effective YT cost = SY paid − refund.
-        </li>
-        <li>
-          <span className="text-text">Mint PT+YT</span> — pure split, no fee. Equal PT + YT minted 1:1 against the SY
-          you deposit. Ideal if you plan to LP both sides or sell one off later.
-        </li>
-        {expired && (
-          <li className="text-error">Market expired — only redeem and claim-yield are available.</li>
-        )}
-      </ul>
+      <div className="mb-4 flex items-baseline justify-between">
+        <h3 className="text-sm font-semibold">{content.title}</h3>
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[1px] ${content.riskTone}`}>
+          {content.riskLabel}
+        </span>
+      </div>
+
+      <p className="mb-4 text-[13px] leading-relaxed text-textSec">{content.summary}</p>
+
+      <div className="mb-4 space-y-3 text-[13px] leading-relaxed">
+        <div>
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[1px] text-textDim">How yield reaches you</div>
+          <p className="text-textSec">{content.yieldSource}</p>
+        </div>
+        <div>
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[1px] text-textDim">Worked example</div>
+          <p className="whitespace-pre-line text-textSec">{content.example}</p>
+        </div>
+        <div>
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[1px] text-textDim">Risk profile</div>
+          <p className="text-textSec">{content.risk}</p>
+        </div>
+      </div>
+
+      {expired && (
+        <p className="mb-4 rounded-lg border border-error/40 bg-error/5 px-3 py-2 text-[12px] text-error">
+          Market expired — AMM is closed. PT redeems 1:1 with SY. YT keeps earning V3 fees forever; do not burn it.
+        </p>
+      )}
+
+      <a
+        href="https://github.com/penguinpecker/fission-protocol-hedera/blob/main/docs/ECONOMICS.md"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1 text-[12px] font-medium text-textDim transition hover:text-text"
+      >
+        Read the full economics doc →
+      </a>
     </div>
   );
 }
+
+const STRATEGY_EXPLAINERS = {
+  pt: {
+    title: "Buy PT — fixed yield",
+    riskLabel: "Low risk",
+    riskTone: "bg-success/10 text-success",
+    summary:
+      "PT is a zero-coupon bond on SY. You buy at a discount today, redeem 1:1 for SY at maturity. The discount is your yield, locked in at buy time.",
+    yieldSource:
+      "Your yield is paid by YT buyers — speculators on the other side of the trade who pay a premium for variable yield. The protocol holds the SY for you the entire term; redemption is 1:1 and unconditional.",
+    example:
+      "• Buy 1 PT for 0.985 SY (1.5% discount over 90 days ≈ 6% APY)\n• 90 days later, redeem 1 PT → receive 1 SY\n• Profit: 0.015 SY (the discount), regardless of what V3 fees actually do",
+    risk:
+      "Fixed-rate from your perspective. Main risks: SY value moves with WHBAR/USDC pool (impermanent-loss style), smart contract risk, and Hedera/SaucerSwap platform risk. Protocol always has 1 SY waiting per PT — your principal is on-chain and reserved.",
+  },
+  yt: {
+    title: "Buy YT — variable yield",
+    riskLabel: "High risk",
+    riskTone: "bg-error/10 text-error",
+    summary:
+      "YT is a leveraged claim on SaucerSwap V3 trading fees. You pay a premium today, receive USDC + WHBAR continuously as the V3 pool earns fees. YT does NOT expire — it earns forever.",
+    yieldSource:
+      "SaucerSwap V3 traders swap WHBAR↔USDC and pay a 0.3% fee. Our SY's NFT collects its pro-rata share. Anyone calling harvest() pulls those fees into the SY, which distributes them to YT holders proportional to YT balance. You can claim anytime.",
+    example:
+      "• Buy $100 of YT at 0.015 SY/YT (≈ 6% implied APY)\n• If V3 volume comes in HIGHER → claim $250 over 90 days = 150% gain\n• If V3 volume comes in LOWER → claim $33 over 90 days = 67% loss\n• Either way, YT keeps earning forever after expiry — your loss can recover with time",
+    risk:
+      "Variable. Effective leverage on V3 yield ≈ 1 / implied-rate (≈ 67× at 1.5%). You can lose most of your entry capital if fees underperform — but YT itself never goes to 0; it stays a perpetual fee claim. Maximum loss capped at entry cost.",
+  },
+  split: {
+    title: "Split SY → PT + YT (no fee)",
+    riskLabel: "Neutral",
+    riskTone: "bg-textDim/10 text-textDim",
+    summary:
+      "Pure 1:1 mint. 1 SY in → 1 PT + 1 YT out. No AMM trade, no slippage, no fee. Use when you want both sides — to LP, to sell one half, or to hedge.",
+    yieldSource:
+      "You're not buying yield here — you're creating both halves of it. The PT side will pay back 1 SY at maturity. The YT side will earn V3 fees over time. Selling PT for SY locks in fixed-rate proceeds; selling YT for SY locks in the implied yield premium up front.",
+    example:
+      "• Deposit 1 SY → receive 1 PT + 1 YT\n• Common play: sell PT in AMM for ~0.985 SY, sell YT for ~0.015 SY → recover 1 SY (break-even, but you've taken zero directional risk)\n• LP play: deposit both sides into the AMM and earn 99% of swap fees",
+    risk:
+      "Neutral at the moment of split. Risk shows up in what you do with PT and YT after. Splitting itself can't lose you money beyond AMM fees on subsequent sells.",
+  },
+} satisfies Record<Strategy, {
+  title: string;
+  riskLabel: string;
+  riskTone: string;
+  summary: string;
+  yieldSource: string;
+  example: string;
+  risk: string;
+}>;
 
 interface TradeCardProps {
   market: `0x${string}`;
