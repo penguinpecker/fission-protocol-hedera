@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <!-- top diamond half -->
+  <path d="M 100 22 L 174 96 L 100 96 Z" fill="#fafafa"/>
+  <!-- bottom diamond half offset -->
+  <path d="M 100 104 L 26 104 L 100 178 Z" fill="#fafafa"/>
+  <path d="M 100 104 L 174 104 L 100 178 Z" fill="#fafafa" opacity="0.55"/>
+  <!-- gap accent -->
+  <line x1="20" y1="100" x2="180" y2="100" stroke="#fafafa" stroke-width="2" opacity="0.4"/>
+</svg>

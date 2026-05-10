@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <!-- single thick orbit -->
+  <ellipse cx="100" cy="100" rx="84" ry="34" transform="rotate(-25 100 100)" stroke="#fafafa" stroke-width="6" fill="none"/>
+  <!-- outgoing rays -->
+  <g stroke="#fafafa" stroke-width="5" stroke-linecap="round">
+    <line x1="100" y1="100" x2="100" y2="40"/>
+    <line x1="100" y1="100" x2="156" y2="138"/>
+    <line x1="100" y1="100" x2="44" y2="138"/>
+  </g>
+  <circle cx="100" cy="40" r="9" fill="#fafafa"/>
+  <circle cx="156" cy="138" r="7" fill="#fafafa"/>
+  <circle cx="44" cy="138" r="7" fill="#fafafa"/>
+  <circle cx="100" cy="100" r="14" fill="#fafafa"/>
+</svg>

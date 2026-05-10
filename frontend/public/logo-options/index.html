@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fission · logo options</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #09090b;
+        --card: #111113;
+        --line: rgba(255, 255, 255, 0.08);
+        --text: #fafafa;
+        --dim: #a1a1aa;
+      }
+      html, body { background: var(--bg); color: var(--text); margin: 0; }
+      body {
+        font: 14px/1.5 ui-sans-serif, -apple-system, "SF Pro", system-ui, sans-serif;
+        padding: 64px 32px 96px;
+      }
+      .wrap { max-width: 1180px; margin: 0 auto; }
+      h1 {
+        font-size: 36px;
+        font-weight: 300;
+        letter-spacing: -1px;
+        margin: 0 0 8px;
+      }
+      .lede { color: var(--dim); margin-bottom: 56px; max-width: 640px; }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 16px;
+      }
+      @media (min-width: 900px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 28px 28px 24px;
+      }
+      .card header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 24px;
+      }
+      .card .name {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        color: var(--dim);
+      }
+      .card h2 {
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: -0.4px;
+        margin: 0;
+      }
+      .sizes {
+        display: flex;
+        align-items: center;
+        gap: 36px;
+        padding: 18px 0 8px;
+      }
+      .size-cell {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+      }
+      .size-cell img { display: block; }
+      .size-cell .label {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 10px;
+        color: var(--dim);
+      }
+      .with-wordmark {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+        margin-top: 18px;
+      }
+      .wordmark {
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: -0.5px;
+      }
+      .footer {
+        margin-top: 56px;
+        padding-top: 24px;
+        border-top: 1px solid var(--line);
+        color: var(--dim);
+        font-size: 12px;
+      }
+      a { color: var(--text); text-decoration: none; border-bottom: 1px dotted var(--dim); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Logo options</h1>
+      <p class="lede">
+        Eight directions for the Fission mark. Each rendered at the four sizes used in the app
+        (14, 26, 56, 88px) and with the wordmark beside it. Pick one — say the number — and I'll
+        wire it into the FissionLogo component everywhere.
+      </p>
+
+      <div class="grid">
+        <!-- Cards generated below -->
+        <div class="card">
+          <header>
+            <h2>01 · Complete atom</h2>
+            <span class="name">Closest to current</span>
+          </header>
+          <div class="sizes">
+            <div class="size-cell"><img src="01-complete-atom.svg" width="14" height="14" alt=""/><span class="label">14</span></div>
+            <div class="size-cell"><img src="01-complete-atom.svg" width="26" height="26" alt=""/><span class="label">26</span></div>
+            <div class="size-cell"><img src="01-complete-atom.svg" width="56" height="56" alt=""/><span class="label">56</span></div>
+            <div class="size-cell"><img src="01-complete-atom.svg" width="88" height="88" alt=""/><span class="label">88</span></div>
+          </div>
+          <div class="with-wordmark">
+            <img src="01-complete-atom.svg" width="26" height="26" alt=""/>
+            <span class="wordmark">Fission</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <header>
+            <h2>02 · Fission atom</h2>
+            <span class="name">Atom with electrons</span>
+          </header>
+          <div class="sizes">
+            <div class="size-cell"><img src="02-fission-atom.svg" width="14" height="14" alt=""/><span class="label">14</span></div>
+            <div class="size-cell"><img src="02-fission-atom.svg" width="26" height="26" alt=""/><span class="label">26</span></div>
+            <div class="size-cell"><img src="02-fission-atom.svg" width="56" height="56" alt=""/><span class="label">56</span></div>
+            <div class="size-cell"><img src="02-fission-atom.svg" width="88" height="88" alt=""/><span class="label">88</span></div>
+          </div>
+          <div class="with-wordmark">
+            <img src="02-fission-atom.svg" width="26" height="26" alt=""/>
+            <span class="wordmark">Fission</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <header>
+            <h2>03 · Split beam</h2>
+            <span class="name">Y-shaped fork</span>
+          </header>
+          <div class="sizes">
+            <div class="size-cell"><img src="03-split-beam.svg" width="14" height="14" alt=""/><span class="label">14</span></div>
+            <div class="size-cell"><img src="03-split-beam.svg" width="26" height="26" alt=""/><span class="label">26</span></div>
+            <div class="size-cell"><img src="03-split-beam.svg" width="56" height="56" alt=""/><span class="label">56</span></div>
+            <div class="size-cell"><img src="03-split-beam.svg" width="88" height="88" alt=""/><span class="label">88</span></div>
+          </div>
+          <div class="with-wordmark">
+            <img src="03-split-beam.svg" width="26" height="26" alt=""/>
+            <span class="wordmark">Fission</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <header>
+            <h2>04 · Cleaved disc</h2>
+            <span class="name">Solid, split in half</span>
+          </header>
+          <div class="sizes">
+            <div class="size-cell"><img src="04-cleaved-disc.svg" width="14" height="14" alt=""/><span class="label">14</span></div>
+            <div class="size-cell"><img src="04-cleaved-disc.svg" width="26" height="26" alt=""/><span class="label">26</span></div>
+            <div class="size-cell"><img src="04-cleaved-disc.svg" width="56" height="56" alt=""/><span class="label">56</span></div>
+            <div class="size-cell"><img src="04-cleaved-disc.svg" width="88" height="88" alt=""/><span class="label">88</span></div>
+          </div>
+          <div class="with-wordmark">
+            <img src="04-cleaved-disc.svg" width="26" height="26" alt=""/>
+            <span class="wordmark">Fission</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <header>
+            <h2>05 · Concentric</h2>
+            <span class="name">Three nested rings</span>
+          </header>
+          <div class="sizes">
+            <div class="size-cell"><img src="05-concentric.svg" width="14" height="14" alt=""/><span class="label">14</span></div>
+            <div class="size-cell"><img src="05-concentric.svg" width="26" height="26" alt=""/><span class="label">26</span></div>
+            <div class="size-cell"><img src="05-concentric.svg" width="56" height="56" alt=""/><span class="label">56</span></div>
+            <div class="size-cell"><img src="05-concentric.svg" width="88" height="88" alt=""/><span class="label">88</span></div>
+          </div>
+          <div class="with-wordmark">
+            <img src="05-concentric.svg" width="26" height="26" alt=""/>
+            <span class="wordmark">Fission</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <header>
+            <h2>06 · Prism</h2>
+            <span class="name">Light splitting metaphor</span>
+          </header>
+          <div class="sizes">
+            <div class="size-cell"><img src="06-prism.svg" width="14" height="14" alt=""/><span class="label">14</span></div>
+            <div class="size-cell"><img src="06-prism.svg" width="26" height="26" alt=""/><span class="label">26</span></div>
+            <div class="size-cell"><img src="06-prism.svg" width="56" height="56" alt=""/><span class="label">56</span></div>
+            <div class="size-cell"><img src="06-prism.svg" width="88" height="88" alt=""/><span class="label">88</span></div>
+          </div>
+          <div class="with-wordmark">
+            <img src="06-prism.svg" width="26" height="26" alt=""/>
+            <span class="wordmark">Fission</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <header>
+            <h2>07 · Diamond split</h2>
+            <span class="name">Two-tone gem</span>
+          </header>
+          <div class="sizes">
+            <div class="size-cell"><img src="07-diamond-split.svg" width="14" height="14" alt=""/><span class="label">14</span></div>
+            <div class="size-cell"><img src="07-diamond-split.svg" width="26" height="26" alt=""/><span class="label">26</span></div>
+            <div class="size-cell"><img src="07-diamond-split.svg" width="56" height="56" alt=""/><span class="label">56</span></div>
+            <div class="size-cell"><img src="07-diamond-split.svg" width="88" height="88" alt=""/><span class="label">88</span></div>
+          </div>
+          <div class="with-wordmark">
+            <img src="07-diamond-split.svg" width="26" height="26" alt=""/>
+            <span class="wordmark">Fission</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <header>
+            <h2>08 · Orbit burst</h2>
+            <span class="name">Atom + emission rays</span>
+          </header>
+          <div class="sizes">
+            <div class="size-cell"><img src="08-orbit-burst.svg" width="14" height="14" alt=""/><span class="label">14</span></div>
+            <div class="size-cell"><img src="08-orbit-burst.svg" width="26" height="26" alt=""/><span class="label">26</span></div>
+            <div class="size-cell"><img src="08-orbit-burst.svg" width="56" height="56" alt=""/><span class="label">56</span></div>
+            <div class="size-cell"><img src="08-orbit-burst.svg" width="88" height="88" alt=""/><span class="label">88</span></div>
+          </div>
+          <div class="with-wordmark">
+            <img src="08-orbit-burst.svg" width="26" height="26" alt=""/>
+            <span class="wordmark">Fission</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer">
+        Source SVGs in <code>frontend/public/logo-options/*.svg</code>. Pick one (or remix) and tell me the number.
+        The active site logo lives at <code>frontend/src/components/FissionLogo.tsx</code> — currently fixed to the un-broken atom (option 01).
+      </div>
+    </div>
+  </body>
+</html>

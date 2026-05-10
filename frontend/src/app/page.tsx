@@ -127,15 +127,8 @@ function Hero() {
     <section className="relative overflow-hidden border-b border-border">
       <BgGradient />
       <div className="relative mx-auto flex max-w-[1180px] flex-col items-center px-6 pb-24 pt-20 text-center">
-        <div className="mb-10 animate-[fadeUp_0.6s_ease-out_both]">
+        <div className="mb-12 animate-[fadeUp_0.6s_ease-out_both]">
           <AtomVisual />
-        </div>
-
-        <div className="mb-8 inline-flex animate-[fadeUp_0.6s_ease-out_0.1s_both] items-center gap-2 rounded-full border border-border bg-white/[0.04] px-3.5 py-1.5">
-          <span className="size-[6px] animate-[pulse_2s_infinite] rounded-full bg-success" />
-          <span className="text-[11px] font-medium tracking-wide text-textSec">
-            Live on Hedera Mainnet · 2-of-2 Threshold + 48h Timelock
-          </span>
         </div>
 
         <h1 className="animate-[fadeUp_0.6s_ease-out_0.2s_both] text-[68px] font-light leading-[1.02] tracking-[-2.5px] md:text-[88px]">

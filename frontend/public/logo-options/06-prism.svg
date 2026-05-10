@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <!-- triangular prism outline -->
+  <path d="M 100 28 L 168 154 L 32 154 Z" stroke="#fafafa" stroke-width="6" stroke-linejoin="round" fill="none"/>
+  <!-- entering ray -->
+  <line x1="20" y1="92" x2="78" y2="92" stroke="#fafafa" stroke-width="5" stroke-linecap="round"/>
+  <!-- refracted rays exiting bottom -->
+  <line x1="120" y1="155" x2="140" y2="186" stroke="#fafafa" stroke-width="5" stroke-linecap="round"/>
+  <line x1="100" y1="155" x2="100" y2="186" stroke="#fafafa" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+  <line x1="80" y1="155" x2="60" y2="186" stroke="#fafafa" stroke-width="5" stroke-linecap="round" opacity="0.45"/>
+</svg>
