@@ -23,7 +23,7 @@ export function FissionLogo({ size = 30, color = "#ffffff", strokeWidth }: Props
       <ellipse cx="50" cy="50" rx="40" ry="15" transform="rotate(-20 50 50)" stroke={color} strokeWidth={sw} fill="none" />
       <ellipse cx="50" cy="50" rx="40" ry="15" transform="rotate(45 50 50)" stroke={color} strokeWidth={sw} fill="none" />
       <ellipse cx="50" cy="50" rx="40" ry="15" transform="rotate(110 50 50)" stroke={color} strokeWidth={sw} fill="none" />
-      <circle cx="50" cy="50" r={size > 50 ? 6 : 7} fill={color} />
+      <circle cx="50" cy="50" r={size > 50 ? 4.5 : 5.5} fill={color} />
     </svg>
   );
 }

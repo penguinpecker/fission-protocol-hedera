@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
-  <!-- left half -->
-  <path d="M 100 18 A 82 82 0 0 0 100 182 L 88 182 A 82 82 0 0 1 88 18 Z" fill="#fafafa"/>
-  <!-- right half offset -->
-  <path d="M 112 18 A 82 82 0 0 1 112 182 L 100 182 A 82 82 0 0 0 100 18 Z" fill="#fafafa"/>
-  <!-- inner accent -->
-  <circle cx="100" cy="100" r="14" fill="#09090b"/>
-  <circle cx="100" cy="100" r="6" fill="#fafafa"/>
-</svg>
