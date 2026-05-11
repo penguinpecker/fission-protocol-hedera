@@ -30,6 +30,10 @@ export interface MarketDetail {
  * field is undefined.
  */
 export function useMarketDetail(market: `0x${string}` | undefined) {
+  // allowFailure: true so a missing function on one market variant (e.g.
+  // FissionMarketRewards has no globalIndex() — it uses globalRewardIndex0/1
+  // for the two reward streams) doesn't reject the entire batch and starve
+  // the page of all market data.
   const marketRead = useReadContracts({
     contracts: market
       ? [
@@ -46,11 +50,17 @@ export function useMarketDetail(market: `0x${string}` | undefined) {
         ]
       : [],
     query: { enabled: !!market },
-    allowFailure: false,
+    allowFailure: true,
   });
 
-  const syAddr = marketRead.data?.[0] as `0x${string}` | undefined;
-  const lpAddr = marketRead.data?.[3] as `0x${string}` | undefined;
+  // Helper: pluck the result from a `{ status, result }` entry, returning
+  // undefined on a "failure" (function-not-found / revert).
+  const pluck = <T,>(entry: { status: "success"; result: T } | { status: "failure"; error: Error } | undefined): T | undefined =>
+    entry?.status === "success" ? entry.result : undefined;
+
+  const syAddr = pluck<`0x${string}`>(marketRead.data?.[0] as never);
+  const lpAddr = pluck<`0x${string}`>(marketRead.data?.[3] as never);
+
   const syRead = useReadContracts({
     contracts: syAddr
       ? [
@@ -60,11 +70,11 @@ export function useMarketDetail(market: `0x${string}` | undefined) {
         ]
       : [],
     query: { enabled: !!syAddr },
-    allowFailure: false,
+    allowFailure: true,
   });
 
-  // syShare and lp are both HTS tokens — read name + totalSupply via the ERC-20 facade.
-  const syShare = syRead.data?.[0] as `0x${string}` | undefined;
+  const syShare = pluck<`0x${string}`>(syRead.data?.[0] as never);
+
   const facadeRead = useReadContracts({
     contracts: syShare && lpAddr
       ? [
@@ -73,7 +83,7 @@ export function useMarketDetail(market: `0x${string}` | undefined) {
         ]
       : [],
     query: { enabled: !!syShare && !!lpAddr },
-    allowFailure: false,
+    allowFailure: true,
   });
 
   if (!marketRead.data || !syRead.data || !facadeRead.data) {
@@ -86,22 +96,39 @@ export function useMarketDetail(market: `0x${string}` | undefined) {
   const md = marketRead.data;
   const sd = syRead.data;
   const fd = facadeRead.data;
+
+  // sy / pt / yt / lp / expiry / lastLnImpliedRate / totalSy / totalPt are
+  // mandatory; if any are missing we can't render the page.
+  const sy = pluck<`0x${string}`>(md[0] as never);
+  const pt = pluck<`0x${string}`>(md[1] as never);
+  const yt = pluck<`0x${string}`>(md[2] as never);
+  const lp = pluck<`0x${string}`>(md[3] as never);
+  const expiry = pluck<bigint>(md[4] as never);
+  const totalSy = pluck<bigint>(md[6] as never);
+  const totalPt = pluck<bigint>(md[7] as never);
+  const lastLnImpliedRate = pluck<bigint>(md[8] as never);
+  const syShareToken = pluck<`0x${string}`>(sd[0] as never);
+
+  if (!sy || !pt || !yt || !lp || expiry === undefined || totalSy === undefined || totalPt === undefined || lastLnImpliedRate === undefined || !syShareToken) {
+    return { data: undefined, isLoading: false };
+  }
+
   const detail: MarketDetail = {
-    sy: md[0] as `0x${string}`,
-    syShare: sd[0] as `0x${string}`,
-    pt: md[1] as `0x${string}`,
-    yt: md[2] as `0x${string}`,
-    lp: md[3] as `0x${string}`,
-    expiry: md[4] as bigint,
-    scalarRoot: md[5] as bigint,
-    totalSy: md[6] as bigint,
-    totalPt: md[7] as bigint,
-    lastLnImpliedRate: md[8] as bigint,
-    lpSupply: fd[1] as bigint,
-    globalIndex: md[9] as bigint,
-    syName: fd[0] as string,
-    syDecimals: Number(sd[1]),
-    syExchangeRate: sd[2] as bigint,
+    sy,
+    syShare: syShareToken,
+    pt,
+    yt,
+    lp,
+    expiry,
+    scalarRoot: pluck<bigint>(md[5] as never) ?? 0n,
+    totalSy,
+    totalPt,
+    lastLnImpliedRate,
+    lpSupply: pluck<bigint>(fd[1] as never) ?? 0n,
+    globalIndex: pluck<bigint>(md[9] as never) ?? 0n, // FissionMarketRewards has no globalIndex; default 0
+    syName: pluck<string>(fd[0] as never) ?? "—",
+    syDecimals: Number(pluck<number>(sd[1] as never) ?? 18),
+    syExchangeRate: pluck<bigint>(sd[2] as never) ?? 0n,
   };
   return { data: detail, isLoading: false };
 }
@@ -123,21 +150,26 @@ export function useUserPosition(
       ]
     : [];
 
+  // allowFailure: true — previewYield doesn't exist on the rewards market,
+  // and an old account that never associated with one of the HTS tokens
+  // may revert on balanceOf. Default missing fields to 0n.
   const result = useReadContracts({
     contracts: reads,
     query: { enabled: reads.length > 0 },
-    allowFailure: false,
+    allowFailure: true,
   });
 
   if (!result.data) return { data: undefined, isLoading: result.isLoading };
   const r = result.data;
+  const pluck = <T,>(entry: { status: "success"; result: T } | { status: "failure"; error: Error } | undefined): T | undefined =>
+    entry?.status === "success" ? entry.result : undefined;
   return {
     data: {
-      sy: r[0] as bigint,
-      pt: r[1] as bigint,
-      yt: r[2] as bigint,
-      lp: r[3] as bigint,
-      claimableYield: r[4] as bigint,
+      sy: (pluck<bigint>(r[0] as never) ?? 0n),
+      pt: (pluck<bigint>(r[1] as never) ?? 0n),
+      yt: (pluck<bigint>(r[2] as never) ?? 0n),
+      lp: (pluck<bigint>(r[3] as never) ?? 0n),
+      claimableYield: (pluck<bigint>(r[4] as never) ?? 0n),
     },
     isLoading: false,
   };
