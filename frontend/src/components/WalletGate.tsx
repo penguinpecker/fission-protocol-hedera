@@ -16,7 +16,7 @@ import { LockIcon } from "@/components/Icons";
 export function WalletGate({ children }: { children: React.ReactNode }) {
   const { isConnected, address, status } = useAccount();
   const chainId = useChainId();
-  const { connectors, connect, isPending } = useConnect();
+  const { connectors, connect, isPending, error: connectError, reset: resetConnect } = useConnect();
   const { disconnect } = useDisconnect();
   const wcConnector = connectors[0];
 
@@ -39,13 +39,21 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
   // accepted the session but didn't share an EVM account. Common with
   // HashPack when no EVM-enabled account is active.
   const sessionWithoutAccount = isConnected && !address;
+  // The OTHER common case: wagmi rejected the connection entirely because
+  // the wallet returned an empty accounts array — useConnect.error captures
+  // this and isConnected stays false. Detect by message.
+  const isEmptyAccountsError =
+    !!connectError &&
+    /no accounts|empty array|did not authorize|user rejected/i.test(connectError.message || "");
 
   const handleConnect = () => {
     if (!wcConnector) return;
+    resetConnect();
     connect({ connector: wcConnector, chainId: HEDERA_MAINNET_CHAIN_ID });
   };
 
   const handleReset = () => {
+    resetConnect();
     disconnect();
   };
 
@@ -56,12 +64,12 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
       </div>
 
       <h1 className="text-[32px] font-light leading-[1.1] tracking-[-1px]">
-        {sessionWithoutAccount
+        {sessionWithoutAccount || isEmptyAccountsError
           ? "Wallet connected — no EVM account exposed"
           : "Connect your wallet to continue"}
       </h1>
 
-      {sessionWithoutAccount ? (
+      {sessionWithoutAccount || isEmptyAccountsError ? (
         <>
           <p className="mt-4 text-[14.5px] leading-relaxed text-textSec">
             Your wallet handshake completed but it didn&apos;t share an EVM account with the dApp. This usually means:
@@ -111,6 +119,15 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
           <p className="mt-5 text-[12px] text-textDim">
             HashPack &middot; Kabila &middot; (Blade WIP) &mdash; via Reown WalletConnect.
           </p>
+
+          {connectError && !isEmptyAccountsError && (
+            <div className="mt-6 max-w-[460px] rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-left text-[12px] leading-relaxed text-warning">
+              <div className="font-mono text-[10px] uppercase tracking-[1.5px]">
+                Connect failed
+              </div>
+              <div className="mt-1 break-words font-mono">{connectError.message}</div>
+            </div>
+          )}
         </>
       )}
 
