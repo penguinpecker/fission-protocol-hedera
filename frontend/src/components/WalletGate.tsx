@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { useAccount, useConnect, useChainId, useDisconnect } from "wagmi";
 import { HEDERA_MAINNET_CHAIN_ID } from "@/lib/wagmi";
 import { LockIcon } from "@/components/Icons";
+import { diag } from "@/lib/diag";
 
 /**
  * Wraps content that should only render when a wallet is connected to Hedera
@@ -19,6 +21,40 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
   const { connectors, connect, isPending, error: connectError, reset: resetConnect } = useConnect();
   const { disconnect } = useDisconnect();
   const wcConnector = connectors[0];
+
+  // Diag: emit a single event per state transition (debounced via ref) so
+  // we can see exactly which gate branch the user is sitting on.
+  const lastSnapshotRef = useRef<string>("");
+  useEffect(() => {
+    const snap = JSON.stringify({
+      isConnected,
+      address,
+      chainId,
+      status,
+      hasError: !!connectError,
+      errMsg: connectError?.message?.slice(0, 120),
+    });
+    if (snap !== lastSnapshotRef.current) {
+      lastSnapshotRef.current = snap;
+      diag("WalletGate", {
+        isConnected,
+        address,
+        chainId,
+        status,
+        wcConnectorId: wcConnector?.id ?? null,
+        connectError: connectError ? connectError.message : null,
+        connectErrorName: connectError ? connectError.name : null,
+        gateDecision:
+          isConnected && address && chainId === HEDERA_MAINNET_CHAIN_ID
+            ? "render-children"
+            : status === "reconnecting" || status === "connecting"
+              ? "skeleton"
+              : isConnected && !address
+                ? "no-account-diag"
+                : "connect-prompt",
+      });
+    }
+  }, [isConnected, address, chainId, status, connectError, wcConnector?.id]);
 
   if (isConnected && address && chainId === HEDERA_MAINNET_CHAIN_ID) {
     return <>{children}</>;

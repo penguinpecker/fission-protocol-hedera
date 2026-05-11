@@ -10,7 +10,7 @@ import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { useUserProfile, type ProfilePatch } from "@/hooks/useUserProfile";
 import { useCachedMarkets } from "@/hooks/useCachedMarkets";
 import { useMarketDetail, useUserPosition } from "@/hooks/useMarket";
-import { daysUntil, formatBigInt, impliedApyPct } from "@/hooks/useMarkets";
+import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ArrowOutIcon } from "@/components/Icons";
 
 /**
@@ -150,7 +150,6 @@ function MarketPositionRow({
     return <div className="h-24 animate-pulse rounded-2xl border border-border bg-bgCard" />;
   }
 
-  const dec = detail.syDecimals;
   const expired = Date.now() / 1000 >= Number(detail.expiry);
   const apy = impliedApyPct(detail.lastLnImpliedRate);
   const days = daysUntil(detail.expiry);
@@ -193,13 +192,13 @@ function MarketPositionRow({
       </div>
 
       <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-border md:grid-cols-5">
-        <PosCell label="SY" value={formatBigInt(position?.sy ?? 0n, dec, 4)} />
-        <PosCell label="PT" value={formatBigInt(position?.pt ?? 0n, dec, 4)} tone="success" />
-        <PosCell label="YT" value={formatBigInt(position?.yt ?? 0n, dec, 4)} tone="warning" />
-        <PosCell label="LP" value={formatBigInt(position?.lp ?? 0n, 18, 4)} />
+        <PosCell label="SY" value={formatCompact(position?.sy ?? 0n)} />
+        <PosCell label="PT" value={formatCompact(position?.pt ?? 0n)} tone="success" />
+        <PosCell label="YT" value={formatCompact(position?.yt ?? 0n)} tone="warning" />
+        <PosCell label="LP" value={formatCompact(position?.lp ?? 0n)} />
         <PosCell
           label="Claimable yield"
-          value={formatBigInt(position?.claimableYield ?? 0n, dec, 6)}
+          value={formatCompact(position?.claimableYield ?? 0n)}
           tone="success"
           accent
         />

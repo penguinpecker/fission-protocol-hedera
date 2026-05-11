@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { use, useMemo, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import { useAccount, useWriteContract } from "wagmi";
 import { parseUnits } from "viem";
 import { Nav } from "@/components/Nav";
+import { diag } from "@/lib/diag";
 import { Footer } from "@/components/Footer";
 import { WalletGate } from "@/components/WalletGate";
 import { useMarketDetail, useUserPosition, MarketDetail } from "@/hooks/useMarket";
@@ -14,6 +15,7 @@ import {
   impliedApyPct,
   daysUntil,
   formatBigInt,
+  formatCompact,
 } from "@/hooks/useMarkets";
 
 type Strategy = "pt" | "yt" | "split";
@@ -40,6 +42,19 @@ export default function MarketDetailPage({ params }: { params: Promise<{ address
     const apy = impliedApyPct(detail.lastLnImpliedRate);
     return apy;
   }, [detail]);
+
+  // Diag: surface whether the page entered the loading-skeleton branch or the
+  // actual market detail render — and whether useMarketDetail ever resolved.
+  useEffect(() => {
+    diag("MarketDetailPage", {
+      market,
+      user,
+      isLoading,
+      detailLoaded: !!detail,
+      syName: detail?.syName,
+      totalSyZero: detail ? detail.totalSy === 0n : null,
+    });
+  }, [market, user, isLoading, detail]);
 
   if (isLoading || !detail) {
     return (
@@ -88,19 +103,19 @@ export default function MarketDetailPage({ params }: { params: Promise<{ address
 
         <div className="mb-3 grid grid-cols-5 gap-px overflow-hidden rounded-2xl bg-border">
           <Stat label="Implied APY" value={ptPriceApy !== null ? `${ptPriceApy.toFixed(2)}%` : "—"} />
-          <Stat label="SY locked" value={formatBigInt(detail.totalSy, dec, 2)} mono />
-          <Stat label="PT in pool" value={formatBigInt(detail.totalPt, dec, 2)} mono />
-          <Stat label="LP supply" value={formatBigInt(detail.lpSupply, 18, 2)} mono />
+          <Stat label="SY locked" value={formatCompact(detail.totalSy)} mono />
+          <Stat label="PT in pool" value={formatCompact(detail.totalPt)} mono />
+          <Stat label="LP supply" value={formatCompact(detail.lpSupply)} mono />
           <Stat label="SY rate" value={formatBigInt(detail.syExchangeRate, 18, 4)} mono />
         </div>
 
         {position && user && (
           <div className="mb-6 grid grid-cols-5 gap-1.5">
-            <UserStat label="Your SY" v={formatBigInt(position.sy, dec)} />
-            <UserStat label="Your PT" v={formatBigInt(position.pt, dec)} />
-            <UserStat label="Your YT" v={formatBigInt(position.yt, dec)} />
-            <UserStat label="Your LP" v={formatBigInt(position.lp, 18)} />
-            <UserStat label="Claimable yield" v={formatBigInt(position.claimableYield, dec)} accent="success" />
+            <UserStat label="Your SY" v={formatCompact(position.sy)} />
+            <UserStat label="Your PT" v={formatCompact(position.pt)} />
+            <UserStat label="Your YT" v={formatCompact(position.yt)} />
+            <UserStat label="Your LP" v={formatCompact(position.lp)} />
+            <UserStat label="Claimable yield" v={formatCompact(position.claimableYield)} accent="success" />
           </div>
         )}
 

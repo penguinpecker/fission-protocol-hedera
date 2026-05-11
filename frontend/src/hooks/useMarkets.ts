@@ -123,3 +123,39 @@ export function formatBigInt(v: bigint, decimals: number, sigDigits = 4): string
   if (frac === 0n) return whole.toString();
   return `${whole}.${fracStr.replace(/0+$/, "") || "0"}`;
 }
+
+/**
+ * Compact magnitude formatter for raw bigints that don't divide cleanly
+ * by their declared decimals. The SY share token declares 18 decimals but
+ * actual minted amounts are far smaller, so `formatBigInt(v, 18)` collapses
+ * everything to "0.0". This shows raw magnitude with K/M/B/T suffix instead.
+ *
+ *   0n              → "0"
+ *   123n            → "123"
+ *   12345n          → "12.35K"
+ *   1619561093n     → "1.62B"
+ */
+export function formatCompact(v: bigint): string {
+  if (v === 0n) return "0";
+  const neg = v < 0n;
+  const abs = neg ? -v : v;
+
+  const TIERS: ReadonlyArray<{ threshold: bigint; divisor: bigint; suffix: string }> = [
+    { threshold: 1_000_000_000_000n, divisor: 1_000_000_000_000n, suffix: "T" }, // ≥1e12
+    { threshold: 1_000_000_000n,     divisor: 1_000_000_000n,     suffix: "B" }, // ≥1e9
+    { threshold: 1_000_000n,         divisor: 1_000_000n,         suffix: "M" }, // ≥1e6
+    { threshold: 1_000n,             divisor: 1_000n,             suffix: "K" }, // ≥1e3
+  ];
+
+  for (const t of TIERS) {
+    if (abs >= t.threshold) {
+      // Scale to fixed-point with 2 fractional digits, then format.
+      const scaled = (abs * 100n) / t.divisor;
+      const whole = scaled / 100n;
+      const frac = scaled % 100n;
+      const fracStr = frac.toString().padStart(2, "0");
+      return `${neg ? "-" : ""}${whole}.${fracStr}${t.suffix}`;
+    }
+  }
+  return `${neg ? "-" : ""}${abs.toString()}`;
+}

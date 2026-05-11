@@ -15,7 +15,7 @@ import {
   useSyMetadata,
   impliedApyPct,
   daysUntil,
-  formatBigInt,
+  formatCompact,
 } from "@/hooks/useMarkets";
 import { useWatchlist } from "@/hooks/useWatchlist";
 import { useCachedMarkets } from "@/hooks/useCachedMarkets";
@@ -107,53 +107,57 @@ export default function MarketsPage() {
         )}
 
         {markets.length > 0 && (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-3">
             {markets.map((m) => (
-              <div
+              <article
                 key={m.address}
-                className="relative grid grid-cols-[auto_2.2fr_1fr_1fr_1fr_1fr] items-center gap-4 rounded-2xl border border-border bg-bgCard px-6 py-5 transition hover:border-borderHover hover:bg-white/[0.02]"
+                className="group relative overflow-hidden rounded-2xl border border-border bg-bgCard transition hover:border-borderHover hover:bg-white/[0.02]"
               >
-                <StarButton
-                  watched={isWatched(chainId, m.address)}
-                  signedIn={signedIn}
-                  onClick={() => toggle(chainId, m.address)}
+                {/* subtle gradient flair on hover */}
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute -right-32 -top-32 size-64 rounded-full bg-[radial-gradient(circle,rgba(125,211,252,0.08),transparent_70%)] opacity-0 transition group-hover:opacity-100"
                 />
                 <Link
                   href={`/markets/${m.address}`}
-                  className="absolute inset-0 rounded-2xl"
+                  className="absolute inset-0 z-0 rounded-2xl"
                   aria-label={`View ${m.syName ?? m.symbol}`}
                 />
-                <div className="pointer-events-none">
-                  <div className="text-[15px] font-semibold">{m.syName ?? m.symbol}</div>
-                  <div className="text-xs text-textDim">
-                    {m.daysLeft}d to maturity · {m.expiryDate}
+                <div className="relative z-10 grid grid-cols-[auto_2.2fr_1fr_1fr_1fr_1fr] items-center gap-4 px-6 py-5">
+                  <StarButton
+                    watched={isWatched(chainId, m.address)}
+                    signedIn={signedIn}
+                    onClick={() => toggle(chainId, m.address)}
+                  />
+                  <div className="pointer-events-none">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[15px] font-semibold tracking-tight">{m.syName ?? m.symbol}</span>
+                      <span className="rounded-full bg-white/[0.05] px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[1.5px] text-textDim">
+                        {m.symbol.includes("rwd") ? "Rewards SY" : "Yield SY"}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-2 text-xs text-textDim">
+                      <span className={m.daysLeft <= 7 ? "text-warning" : ""}>
+                        {m.daysLeft}d to maturity
+                      </span>
+                      <span className="text-border">·</span>
+                      <span>{m.expiryDate}</span>
+                    </div>
+                  </div>
+                  <div className="pointer-events-none">
+                    <Stat label="Implied APY" value={`${m.impliedApy.toFixed(2)}%`} accent="white" />
+                  </div>
+                  <div className="pointer-events-none">
+                    <Stat label="SY locked" value={formatCompact(m.totalSy)} accent="silver" />
+                  </div>
+                  <div className="pointer-events-none">
+                    <Stat label="PT in pool" value={formatCompact(m.totalPt)} accent="silver" />
+                  </div>
+                  <div className="pointer-events-none">
+                    <Stat label="LP supply" value={formatCompact(m.lpSupply)} accent="silver" />
                   </div>
                 </div>
-                <div className="pointer-events-none">
-                  <Stat label="Implied APY" value={`${m.impliedApy.toFixed(2)}%`} accent="white" />
-                </div>
-                <div className="pointer-events-none">
-                  <Stat
-                    label="SY locked"
-                    value={`${formatBigInt(m.totalSy, m.syDecimals, 2)}`}
-                    accent="silver"
-                  />
-                </div>
-                <div className="pointer-events-none">
-                  <Stat
-                    label="PT in pool"
-                    value={`${formatBigInt(m.totalPt, m.syDecimals, 2)}`}
-                    accent="silver"
-                  />
-                </div>
-                <div className="pointer-events-none">
-                  <Stat
-                    label="LP supply"
-                    value={`${formatBigInt(m.lpSupply, 18, 2)}`}
-                    accent="silver"
-                  />
-                </div>
-              </div>
+              </article>
             ))}
           </div>
         )}
