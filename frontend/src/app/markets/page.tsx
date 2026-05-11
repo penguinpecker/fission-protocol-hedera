@@ -120,15 +120,17 @@ export default function MarketsPage() {
                 />
                 <Link
                   href={`/markets/${m.address}`}
-                  className="absolute inset-0 z-0 rounded-2xl"
+                  className="absolute inset-0 z-10 rounded-2xl"
                   aria-label={`View ${m.syName ?? m.symbol}`}
                 />
-                <div className="relative z-10 grid grid-cols-[auto_2.2fr_1fr_1fr_1fr_1fr] items-center gap-4 px-6 py-5">
-                  <StarButton
-                    watched={isWatched(chainId, m.address)}
-                    signedIn={signedIn}
-                    onClick={() => toggle(chainId, m.address)}
-                  />
+                <div className="pointer-events-none relative z-20 grid grid-cols-[auto_2.2fr_1fr_1fr_1fr_1fr] items-center gap-4 px-6 py-5">
+                  <div className="pointer-events-auto">
+                    <StarButton
+                      watched={isWatched(chainId, m.address)}
+                      signedIn={signedIn}
+                      onClick={() => toggle(chainId, m.address)}
+                    />
+                  </div>
                   <div className="pointer-events-none">
                     <div className="flex items-center gap-2">
                       <span className="text-[15px] font-semibold tracking-tight">{m.syName ?? m.symbol}</span>
