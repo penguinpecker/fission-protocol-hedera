@@ -34,9 +34,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "siwe_parse" }, { status: 400 });
   }
 
-  // Domain pinning: the SIWE message must claim our origin. Derive from the
-  // actual request to avoid env-mismatch traps. We accept `fissionp.com`,
-  // `www.fissionp.com`, or any localhost/preview host the request came from.
+  // Domain pinning: the SIWE message must claim our origin. We derive the
+  // expected host from the actual request, then in production additionally
+  // require it to be in a hardcoded allowlist — this protects against a
+  // misconfigured Origin header on a third-party deploy that happens to share
+  // our supabase project (defense in depth; the SIWE signature itself already
+  // proves the user signed for that domain).
   const originHost = (() => {
     const origin = req.headers.get("origin");
     if (origin) {
@@ -48,6 +51,21 @@ export async function POST(req: NextRequest) {
     }
     return req.headers.get("host") ?? "localhost";
   })();
+
+  if (process.env.NODE_ENV === "production") {
+    const PROD_HOSTS = new Set(["fissionp.com", "www.fissionp.com"]);
+    const isPreview =
+      originHost.endsWith(".vercel.app") &&
+      originHost.startsWith("frontend-");
+    const isLocal = /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(originHost);
+    if (!PROD_HOSTS.has(originHost) && !isPreview && !isLocal) {
+      console.error("verify: untrusted origin", { originHost });
+      return NextResponse.json(
+        { error: "untrusted_origin", host: originHost },
+        { status: 401 },
+      );
+    }
+  }
 
   let verified;
   try {
