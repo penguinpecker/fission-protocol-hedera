@@ -14,7 +14,12 @@
 // Env (defaults match initialize-saucer-market.mjs):
 //   HBAR_TO_WRAP=100               (total HBAR to commit)
 //   HBAR_TO_SWAP_FOR_USDC=50       (half goes to USDC, half stays as WHBAR)
-//   USDC_AMOUNT_OUT_MIN=4000000    (~$4 USDC; protects against bad slippage)
+//   USDC_AMOUNT_OUT_MIN=4000000    (~$4 USDC; protects against bad swap slippage)
+//   SY_DEPOSIT_SLIPPAGE_BPS=500    (5%) — caps how much USDC/WHBAR the SY
+//                                    increaseLiquidity is allowed to "leave on
+//                                    the table" if V3 tick moves between sign
+//                                    and confirm. amount{0,1}Min = input * (1 - bps/10000)
+//   MIN_LP_OUT=1000                (floor on LP tokens minted by market.addLiquidity)
 //   MARKET_ADDRESS                 (defaults to deployments/295.json markets[0].evm)
 //   SY_SAUCER_V2_LP_ADDRESS        (defaults to deployments/295.json sy_saucer_v2_lp.evm)
 //   SKIP_WRAP=1, SKIP_SWAP=1       — resume flags
@@ -72,6 +77,8 @@ const SY_ADDRESS     = process.env.SY_SAUCER_V2_LP_ADDRESS || deploy.sy_saucer_v
 const HBAR_TO_WRAP = Number(process.env.HBAR_TO_WRAP ?? "100");
 const HBAR_TO_SWAP = Number(process.env.HBAR_TO_SWAP_FOR_USDC ?? "50");
 const USDC_OUT_MIN = process.env.USDC_AMOUNT_OUT_MIN ?? "4000000";
+const SY_DEPOSIT_SLIPPAGE_BPS = BigInt(process.env.SY_DEPOSIT_SLIPPAGE_BPS ?? "500"); // 5%
+const MIN_LP_OUT = process.env.MIN_LP_OUT ?? "1000";
 
 const operatorKey = PrivateKey.fromStringECDSA(deriveKeyHex());
 const evmAddr = "0x" + operatorKey.publicKey.toEvmAddress();
@@ -89,12 +96,22 @@ async function lookup(addr) {
   return ContractId.fromString(j.contract_id);
 }
 async function balanceOf(tokenAddr) {
-  const tokenId = `0.0.${parseInt(tokenAddr.replace(/^0x/, ""), 16)}`;
-  const r = await fetch(
-    `https://mainnet-public.mirrornode.hedera.com/api/v1/accounts/${evmAddr}/tokens?token.id=${tokenId}`,
-  ).then((r) => r.json());
-  const t = (r.tokens || []).find((x) => x.token_id === tokenId);
-  return BigInt(t?.balance ?? 0);
+  // Use Hashio eth_call against the HTS ERC-20 facade (always fresh).
+  // Mirror Node has eventual consistency lag and may return pre-swap
+  // balances even after a successful swap tx — we hit that bug before.
+  const data = "0x70a08231" + evmAddr.replace(/^0x/, "").padStart(64, "0");
+  const r = await fetch("https://mainnet.hashio.io/api", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "eth_call",
+      params: [{ to: tokenAddr, data }, "latest"],
+    }),
+  }).then((r) => r.json());
+  if (r.error) throw new Error(`balanceOf failed: ${JSON.stringify(r.error)}`);
+  return BigInt(r.result);
 }
 
 console.log(`Operator: ${operatorIdStr} / ${evmAddr}`);
@@ -225,7 +242,12 @@ const syId = await lookup(SY_ADDRESS);
 if (process.env.SKIP_DEPOSIT === "1") {
   console.log(`\n[4] SKIP_DEPOSIT=1`);
 } else {
-  console.log(`\n[4] SY.depositLiquidity(${usdcBal} USDC, ${whbarBal} WHBAR, 0, 0, op, 1)…`);
+  // Slippage floor: at most SY_DEPOSIT_SLIPPAGE_BPS bps below input on each
+  // token. V3 increaseLiquidity may not consume both inputs exactly evenly if
+  // the tick moves between sign and confirm; this caps that drift.
+  const amount0Min = (usdcBal * (10_000n - SY_DEPOSIT_SLIPPAGE_BPS)) / 10_000n;
+  const amount1Min = (whbarBal * (10_000n - SY_DEPOSIT_SLIPPAGE_BPS)) / 10_000n;
+  console.log(`\n[4] SY.depositLiquidity(${usdcBal} USDC, ${whbarBal} WHBAR, min ${amount0Min}/${amount1Min} = ${SY_DEPOSIT_SLIPPAGE_BPS} bps, op)…`);
   const tx = new ContractExecuteTransaction()
     .setContractId(syId)
     .setGas(15_000_000)
@@ -236,8 +258,8 @@ if (process.env.SKIP_DEPOSIT === "1") {
       new ContractFunctionParameters()
         .addUint256(usdcBal.toString())
         .addUint256(whbarBal.toString())
-        .addUint256("0")
-        .addUint256("0")
+        .addUint256(amount0Min.toString())
+        .addUint256(amount1Min.toString())
         .addAddress(evmAddr)
         .addUint128("1"),
     );
@@ -255,9 +277,17 @@ const shareTokenRes = await fetch("https://mainnet.hashio.io/api", {
   }),
 }).then((r) => r.json());
 const shareToken = "0x" + shareTokenRes.result.slice(26);
-const shareBal = await balanceOf(shareToken);
-console.log(`\n   New SY shares minted: ${shareBal}`);
-if (shareBal < 1000n) throw new Error("Too few SY shares to split — increase HBAR_TO_WRAP.");
+// Retry the share-balance read — Hashio's eth_call cache can lag ~3-10s
+// after a state-changing tx, returning 0 even though the mint succeeded.
+let shareBal = 0n;
+for (let attempt = 0; attempt < 6; attempt++) {
+  shareBal = await balanceOf(shareToken);
+  if (shareBal >= 1000n) break;
+  console.log(`   share bal ${shareBal} — Hashio likely stale, waiting 3s (attempt ${attempt + 1}/6)…`);
+  await new Promise((r) => setTimeout(r, 3000));
+}
+console.log(`\n   SY shares held: ${shareBal}`);
+if (shareBal < 1000n) throw new Error("Too few SY shares to split — increase HBAR_TO_WRAP or wait for indexer sync.");
 
 // ── 5. Split half ──
 const SY_TO_SPLIT = shareBal / 2n;
@@ -320,7 +350,7 @@ console.log(`[6b] PT.approve(market, ${PT_IN})…`);
   const r = await (await tx.execute(client)).getReceipt(client);
   console.log(`   ${r.status.toString()}`);
 }
-console.log(`[6c] market.addLiquidity(syIn=${SY_IN}, ptIn=${PT_IN}, minLp=0, op)…`);
+console.log(`[6c] market.addLiquidity(syIn=${SY_IN}, ptIn=${PT_IN}, minLp=${MIN_LP_OUT}, op)…`);
 {
   const tx = new ContractExecuteTransaction()
     .setContractId(marketId)
@@ -331,7 +361,7 @@ console.log(`[6c] market.addLiquidity(syIn=${SY_IN}, ptIn=${PT_IN}, minLp=0, op)
       new ContractFunctionParameters()
         .addUint256(SY_IN.toString())
         .addUint256(PT_IN.toString())
-        .addUint256("0")
+        .addUint256(MIN_LP_OUT)
         .addAddress(evmAddr),
     );
   const r = await (await tx.execute(client)).getReceipt(client);
