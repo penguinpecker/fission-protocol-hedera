@@ -26,6 +26,19 @@
     "id": "0.0.10465457",
     "evm": "0x00000000000000000000000000000000009fb0b1"
   },
+  "fission_zap": {
+    "id": "0.0.10475902",
+    "evm": "0x00000000000000000000000000000000009fd97e",
+    "deployedAt": "2026-05-13",
+    "tx": "0.0.10463169@1778615851.938933014",
+    "constructor": {
+      "whbar_contract": "0x0000000000000000000000000000000000163b59",
+      "whbar_token": "0x0000000000000000000000000000000000163b5a",
+      "usdc_token": "0x000000000000000000000000000000000006f89a",
+      "swap_router": "0x00000000000000000000000000000000003c437a"
+    },
+    "notes": "One-tx HBAR→SY mint zap. Permissionless, no admin. maxAutomaticTokenAssociations=-1 set at deploy."
+  },
   "deployer": "0.0.10463169",
   "deployerEvm": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "governance": {
