@@ -13,6 +13,8 @@ import { ADDRESSES, isDeployed, HEDERA_TOKENS, USDC_DECIMALS, WHBAR_DECIMALS } f
 import { erc20Abi } from "@/lib/abis";
 import { erc20WriteAbi, routerAbi, marketWriteAbi, syWriteAbi, fissionZapAbi } from "@/lib/abis-write";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
+import { useHederaWallet } from "@/lib/hedera-wallet/provider";
+import { AssociationGate } from "@/components/AssociationGate";
 import {
   impliedApyPct,
   daysUntil,
@@ -306,6 +308,7 @@ function TradeCard({
   syBalance,
 }: TradeCardProps) {
   const adapter = useWalletAdapter();
+  const hedera = useHederaWallet();
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
@@ -390,6 +393,36 @@ function TradeCard({
     const amt = parsedAmt;
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     const minOut = (amt * BigInt(10_000 - slippageBps)) / 10_000n;
+
+    // Pre-flight HTS associations. Different strategies deliver different
+    // tokens to the user:
+    //   split → PT + YT
+    //   pt    → PT
+    //   yt    → YT
+    // Skip silently for EVM-mode wallets (HIP-904 auto-assoc) and for
+    // accounts where Mirror Node returns nothing missing.
+    if (adapter.mode === "hedera" && adapter.accountId) {
+      const need: `0x${string}`[] =
+        strategy === "split" ? [detail.pt, detail.yt] :
+        strategy === "pt"    ? [detail.pt] :
+        strategy === "yt"    ? [detail.yt] : [];
+      if (need.length > 0) {
+        try {
+          const { getMissingAssociations, associateTokens, evmAddressToTokenId } =
+            await import("@/lib/hedera-wallet/associations");
+          const ids = need.map(evmAddressToTokenId);
+          const missing = await getMissingAssociations(adapter.accountId, ids);
+          if (missing.length > 0) {
+            await wrap(() =>
+              associateTokens(hedera.getConnector(), adapter.accountId!, missing),
+            );
+          }
+        } catch (e) {
+          setWriteError(e instanceof Error ? e.message : String(e));
+          return;
+        }
+      }
+    }
 
     try {
       let hash: string;
@@ -645,6 +678,21 @@ function MintSyForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | und
 }
 
 function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
+  // The zap mints SY shares to the user (receiver) and sweeps dust WHBAR
+  // back to the caller. Both transfers require the user account to have
+  // an HTS association — HIP-904-unlimited accounts skip this internally.
+  return (
+    <AssociationGate
+      requiredTokens={[sy, HEDERA_TOKENS.WHBAR]}
+      tokenLabels={["SY share token", "WHBAR"]}
+      reason="needed to receive SY shares and reclaim leftover WHBAR"
+    >
+      <ZapMintFormInner sy={sy} user={user} />
+    </AssociationGate>
+  );
+}
+
+function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
   const adapter = useWalletAdapter();
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -783,6 +831,18 @@ function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | un
 }
 
 function LegacyMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
+  return (
+    <AssociationGate
+      requiredTokens={[sy]}
+      tokenLabels={["SY share token"]}
+      reason="needed to receive your SY shares"
+    >
+      <LegacyMintFormInner sy={sy} user={user} />
+    </AssociationGate>
+  );
+}
+
+function LegacyMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
   const adapter = useWalletAdapter();
   const [isPending, setIsPending] = useState(false);
   const [usdcAmt, setUsdcAmt] = useState("");

@@ -328,7 +328,21 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
     await tx.freezeWithSigner(signer as never);
     const resp = await tx.executeWithSigner(signer as never);
     // Wait for receipt so callers can rely on the tx being finalized.
-    await resp.getReceiptWithSigner(signer as never);
+    // If the contract reverted we get a StatusError with the Hedera tx
+    // ID — fetch the encoded revert reason from Mirror Node and rethrow
+    // with something the user can actually act on.
+    try {
+      await resp.getReceiptWithSigner(signer as never);
+    } catch (e) {
+      const txId = resp.transactionId?.toString() ?? "";
+      const decoded = await decodeRevert(txId);
+      if (decoded) {
+        const err = new Error(decoded);
+        (err as { cause?: unknown }).cause = e;
+        throw err;
+      }
+      throw e;
+    }
     return { txHash: resp.transactionId?.toString() ?? "" };
   };
 
@@ -423,4 +437,100 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
         2_000_000,
       );
   }
+}
+
+/* ─────────────────────────────────────────────────── Revert decoding */
+
+/**
+ * Common Hedera HTS response codes that surface as `Panic(uint256)`-shaped
+ * reverts inside HTS-touching contracts. Sourced from
+ * proto/ResponseCodeEnum.proto (codes 0..N) — only the ones the user can
+ * actually do something about are listed here. The full list is huge; if
+ * we hit an unknown code we render the numeric value verbatim.
+ */
+const HTS_CODES: Record<number, string> = {
+  22: "Token transfer failed: insufficient token balance",
+  178: "Token has been deleted",
+  184: "Token not associated with your account — open HashPack and associate it (or the dApp should prompt you)",
+  185: "Token has not been kyc'd for your account",
+  186: "Account is frozen for this token",
+  194: "Spender does not have enough allowance",
+  226: "Token has expired",
+  309: "Insufficient token balance",
+};
+
+interface MirrorTxResult {
+  transactions: Array<{
+    transaction_id: string;
+    result: string;
+  }>;
+}
+
+interface MirrorContractResult {
+  error_message?: string;
+  result?: string;
+  status?: string;
+}
+
+/**
+ * Given a Hedera transaction ID, fetches the contract result from Mirror
+ * Node and decodes the revert reason into a human string. Returns null
+ * if we can't decode anything useful — caller should fall back to the
+ * original error.
+ *
+ * Mirror Node sometimes lags by 1-3 seconds after a tx finalizes, so
+ * we retry a couple of times.
+ */
+async function decodeRevert(transactionId: string): Promise<string | null> {
+  if (!transactionId) return null;
+  // Tx ID comes as "0.0.X@SECS.NANOS" — Mirror Node also accepts that, but
+  // its /transactions endpoint wants "0.0.X-SECS-NANOS". Normalize.
+  const normalized = transactionId.replace("@", "-").replace(".", "-");
+  const base = "https://mainnet-public.mirrornode.hedera.com/api/v1";
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const txRes = await fetch(`${base}/transactions/${normalized}`);
+      if (!txRes.ok) continue;
+      const data = (await txRes.json()) as MirrorTxResult;
+      const tx = data.transactions?.[0];
+      if (!tx) continue;
+
+      const cRes = await fetch(`${base}/contracts/results/${normalized}`);
+      if (!cRes.ok) continue;
+      const c = (await cRes.json()) as MirrorContractResult;
+      const msg = c.error_message;
+      if (!msg) return tx.result ?? null;
+
+      // Common shape: 0x24dd1bab + 32-byte arg, where the arg is the HTS
+      // code as a uint256. Extract the last byte (codes < 256 fit in u8).
+      const hex = msg.replace(/^0x/, "");
+      if (hex.length >= 8 + 64) {
+        const argHex = hex.slice(8); // strip selector
+        // Trim leading zeros to recover the integer.
+        const codeInt = parseInt(argHex.replace(/^0+/, "") || "0", 16);
+        if (HTS_CODES[codeInt]) return HTS_CODES[codeInt];
+        return `Contract reverted (HTS code ${codeInt}). Check HashScan: hashscan.io/mainnet/transaction/${transactionId}`;
+      }
+      // Standard Error(string) shape: 0x08c379a0 + abi-encoded string
+      if (hex.startsWith("08c379a0")) {
+        // Skip selector + 32-byte offset + 32-byte length → decode UTF-8
+        try {
+          const lenHex = hex.slice(8 + 64, 8 + 128);
+          const len = parseInt(lenHex, 16);
+          const dataHex = hex.slice(8 + 128, 8 + 128 + len * 2);
+          const buf = new Uint8Array(len);
+          for (let i = 0; i < len; i++) buf[i] = parseInt(dataHex.slice(i * 2, i * 2 + 2), 16);
+          return new TextDecoder().decode(buf);
+        } catch {
+          /* fall through */
+        }
+      }
+      return `Contract reverted (selector 0x${hex.slice(0, 8)}). HashScan: hashscan.io/mainnet/transaction/${transactionId}`;
+    } catch {
+      /* retry */
+    }
+  }
+  return null;
 }
