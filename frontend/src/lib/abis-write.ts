@@ -147,6 +147,37 @@ export const erc20WriteAbi = [
   },
 ] as const;
 
+export const syWriteAbi = [
+  {
+    type: "function",
+    name: "depositLiquidity",
+    stateMutability: "payable",
+    inputs: [
+      { name: "amount0", type: "uint256" }, // USDC
+      { name: "amount1", type: "uint256" }, // WHBAR
+      { name: "amount0Min", type: "uint256" },
+      { name: "amount1Min", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "minShares", type: "uint128" },
+    ],
+    outputs: [{ name: "shares", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "claimRewards",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "user", type: "address" }],
+    outputs: [{ type: "uint256[]" }],
+  },
+  {
+    type: "function",
+    name: "harvest",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+] as const;
+
 export const marketWriteAbi = [
   {
     type: "function",

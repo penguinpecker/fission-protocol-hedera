@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
-import { useAccount, useWriteContract } from "wagmi";
-import { parseUnits } from "viem";
+import { useAccount, useReadContracts, useWriteContract } from "wagmi";
+import { parseEther, parseUnits } from "viem";
 import { Nav } from "@/components/Nav";
 import { diag } from "@/lib/diag";
 import { Footer } from "@/components/Footer";
 import { WalletGate } from "@/components/WalletGate";
 import { useMarketDetail, useUserPosition, MarketDetail } from "@/hooks/useMarket";
-import { ADDRESSES, isDeployed } from "@/lib/addresses";
-import { erc20WriteAbi, routerAbi, marketWriteAbi } from "@/lib/abis-write";
+import { ADDRESSES, isDeployed, HEDERA_TOKENS, USDC_DECIMALS, WHBAR_DECIMALS } from "@/lib/addresses";
+import { erc20Abi } from "@/lib/abis";
+import { erc20WriteAbi, routerAbi, marketWriteAbi, syWriteAbi } from "@/lib/abis-write";
 import {
   impliedApyPct,
   daysUntil,
@@ -18,12 +19,13 @@ import {
   formatCompact,
 } from "@/hooks/useMarkets";
 
-type Strategy = "pt" | "yt" | "split";
+type Strategy = "pt" | "yt" | "split" | "mint";
 
 const STRATEGIES: { id: Strategy; title: string; sub: string; risk: string }[] = [
+  { id: "mint", title: "Mint SY", sub: "Mint SY", risk: "—" },
   { id: "pt", title: "Fixed yield", sub: "Buy PT", risk: "Low" },
   { id: "yt", title: "Long yield", sub: "Buy YT", risk: "High" },
-  { id: "split", title: "Mint PT+YT", sub: "Split SY", risk: "Med" },
+  { id: "split", title: "Split", sub: "Split SY", risk: "Med" },
 ];
 
 export default function MarketDetailPage({ params }: { params: Promise<{ address: string }> }) {
@@ -211,6 +213,19 @@ function PositionInfoCard({ detail, expired, strategy }: { detail: MarketDetail;
 }
 
 const STRATEGY_EXPLAINERS = {
+  mint: {
+    title: "Mint SY — get into the protocol",
+    riskLabel: "Entry",
+    riskTone: "bg-textDim/10 text-textDim",
+    summary:
+      "Deposit USDC + WHBAR. The SY adapter adds liquidity to its underlying V3 NFT and mints fungible SY shares to your wallet. No AMM trade, no slippage at the SY layer — just a proportional contribution to the V3 LP position.",
+    yieldSource:
+      "Minting SY doesn't earn anything directly. Holding SY = holding a slice of a V3 LP NFT (USDC + WHBAR exposure). To turn that into PT, YT, or LP positions in this market, switch to the Split / Buy PT / Buy YT tabs after minting.",
+    example:
+      "• Deposit $100 USDC + $100 WHBAR → receive ~$200 worth of SY shares\n• Cost: ~5 HBAR for the V3 NPM fee (one-time per deposit)\n• Approvals: 1 each for USDC and WHBAR (or none if already approved)",
+    risk:
+      "Same risks as holding a full-range V3 LP: WHBAR/USDC price moves = impermanent-loss-style USD value drift. No protocol-side principal risk. Withdraw anytime via SY.redeemLiquidity (not yet exposed in UI).",
+  },
   pt: {
     title: "Buy PT — fixed yield",
     riskLabel: "Low risk",
@@ -364,6 +379,9 @@ function TradeCard({
         </div>
       </div>
 
+      {strategy === "mint" ? (
+        <MintSyForm sy={detail.sy} user={user} />
+      ) : (
       <div className="rounded-2xl border border-border bg-bgCard p-4">
         <div className="mb-3 text-[10px] font-semibold uppercase tracking-[2px] text-textDim">
           {strategy === "split" ? "Split SY → PT + YT" : strategy === "pt" ? "Buy PT" : "Buy YT"}
@@ -482,7 +500,210 @@ function TradeCard({
           <p className="mt-2 text-[11px] text-error">Router not deployed yet — split-only flow available.</p>
         )}
       </div>
+      )}
     </aside>
+  );
+}
+
+/* ─────────────────────────────────────────────────────── Mint SY form */
+
+/**
+ * Two-input deposit flow: user provides USDC + WHBAR, SY mints share tokens
+ * by adding to its underlying V3 NFT. Sequence is approve(USDC) →
+ * approve(WHBAR) → SY.depositLiquidity. The user sees one HashPack popup
+ * per tx; the button label tracks progress.
+ */
+function MintSyForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
+  const { writeContract, isPending } = useWriteContract();
+  const [usdcAmt, setUsdcAmt] = useState("");
+  const [whbarAmt, setWhbarAmt] = useState("");
+
+  const reads = useReadContracts({
+    contracts: user
+      ? [
+          { abi: erc20Abi, address: HEDERA_TOKENS.USDC, functionName: "balanceOf", args: [user] } as const,
+          { abi: erc20Abi, address: HEDERA_TOKENS.WHBAR, functionName: "balanceOf", args: [user] } as const,
+          // wagmi v2's erc20Abi includes allowance via the OZ abi; if missing we'll get failure and treat as 0
+          { abi: [{ type: "function", name: "allowance", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }] }] as const, address: HEDERA_TOKENS.USDC, functionName: "allowance", args: [user, sy] } as const,
+          { abi: [{ type: "function", name: "allowance", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }] }] as const, address: HEDERA_TOKENS.WHBAR, functionName: "allowance", args: [user, sy] } as const,
+        ]
+      : [],
+    query: { enabled: !!user },
+    allowFailure: true,
+  });
+
+  const pluck = <T,>(entry: { status: "success"; result: T } | { status: "failure"; error: Error } | undefined): T | undefined =>
+    entry?.status === "success" ? entry.result : undefined;
+
+  const usdcBal = (pluck<bigint>(reads.data?.[0] as never) ?? 0n);
+  const whbarBal = (pluck<bigint>(reads.data?.[1] as never) ?? 0n);
+  const usdcAllow = (pluck<bigint>(reads.data?.[2] as never) ?? 0n);
+  const whbarAllow = (pluck<bigint>(reads.data?.[3] as never) ?? 0n);
+
+  let usdcParsed = 0n;
+  let whbarParsed = 0n;
+  try { if (usdcAmt) usdcParsed = parseUnits(usdcAmt, USDC_DECIMALS); } catch { /* keep 0 */ }
+  try { if (whbarAmt) whbarParsed = parseUnits(whbarAmt, WHBAR_DECIMALS); } catch { /* keep 0 */ }
+
+  const needsUsdcApprove = usdcParsed > 0n && usdcAllow < usdcParsed;
+  const needsWhbarApprove = whbarParsed > 0n && whbarAllow < whbarParsed;
+  const insufficientUsdc = usdcParsed > usdcBal;
+  const insufficientWhbar = whbarParsed > whbarBal;
+  const ready = usdcParsed > 0n && whbarParsed > 0n && !insufficientUsdc && !insufficientWhbar;
+
+  const setMax = (which: "usdc" | "whbar") => {
+    const v = which === "usdc" ? usdcBal : whbarBal;
+    const d = which === "usdc" ? USDC_DECIMALS : WHBAR_DECIMALS;
+    const div = 10n ** BigInt(d);
+    const whole = v / div;
+    const frac = v % div;
+    const fracStr = frac.toString().padStart(d, "0").replace(/0+$/, "");
+    const s = fracStr ? `${whole}.${fracStr}` : `${whole}`;
+    if (which === "usdc") setUsdcAmt(s); else setWhbarAmt(s);
+  };
+
+  const approveUsdc = () => writeContract({
+    abi: erc20WriteAbi, address: HEDERA_TOKENS.USDC, functionName: "approve",
+    args: [sy, usdcParsed],
+  });
+  const approveWhbar = () => writeContract({
+    abi: erc20WriteAbi, address: HEDERA_TOKENS.WHBAR, functionName: "approve",
+    args: [sy, whbarParsed],
+  });
+  const deposit = () => {
+    if (!user) return;
+    // 5% slippage on each leg, ≥1 share min — same posture as the script.
+    const a0Min = (usdcParsed * 95n) / 100n;
+    const a1Min = (whbarParsed * 95n) / 100n;
+    writeContract({
+      abi: syWriteAbi, address: sy, functionName: "depositLiquidity",
+      args: [usdcParsed, whbarParsed, a0Min, a1Min, user, 1n],
+      // SY.depositLiquidity is payable — needs ~5 HBAR to cover the V3 NPM
+      // increase-liquidity fee (USD-cents denominated, converted to HBAR
+      // via Hedera's exchange-rate precompile inside the contract).
+      value: parseEther("5"),
+    });
+  };
+
+  const nextStep = needsUsdcApprove
+    ? { label: "Approve USDC", fn: approveUsdc }
+    : needsWhbarApprove
+      ? { label: "Approve WHBAR", fn: approveWhbar }
+      : ready
+        ? { label: "Deposit & mint SY", fn: deposit }
+        : null;
+
+  return (
+    <div className="rounded-2xl border border-border bg-bgCard p-4">
+      <div className="mb-3 flex items-baseline justify-between">
+        <div className="text-[10px] font-semibold uppercase tracking-[2px] text-textDim">Mint SY shares</div>
+        <a
+          href="https://www.saucerswap.finance/swap"
+          target="_blank"
+          rel="noreferrer"
+          className="text-[10px] text-textDim underline underline-offset-2 hover:text-text"
+        >
+          Need USDC?
+        </a>
+      </div>
+
+      <p className="mb-3 text-[12px] leading-relaxed text-textSec">
+        Deposit USDC + WHBAR. The SY adapter adds them to its V3 NFT and mints fungible SY shares to your wallet. Costs ~5 HBAR (V3 NPM fee).
+      </p>
+
+      <MintInput
+        label="USDC"
+        value={usdcAmt}
+        setValue={setUsdcAmt}
+        balance={usdcBal}
+        decimals={USDC_DECIMALS}
+        insufficient={insufficientUsdc}
+        onMax={() => setMax("usdc")}
+      />
+      <MintInput
+        label="WHBAR"
+        value={whbarAmt}
+        setValue={setWhbarAmt}
+        balance={whbarBal}
+        decimals={WHBAR_DECIMALS}
+        insufficient={insufficientWhbar}
+        onMax={() => setMax("whbar")}
+      />
+
+      <button
+        type="button"
+        disabled={!user || !nextStep || isPending}
+        onClick={() => nextStep?.fn()}
+        className="mt-3 w-full rounded-[10px] bg-white px-7 py-3.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {!user
+          ? "Connect wallet"
+          : isPending
+            ? "Confirming…"
+            : nextStep
+              ? nextStep.label
+              : insufficientUsdc || insufficientWhbar
+                ? "Insufficient balance"
+                : "Enter amounts"}
+      </button>
+
+      <p className="mt-2 text-[10px] leading-relaxed text-textDim">
+        The deposit is a single tx; the two approvals before it are one-time per token (or until you reset allowance).
+      </p>
+    </div>
+  );
+}
+
+function MintInput({
+  label,
+  value,
+  setValue,
+  balance,
+  decimals,
+  insufficient,
+  onMax,
+}: {
+  label: string;
+  value: string;
+  setValue: (v: string) => void;
+  balance: bigint;
+  decimals: number;
+  insufficient: boolean;
+  onMax: () => void;
+}) {
+  return (
+    <label className="mb-3 block">
+      <span className="mb-1.5 flex items-center justify-between text-xs text-textSec">
+        <span>{label}</span>
+        <span className="font-mono text-[11px] text-textDim">
+          Balance: {formatBigInt(balance, decimals, 4)}
+          {balance > 0n && (
+            <button
+              type="button"
+              onClick={onMax}
+              className="ml-2 rounded border border-borderHover bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[1px] text-text transition hover:bg-white/[0.08]"
+            >
+              Max
+            </button>
+          )}
+        </span>
+      </span>
+      <input
+        type="number"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="0.00"
+        inputMode="decimal"
+        className={`w-full rounded-[10px] border bg-bgInput px-4 py-3 font-mono text-sm text-text outline-none transition ${
+          insufficient ? "border-error/60 focus:border-error" : "border-border focus:border-borderHover"
+        }`}
+      />
+      {insufficient && (
+        <span className="mt-1 block text-[11px] font-medium text-error">
+          Insufficient {label}.
+        </span>
+      )}
+    </label>
   );
 }
 

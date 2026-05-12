@@ -13,3 +13,17 @@ export const ADDRESSES = {
 
 export const isDeployed = (addr: string): boolean =>
   addr.toLowerCase() !== ZERO && /^0x[0-9a-fA-F]{40}$/.test(addr);
+
+/**
+ * SaucerSwap V3 + HTS token addresses on Hedera mainnet. These are
+ * external (not under our control); pinned here so the Mint-SY flow can
+ * read USDC + WHBAR balances and route approvals.
+ */
+export const HEDERA_TOKENS = {
+  USDC:  "0x000000000000000000000000000000000006f89a" as `0x${string}`,
+  WHBAR: "0x0000000000000000000000000000000000163b5a" as `0x${string}`,
+  WHBAR_CONTRACT: "0x0000000000000000000000000000000000163b59" as `0x${string}`,
+} as const;
+
+export const USDC_DECIMALS = 6;
+export const WHBAR_DECIMALS = 8;
