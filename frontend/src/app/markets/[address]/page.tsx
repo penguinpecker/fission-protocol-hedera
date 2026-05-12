@@ -11,7 +11,7 @@ import { WalletGate } from "@/components/WalletGate";
 import { useMarketDetail, useUserPosition, MarketDetail } from "@/hooks/useMarket";
 import { ADDRESSES, isDeployed, HEDERA_TOKENS, USDC_DECIMALS, WHBAR_DECIMALS } from "@/lib/addresses";
 import { erc20Abi } from "@/lib/abis";
-import { erc20WriteAbi, routerAbi, marketWriteAbi, syWriteAbi } from "@/lib/abis-write";
+import { erc20WriteAbi, routerAbi, marketWriteAbi, syWriteAbi, fissionZapAbi } from "@/lib/abis-write";
 import {
   impliedApyPct,
   daysUntil,
@@ -514,6 +514,113 @@ function TradeCard({
  * per tx; the button label tracks progress.
  */
 function MintSyForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
+  // Prefer the zap path: one HBAR input → one wallet popup → SY shares.
+  // Fall back to the explicit USDC + WHBAR multi-step flow when the zap
+  // hasn't been deployed yet for this environment.
+  if (isDeployed(ADDRESSES.fissionZap)) {
+    return <ZapMintForm sy={sy} user={user} />;
+  }
+  return <LegacyMintForm sy={sy} user={user} />;
+}
+
+function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
+  const { writeContract, isPending } = useWriteContract();
+  const [hbar, setHbar] = useState("");
+
+  // We need ~5 HBAR for the V3 NPM fee on top of whatever the user wants to
+  // turn into SY. Reserve that out of the input. (Hedera EVM: 1 HBAR = 1e18 wei.)
+  const NPM_FEE_WEI = parseEther("5");
+
+  let hbarWei = 0n;
+  try { if (hbar) hbarWei = parseEther(hbar); } catch { /* keep 0 */ }
+
+  const wrapAmountWei = hbarWei; // everything the user typed gets wrapped
+  // WHBAR is 8-dec; convert from 18-dec wei. 1 HBAR (1e18 wei) = 1 WHBAR raw (1e8).
+  const whbarTotalRaw = hbarWei / 10n ** 10n;
+  const swapAmountRaw = whbarTotalRaw / 2n; // swap half to USDC
+
+  const onZap = () => {
+    if (!user || hbarWei === 0n) return;
+    writeContract({
+      abi: fissionZapAbi,
+      address: ADDRESSES.fissionZap,
+      functionName: "zapHbarToSy",
+      args: [
+        sy,
+        wrapAmountWei,
+        swapAmountRaw,
+        0n,           // usdcMinOut — zap also passes its own 5% defaults later if we tighten
+        0n,           // amount0Min on the V3 NFT add
+        0n,           // amount1Min
+        1n,           // minShares
+        user,
+      ],
+      value: wrapAmountWei + NPM_FEE_WEI,
+    });
+  };
+
+  const tooSmall = hbarWei > 0n && hbarWei < parseEther("1"); // arbitrary floor — V3 NPM fee dominates below ~1 HBAR
+
+  return (
+    <div className="rounded-2xl border border-border bg-bgCard p-4">
+      <div className="mb-3 flex items-baseline justify-between">
+        <div className="text-[10px] font-semibold uppercase tracking-[2px] text-textDim">Mint SY from HBAR</div>
+        <span className="rounded-full bg-success/10 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[1.5px] text-success">
+          One tx
+        </span>
+      </div>
+
+      <p className="mb-3 text-[12px] leading-relaxed text-textSec">
+        Pay HBAR. The zap wraps half to WHBAR, swaps the other half to USDC on SaucerSwap V3, and deposits both into the SY. Net cost: your HBAR + ~5 HBAR for the V3 NPM fee.
+      </p>
+
+      <label className="mb-3 block">
+        <span className="mb-1.5 flex items-center justify-between text-xs text-textSec">
+          <span>HBAR to commit</span>
+          <span className="font-mono text-[11px] text-textDim">
+            +5 HBAR NPM fee
+          </span>
+        </span>
+        <input
+          type="number"
+          value={hbar}
+          onChange={(e) => setHbar(e.target.value)}
+          placeholder="0.00"
+          inputMode="decimal"
+          className={`w-full rounded-[10px] border bg-bgInput px-4 py-3.5 font-mono text-base text-text outline-none transition ${
+            tooSmall ? "border-warning/60 focus:border-warning" : "border-border focus:border-borderHover"
+          }`}
+        />
+        {tooSmall && (
+          <span className="mt-1 block text-[11px] font-medium text-warning">
+            Tiny amounts get eaten by the 5 HBAR NPM fee — commit ≥1 HBAR.
+          </span>
+        )}
+      </label>
+
+      <button
+        type="button"
+        disabled={!user || hbarWei === 0n || isPending}
+        onClick={onZap}
+        className="w-full rounded-[10px] bg-white px-7 py-3.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {!user
+          ? "Connect wallet"
+          : hbarWei === 0n
+            ? "Enter HBAR amount"
+            : isPending
+              ? "Confirming…"
+              : `Mint SY with ${hbar} HBAR`}
+      </button>
+
+      <p className="mt-2 text-[10px] leading-relaxed text-textDim">
+        One HashPack popup. Slippage is left wide on the underlying V3 swap and LP add — for production sizing we&apos;ll tighten via env-controlled floors.
+      </p>
+    </div>
+  );
+}
+
+function LegacyMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
   const { writeContract, isPending } = useWriteContract();
   const [usdcAmt, setUsdcAmt] = useState("");
   const [whbarAmt, setWhbarAmt] = useState("");

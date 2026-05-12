@@ -147,6 +147,25 @@ export const erc20WriteAbi = [
   },
 ] as const;
 
+export const fissionZapAbi = [
+  {
+    type: "function",
+    name: "zapHbarToSy",
+    stateMutability: "payable",
+    inputs: [
+      { name: "sy", type: "address" },
+      { name: "wrapAmount", type: "uint256" },
+      { name: "swapAmount", type: "uint256" },
+      { name: "usdcMinOut", type: "uint256" },
+      { name: "amount0Min", type: "uint256" },
+      { name: "amount1Min", type: "uint256" },
+      { name: "minShares", type: "uint128" },
+      { name: "receiver", type: "address" },
+    ],
+    outputs: [{ name: "shares", type: "uint256" }],
+  },
+] as const;
+
 export const syWriteAbi = [
   {
     type: "function",

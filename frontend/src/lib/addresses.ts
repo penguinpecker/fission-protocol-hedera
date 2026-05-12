@@ -9,6 +9,7 @@ const ZERO = "0x0000000000000000000000000000000000000000" as const;
 export const ADDRESSES = {
   factory: (process.env.NEXT_PUBLIC_FACTORY_ADDRESS ?? ZERO) as `0x${string}`,
   router: (process.env.NEXT_PUBLIC_ROUTER_ADDRESS ?? ZERO) as `0x${string}`,
+  fissionZap: (process.env.NEXT_PUBLIC_FISSION_ZAP_ADDRESS ?? ZERO) as `0x${string}`,
 } as const;
 
 export const isDeployed = (addr: string): boolean =>
