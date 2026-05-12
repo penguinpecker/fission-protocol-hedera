@@ -7,8 +7,16 @@
     "evm": "0x00000000000000000000000000000000009fb0b3"
   },
   "router": {
-    "id": "(reused)",
-    "evm": "0x00000000000000000000000000000000009fad96"
+    "id": "0.0.10475923",
+    "evm": "0x00000000000000000000000000000000009fd993",
+    "deployedAt": "2026-05-13",
+    "tx": "0.0.10463169@1778617484.441245870",
+    "notes": "Redeployed with maxAutomaticTokenAssociations=-1 (HIP-904). Original deploy at 0.0.10464662 had max_auto=0 — HTS transferFrom into router silently failed, blocking every Buy PT / Buy YT / addLiquidity flow. New router is operator-admin-keyed so we can tune auto-assoc if HTS semantics shift; transfer admin to Timelock post-handoff alongside the other contracts."
+  },
+  "abandoned_router_v1": {
+    "id": "0.0.10464662",
+    "evm": "0x00000000000000000000000000000000009fad96",
+    "reason": "max_automatic_token_associations was 0; admin key was the contract itself (immutable). Replaced by 0.0.10475923 with -1 auto-assoc and operator admin."
   },
   "sy_hbarx": {
     "id": "(reused)",

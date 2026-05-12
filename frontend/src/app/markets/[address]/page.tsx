@@ -314,9 +314,47 @@ function TradeCard({
   const insufficient = parsedAmt > syBalance;
   const needsSy = syBalance === 0n;
 
+  // Spender of the SY shares depends on the strategy:
+  //   split  → the market itself does the pull (market.split's transferFrom).
+  //   pt/yt  → the ActionRouter pulls SY before invoking the market.
+  //   mint   → not used here; handled by MintSyForm.
+  const spender: `0x${string}` =
+    strategy === "split" ? market : ADDRESSES.router;
+
+  const allowanceRead = useReadContracts({
+    contracts: user && parsedAmt > 0n && detail.syShare && strategy !== "mint"
+      ? [
+          {
+            abi: [{ type: "function", name: "allowance", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }] }] as const,
+            address: detail.syShare,
+            functionName: "allowance",
+            args: [user, spender],
+          } as const,
+        ]
+      : [],
+    query: { enabled: !!user && parsedAmt > 0n && strategy !== "mint" },
+    allowFailure: true,
+  });
+  const allowance =
+    allowanceRead.data?.[0]?.status === "success"
+      ? (allowanceRead.data[0].result as bigint)
+      : 0n;
+  const needsApprove =
+    strategy !== "mint" && parsedAmt > 0n && allowance < parsedAmt;
+
+  const onApprove = () => {
+    writeContract({
+      abi: erc20WriteAbi,
+      address: detail.syShare,
+      functionName: "approve",
+      args: [spender, parsedAmt],
+    });
+  };
+
   const onTrade = () => {
     if (!user || !amount || !routerDeployed) return;
     if (parsedAmt > syBalance) return;
+    if (needsApprove) return; // guard — UI button label routes to onApprove first
     const amt = parsedAmt;
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     const minOut = (amt * BigInt(10_000 - slippageBps)) / 10_000n;
@@ -353,6 +391,11 @@ function TradeCard({
         args: [market, amt, minOut, user, deadline],
       });
     }
+  };
+
+  const onPrimary = () => {
+    if (needsApprove) onApprove();
+    else onTrade();
   };
 
   return (
@@ -478,7 +521,7 @@ function TradeCard({
             insufficient ||
             (strategy !== "split" && !routerDeployed)
           }
-          onClick={onTrade}
+          onClick={onPrimary}
           className="w-full rounded-[10px] bg-white px-7 py-3.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {!user
@@ -489,12 +532,20 @@ function TradeCard({
                 ? "Insufficient SY"
                 : isPending
                   ? "Confirming…"
-                  : strategy === "split"
-                    ? `Split ${amount} SY`
-                    : strategy === "pt"
-                      ? "Buy PT"
-                      : "Buy YT"}
+                  : needsApprove
+                    ? `Approve SY for ${strategy === "split" ? "Market" : "Router"}`
+                    : strategy === "split"
+                      ? `Split ${amount} SY`
+                      : strategy === "pt"
+                        ? "Buy PT"
+                        : "Buy YT"}
         </button>
+
+        {needsApprove && (
+          <p className="mt-2 text-[10px] leading-relaxed text-textDim">
+            One-time per allowance reset. After approval the button switches to the trade.
+          </p>
+        )}
 
         {strategy !== "split" && !routerDeployed && (
           <p className="mt-2 text-[11px] text-error">Router not deployed yet — split-only flow available.</p>
