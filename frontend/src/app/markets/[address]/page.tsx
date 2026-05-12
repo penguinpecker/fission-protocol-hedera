@@ -132,6 +132,7 @@ export default function MarketDetailPage({ params }: { params: Promise<{ address
             slippageBps={slippageBps}
             setSlippageBps={setSlippageBps}
             user={user}
+            syBalance={position?.sy ?? 0n}
           />
         </div>
 
@@ -269,6 +270,7 @@ interface TradeCardProps {
   slippageBps: number;
   setSlippageBps: (n: number) => void;
   user: `0x${string}` | undefined;
+  syBalance: bigint;
 }
 
 function TradeCard({
@@ -281,13 +283,26 @@ function TradeCard({
   slippageBps,
   setSlippageBps,
   user,
+  syBalance,
 }: TradeCardProps) {
   const { writeContract, isPending } = useWriteContract();
   const routerDeployed = isDeployed(ADDRESSES.router);
 
+  // Parse the amount the user typed. If anything is invalid (empty, NaN,
+  // negative), this is 0n and we'll treat it as no-amount in the gate.
+  let parsedAmt = 0n;
+  try {
+    if (amount) parsedAmt = parseUnits(amount, detail.syDecimals);
+  } catch {
+    parsedAmt = 0n;
+  }
+  const insufficient = parsedAmt > syBalance;
+  const needsSy = syBalance === 0n;
+
   const onTrade = () => {
     if (!user || !amount || !routerDeployed) return;
-    const amt = parseUnits(amount, detail.syDecimals);
+    if (parsedAmt > syBalance) return;
+    const amt = parsedAmt;
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     const minOut = (amt * BigInt(10_000 - slippageBps)) / 10_000n;
 
@@ -356,7 +371,28 @@ function TradeCard({
 
         <label className="mb-3 block">
           <span className="mb-1.5 flex items-center justify-between text-xs text-textSec">
-            You pay (SY)
+            <span>You pay (SY)</span>
+            <span className="font-mono text-[11px] text-textDim">
+              Balance: {formatCompact(syBalance)}
+              {syBalance > 0n && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Set the input to the user's full balance, denominated
+                    // in the SY decimals. Use a string that exactly round-
+                    // trips parseUnits → formatUnits.
+                    const div = 10n ** BigInt(detail.syDecimals);
+                    const whole = syBalance / div;
+                    const frac = syBalance % div;
+                    const fracStr = frac.toString().padStart(detail.syDecimals, "0").replace(/0+$/, "");
+                    setAmount(fracStr ? `${whole}.${fracStr}` : `${whole}`);
+                  }}
+                  className="ml-2 rounded border border-borderHover bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[1px] text-text transition hover:bg-white/[0.08]"
+                >
+                  Max
+                </button>
+              )}
+            </span>
           </span>
           <input
             type="number"
@@ -364,9 +400,40 @@ function TradeCard({
             onChange={(e) => setAmount(e.target.value)}
             placeholder="0.00"
             inputMode="decimal"
-            className="w-full rounded-[10px] border border-border bg-bgInput px-4 py-3.5 font-mono text-base text-text outline-none transition focus:border-borderHover"
+            className={`w-full rounded-[10px] border bg-bgInput px-4 py-3.5 font-mono text-base text-text outline-none transition ${
+              insufficient ? "border-error/60 focus:border-error" : "border-border focus:border-borderHover"
+            }`}
           />
+          {insufficient && (
+            <span className="mt-1.5 block text-[11px] font-medium text-error">
+              Insufficient SY — you have {formatCompact(syBalance)}.
+            </span>
+          )}
         </label>
+
+        {user && needsSy && (
+          <div className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-[12px] leading-relaxed text-warning">
+            <span className="font-semibold">You have 0 SY shares.</span> To trade on this market you need SY first — deposit USDC + WHBAR into the SY adapter (
+            <a
+              href={`https://hashscan.io/mainnet/contract/${detail.sy}`}
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2 hover:text-text"
+            >
+              SY contract
+            </a>
+            ) to mint shares. A guided UI for this lands in v1.1; for now use{" "}
+            <a
+              href="https://github.com/penguinpecker/fission-protocol-hedera/blob/main/scripts/top-up-market0.mjs"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2 hover:text-text"
+            >
+              the top-up script
+            </a>{" "}
+            or split an existing SY balance.
+          </div>
+        )}
 
         {strategy !== "split" && (
           <label className="mb-3 block">
@@ -386,7 +453,13 @@ function TradeCard({
 
         <button
           type="button"
-          disabled={!user || !amount || isPending || (strategy !== "split" && !routerDeployed)}
+          disabled={
+            !user ||
+            !amount ||
+            isPending ||
+            insufficient ||
+            (strategy !== "split" && !routerDeployed)
+          }
           onClick={onTrade}
           className="w-full rounded-[10px] bg-white px-7 py-3.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -394,13 +467,15 @@ function TradeCard({
             ? "Connect wallet"
             : !amount
               ? "Enter amount"
-              : isPending
-                ? "Confirming…"
-                : strategy === "split"
-                  ? `Split ${amount} SY`
-                  : strategy === "pt"
-                    ? "Buy PT"
-                    : "Buy YT"}
+              : insufficient
+                ? "Insufficient SY"
+                : isPending
+                  ? "Confirming…"
+                  : strategy === "split"
+                    ? `Split ${amount} SY`
+                    : strategy === "pt"
+                      ? "Buy PT"
+                      : "Buy YT"}
         </button>
 
         {strategy !== "split" && !routerDeployed && (
