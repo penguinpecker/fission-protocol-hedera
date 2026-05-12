@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
-import { useAccount, useReadContracts, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { useReadContracts, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { parseEther, parseUnits } from "viem";
 import { Nav } from "@/components/Nav";
 import { diag } from "@/lib/diag";
@@ -33,7 +33,11 @@ export default function MarketDetailPage({ params }: { params: Promise<{ address
   const { address: marketAddrParam } = use(params);
   const market = marketAddrParam as `0x${string}`;
   const { data: detail, isLoading } = useMarketDetail(market);
-  const { address: user } = useAccount();
+  // user comes from the wallet ADAPTER, not wagmi directly — Hedera-native
+  // sessions don't show up in useAccount but the adapter unifies both paths
+  // (mode='evm' → wagmi address; mode='hedera' → long-zero from accountId).
+  const adapter = useWalletAdapter();
+  const user = adapter.address ?? undefined;
   const { data: position } = useUserPosition(market, detail, user);
 
   const [strategy, setStrategy] = useState<Strategy>("pt");
@@ -982,7 +986,8 @@ function PostExpiryActions({
   position: { pt: bigint; yt: bigint };
 }) {
   const { writeContract, isPending } = useWriteContract();
-  const { address: user } = useAccount();
+  const adapter = useWalletAdapter();
+  const user = adapter.address ?? undefined;
 
   const redeem = () => {
     if (!user) return;

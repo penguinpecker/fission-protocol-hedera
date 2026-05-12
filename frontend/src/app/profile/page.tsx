@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useAccount } from "wagmi";
+import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { WalletGate } from "@/components/WalletGate";
@@ -35,7 +35,10 @@ export default function ProfilePage() {
 }
 
 function ProfileBody() {
-  const { address } = useAccount();
+  // Read through the adapter so Hedera-native connects flow into the
+  // position lookups too (wagmi alone doesn't see hedera:mainnet sessions).
+  const adapter = useWalletAdapter();
+  const address = adapter.address ?? undefined;
   const { markets: cached } = useCachedMarkets();
 
   const marketAddrs = useMemo(
