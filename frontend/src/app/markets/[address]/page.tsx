@@ -491,7 +491,7 @@ function TradeCard({
       </div>
 
       {strategy === "mint" ? (
-        <MintSyForm sy={detail.sy} user={user} />
+        <MintSyForm sy={detail.sy} syShare={detail.syShare} user={user} />
       ) : (
       <div className="rounded-2xl border border-border bg-bgCard p-4">
         <div className="mb-3 text-[10px] font-semibold uppercase tracking-[2px] text-textDim">
@@ -667,23 +667,31 @@ function TradeCard({
  * approve(WHBAR) → SY.depositLiquidity. The user sees one HashPack popup
  * per tx; the button label tracks progress.
  */
-function MintSyForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
+interface MintFormProps {
+  sy: `0x${string}`;
+  syShare: `0x${string}`;
+  user: `0x${string}` | undefined;
+}
+
+function MintSyForm({ sy, syShare, user }: MintFormProps) {
   // Prefer the zap path: one HBAR input → one wallet popup → SY shares.
   // Fall back to the explicit USDC + WHBAR multi-step flow when the zap
   // hasn't been deployed yet for this environment.
   if (isDeployed(ADDRESSES.fissionZap)) {
-    return <ZapMintForm sy={sy} user={user} />;
+    return <ZapMintForm sy={sy} syShare={syShare} user={user} />;
   }
-  return <LegacyMintForm sy={sy} user={user} />;
+  return <LegacyMintForm sy={sy} syShare={syShare} user={user} />;
 }
 
-function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
+function ZapMintForm({ sy, syShare, user }: MintFormProps) {
   // The zap mints SY shares to the user (receiver) and sweeps dust WHBAR
   // back to the caller. Both transfers require the user account to have
   // an HTS association — HIP-904-unlimited accounts skip this internally.
+  // We check `syShare` (the actual HTS token returned by SY.shareToken())
+  // NOT `sy` (the contract itself, which is not an HTS-listed token).
   return (
     <AssociationGate
-      requiredTokens={[sy, HEDERA_TOKENS.WHBAR]}
+      requiredTokens={[syShare, HEDERA_TOKENS.WHBAR]}
       tokenLabels={["SY share token", "WHBAR"]}
       reason="needed to receive SY shares and reclaim leftover WHBAR"
     >
@@ -830,10 +838,10 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
   );
 }
 
-function LegacyMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
+function LegacyMintForm({ sy, syShare, user }: MintFormProps) {
   return (
     <AssociationGate
-      requiredTokens={[sy]}
+      requiredTokens={[syShare]}
       tokenLabels={["SY share token"]}
       reason="needed to receive your SY shares"
     >
