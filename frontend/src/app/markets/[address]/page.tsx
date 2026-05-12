@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
-import { useReadContracts, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
-import { parseEther, parseUnits } from "viem";
+import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
+import { parseUnits } from "viem";
 import { Nav } from "@/components/Nav";
 import { diag } from "@/lib/diag";
 import { Footer } from "@/components/Footer";
@@ -783,7 +783,8 @@ function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | un
 }
 
 function LegacyMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
-  const { writeContract, isPending } = useWriteContract();
+  const adapter = useWalletAdapter();
+  const [isPending, setIsPending] = useState(false);
   const [usdcAmt, setUsdcAmt] = useState("");
   const [whbarAmt, setWhbarAmt] = useState("");
 
@@ -831,29 +832,34 @@ function LegacyMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` |
     if (which === "usdc") setUsdcAmt(s); else setWhbarAmt(s);
   };
 
-  const approveUsdc = () => writeContract({
-    abi: erc20WriteAbi, address: HEDERA_TOKENS.USDC, functionName: "approve",
-    args: [sy, usdcParsed],
-  });
-  const approveWhbar = () => writeContract({
-    abi: erc20WriteAbi, address: HEDERA_TOKENS.WHBAR, functionName: "approve",
-    args: [sy, whbarParsed],
-  });
+  const guarded = async (fn: () => Promise<unknown>) => {
+    setIsPending(true);
+    try { await fn(); } finally { setIsPending(false); }
+  };
+  const approveUsdc = () => guarded(() =>
+    adapter.write({ kind: "approveErc20", token: HEDERA_TOKENS.USDC, spender: sy, amount: usdcParsed }),
+  );
+  const approveWhbar = () => guarded(() =>
+    adapter.write({ kind: "approveErc20", token: HEDERA_TOKENS.WHBAR, spender: sy, amount: whbarParsed }),
+  );
   const deposit = () => {
     if (!user) return;
-    // 5% slippage on each leg, ≥1 share min — same posture as the script.
+    // 5% slippage on each leg, ≥1 share min — same posture as the top-up script.
     const a0Min = (usdcParsed * 95n) / 100n;
     const a1Min = (whbarParsed * 95n) / 100n;
-    writeContract({
-      abi: syWriteAbi, address: sy, functionName: "depositLiquidity",
-      args: [usdcParsed, whbarParsed, a0Min, a1Min, user, 1n],
-      // SY.depositLiquidity is payable — needs ~5 HBAR for the V3 NPM fee.
-      // wagmi's `value` is in wei (Ethereum convention); Hashio divides by
-      // 1e10 before the Smart Contract Service, so msg.value inside the
-      // contract is in tinybars (1 HBAR = 1e8). parseEther("5") = 5e18 wei
-      // → 5e8 tinybars inside Solidity.
-      value: parseEther("5"),
-    });
+    return guarded(() =>
+      adapter.write({
+        kind: "depositLiquidity",
+        sy,
+        amount0: usdcParsed,
+        amount1: whbarParsed,
+        amount0Min: a0Min,
+        amount1Min: a1Min,
+        receiver: user,
+        minShares: 1n,
+        npmHbar: 5,
+      }),
+    );
   };
 
   const nextStep = needsUsdcApprove
@@ -985,18 +991,24 @@ function PostExpiryActions({
   market: `0x${string}`;
   position: { pt: bigint; yt: bigint };
 }) {
-  const { writeContract, isPending } = useWriteContract();
   const adapter = useWalletAdapter();
   const user = adapter.address ?? undefined;
+  const [isPending, setIsPending] = useState(false);
 
-  const redeem = () => {
+  const redeem = async () => {
     if (!user) return;
-    writeContract({
-      abi: marketWriteAbi,
-      address: market,
-      functionName: "redeemAfterExpiry",
-      args: [position.pt, position.yt, user],
-    });
+    setIsPending(true);
+    try {
+      await adapter.write({
+        kind: "redeemAfterExpiry",
+        market,
+        ptIn: position.pt,
+        ytIn: position.yt,
+        receiver: user,
+      });
+    } finally {
+      setIsPending(false);
+    }
   };
 
   return (
