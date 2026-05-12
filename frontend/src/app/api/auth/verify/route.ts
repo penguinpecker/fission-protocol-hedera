@@ -1,11 +1,19 @@
 // POST /api/auth/verify
 //
-// Body: { message: string, signature: string }
-// Returns: { ok: true, address: string } and sets the session cookie.
+// Two signing flows supported. Body discriminator: `mode`.
 //
-// Validates the SIWE message + signature, marks the nonce consumed, upserts
-// the user row, and sets an httpOnly session cookie signed with our own
-// SESSION_SECRET. Subsequent requests carry the cookie automatically.
+//   mode: "eip191" (default, ECDSA / EVM wallets via wagmi)
+//     { mode: "eip191", message: SIWE-string, signature: 0x... }
+//
+//   mode: "hedera" (NEW — Ed25519 or ECDSA via @hashgraph/hedera-wallet-connect)
+//     { mode: "hedera", accountId: "0.0.X", message: string, signatureMap: base64 }
+//
+// Both flows:
+//   1. Validate the signature against the claimed identity.
+//   2. Parse the embedded `Nonce: <hex>` line, atomically flip its
+//      consumed_at in auth_nonces.
+//   3. Upsert the user (keyed by EVM/long-zero address).
+//   4. Sign + attach the same httpOnly session cookie.
 
 import { NextResponse, type NextRequest } from "next/server";
 import { SiweMessage } from "siwe";
@@ -14,6 +22,25 @@ import { signSession, attachSessionCookie } from "@/lib/auth/session";
 
 const EXPECTED_CHAIN_ID = Number(process.env.NEXT_PUBLIC_HEDERA_CHAIN_ID ?? "295");
 
+type Mode = "eip191" | "hedera";
+
+interface CommonBody {
+  mode?: Mode;
+}
+
+interface Eip191Body extends CommonBody {
+  mode?: "eip191";
+  message: string;
+  signature: string;
+}
+
+interface HederaBody extends CommonBody {
+  mode: "hedera";
+  accountId: string;     // "0.0.NNNNN"
+  message: string;
+  signatureMap: string;  // base64-encoded protobuf SignatureMap
+}
+
 export async function POST(req: NextRequest) {
   let body: unknown;
   try {
@@ -21,25 +48,9 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
-  const message = (body as { message?: unknown })?.message;
-  const signature = (body as { signature?: unknown })?.signature;
-  if (typeof message !== "string" || typeof signature !== "string") {
-    return NextResponse.json({ error: "invalid_body" }, { status: 400 });
-  }
+  const mode: Mode = ((body as CommonBody)?.mode ?? "eip191") as Mode;
 
-  let siwe: SiweMessage;
-  try {
-    siwe = new SiweMessage(message);
-  } catch {
-    return NextResponse.json({ error: "siwe_parse" }, { status: 400 });
-  }
-
-  // Domain pinning: the SIWE message must claim our origin. We derive the
-  // expected host from the actual request, then in production additionally
-  // require it to be in a hardcoded allowlist — this protects against a
-  // misconfigured Origin header on a third-party deploy that happens to share
-  // our supabase project (defense in depth; the SIWE signature itself already
-  // proves the user signed for that domain).
+  // Origin gate stays the same in both flows.
   const originHost = (() => {
     const origin = req.headers.get("origin");
     if (origin) {
@@ -51,15 +62,12 @@ export async function POST(req: NextRequest) {
     }
     return req.headers.get("host") ?? "localhost";
   })();
-
   if (process.env.NODE_ENV === "production") {
     const PROD_HOSTS = new Set(["fissionp.com", "www.fissionp.com"]);
     const isPreview =
-      originHost.endsWith(".vercel.app") &&
-      originHost.startsWith("frontend-");
+      originHost.endsWith(".vercel.app") && originHost.startsWith("frontend-");
     const isLocal = /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(originHost);
     if (!PROD_HOSTS.has(originHost) && !isPreview && !isLocal) {
-      console.error("verify: untrusted origin", { originHost });
       return NextResponse.json(
         { error: "untrusted_origin", host: originHost },
         { status: 401 },
@@ -67,22 +75,37 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  if (mode === "hedera") {
+    return verifyHedera(body as HederaBody);
+  }
+  return verifyEip191(body as Eip191Body, originHost);
+}
+
+/* ───────────────────────────────────────────────── EIP-191 / SIWE path */
+
+async function verifyEip191(body: Eip191Body, originHost: string) {
+  const { message, signature } = body;
+  if (typeof message !== "string" || typeof signature !== "string") {
+    return NextResponse.json({ error: "invalid_body" }, { status: 400 });
+  }
+
+  let siwe: SiweMessage;
+  try {
+    siwe = new SiweMessage(message);
+  } catch {
+    return NextResponse.json({ error: "siwe_parse" }, { status: 400 });
+  }
+
   let verified;
   try {
-    verified = await siwe.verify({
-      signature,
-      domain: originHost,
-      nonce: siwe.nonce,
-    });
+    verified = await siwe.verify({ signature, domain: originHost, nonce: siwe.nonce });
   } catch (e) {
-    console.error("siwe verify threw", { originHost, msgDomain: siwe.domain, err: String(e) });
     return NextResponse.json(
       { error: "siwe_verify_threw", expected: originHost, gotInMessage: siwe.domain, detail: String(e) },
       { status: 401 },
     );
   }
   if (!verified.success) {
-    console.error("siwe verify failed", { originHost, msgDomain: siwe.domain });
     return NextResponse.json(
       { error: "siwe_verify_failed", expected: originHost, gotInMessage: siwe.domain },
       { status: 401 },
@@ -93,14 +116,101 @@ export async function POST(req: NextRequest) {
   }
 
   const lower = siwe.address.toLowerCase();
-  const supa = createServiceRoleClient();
+  return consumeNonceAndIssueCookie(lower, siwe.nonce);
+}
 
-  // Atomic nonce flip — only the request that wins the race gets a row.
+/* ─────────────────────────────────────────────── Hedera-native sig path */
+
+/** Construct the canonical long-zero EVM address from a Hedera account ID. */
+function longZeroFromAccountId(accountId: string): string {
+  const parts = accountId.split(".");
+  if (parts.length !== 3) throw new Error("bad accountId");
+  const num = Number(parts[2]);
+  if (!Number.isFinite(num) || num < 0) throw new Error("bad accountId num");
+  return "0x" + num.toString(16).padStart(40, "0");
+}
+
+async function verifyHedera(body: HederaBody) {
+  const { accountId, message, signatureMap } = body;
+  if (typeof accountId !== "string" || typeof message !== "string" || typeof signatureMap !== "string") {
+    return NextResponse.json({ error: "invalid_body" }, { status: 400 });
+  }
+  if (!/^0\.0\.\d+$/.test(accountId)) {
+    return NextResponse.json({ error: "bad_account_id" }, { status: 400 });
+  }
+
+  // 1. Fetch the account's current public key from Mirror Node — authoritative
+  //    source of truth. Never trust a key embedded in the signatureMap.
+  let publicKeyString: string;
+  try {
+    const r = await fetch(
+      `https://mainnet-public.mirrornode.hedera.com/api/v1/accounts/${accountId}`,
+      { cache: "no-store" },
+    );
+    if (!r.ok) throw new Error(`mirror node ${r.status}`);
+    const j = (await r.json()) as { key?: { key?: string } };
+    if (!j.key?.key) throw new Error("no key in mirror response");
+    publicKeyString = j.key.key;
+  } catch (e) {
+    return NextResponse.json(
+      { error: "mirror_lookup_failed", detail: String(e) },
+      { status: 502 },
+    );
+  }
+
+  // 2. Verify the signature using the library helper. This re-applies the
+  //    Hedera message prefix ("\x19Hedera Signed Message:\n<len>") internally
+  //    and validates the protobuf-wrapped sig against the public key.
+  let ok = false;
+  try {
+    // Deep import from /shared to dodge the wallet-side code that pulls in
+    // @reown/walletkit (not needed server-side).
+    const [hwc, sdk] = await Promise.all([
+      import("@hashgraph/hedera-wallet-connect/dist/lib/shared/utils.js"),
+      import("@hashgraph/sdk"),
+    ]);
+    const publicKey = sdk.PublicKey.fromString(publicKeyString);
+    ok = (hwc as { verifyMessageSignature: (m: string, s: string, k: typeof publicKey) => boolean }).verifyMessageSignature(message, signatureMap, publicKey);
+  } catch (e) {
+    return NextResponse.json(
+      { error: "hedera_verify_threw", detail: String(e) },
+      { status: 401 },
+    );
+  }
+  if (!ok) {
+    return NextResponse.json({ error: "hedera_verify_failed" }, { status: 401 });
+  }
+
+  // 3. Parse the nonce out of the message. Same `Nonce: <hex>` line we use
+  //    in the SIWE flow, so the auth_nonces table is reused unchanged.
+  const nonceMatch = message.match(/^Nonce:\s*([0-9a-fA-F]+)\s*$/m);
+  if (!nonceMatch) {
+    return NextResponse.json({ error: "no_nonce_in_message" }, { status: 400 });
+  }
+  const nonce = nonceMatch[1];
+  if (!nonce) {
+    return NextResponse.json({ error: "no_nonce_in_message" }, { status: 400 });
+  }
+
+  // 4. The session is keyed by the long-zero EVM address derived from the
+  //    Hedera account ID — same column as ECDSA users so all downstream
+  //    code (RLS, watchlists, profile) stays identical.
+  const address = longZeroFromAccountId(accountId).toLowerCase();
+  return consumeNonceAndIssueCookie(address, nonce);
+}
+
+/* ────────────────────────────────────────── shared nonce + session step */
+
+async function consumeNonceAndIssueCookie(lowerAddress: string, nonce: string) {
+  if (!/^0x[a-f0-9]{40}$/.test(lowerAddress)) {
+    return NextResponse.json({ error: "bad_address_normalized" }, { status: 500 });
+  }
+  const supa = createServiceRoleClient();
   const { data: flipped, error: flipErr } = await supa
     .from("auth_nonces")
     .update({ consumed_at: new Date().toISOString() })
-    .eq("nonce", siwe.nonce)
-    .eq("address", lower)
+    .eq("nonce", nonce)
+    .eq("address", lowerAddress)
     .is("consumed_at", null)
     .gt("expires_at", new Date().toISOString())
     .select()
@@ -109,14 +219,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_or_expired_nonce" }, { status: 401 });
   }
 
-  // Upsert the user. Service-role bypasses RLS.
   await supa.from("users").upsert(
-    { address: lower },
-    { onConflict: "address", ignoreDuplicates: true }
+    { address: lowerAddress },
+    { onConflict: "address", ignoreDuplicates: true },
   );
 
-  const token = await signSession(lower);
-  const res = NextResponse.json({ ok: true, address: lower });
+  const token = await signSession(lowerAddress);
+  const res = NextResponse.json({ ok: true, address: lowerAddress });
   attachSessionCookie(res, token);
   return res;
 }
