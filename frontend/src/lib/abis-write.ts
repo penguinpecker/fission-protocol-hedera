@@ -154,8 +154,6 @@ export const fissionZapAbi = [
     stateMutability: "payable",
     inputs: [
       { name: "sy", type: "address" },
-      { name: "wrapAmount", type: "uint256" },
-      { name: "swapAmount", type: "uint256" },
       { name: "usdcMinOut", type: "uint256" },
       { name: "amount0Min", type: "uint256" },
       { name: "amount1Min", type: "uint256" },

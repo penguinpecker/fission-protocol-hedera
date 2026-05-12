@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
 import { useAccount, useReadContracts, useWriteContract } from "wagmi";
-import { parseEther, parseUnits } from "viem";
+import { parseUnits } from "viem";
 import { Nav } from "@/components/Nav";
 import { diag } from "@/lib/diag";
 import { Footer } from "@/components/Footer";
@@ -527,39 +527,37 @@ function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | un
   const { writeContract, isPending } = useWriteContract();
   const [hbar, setHbar] = useState("");
 
-  // We need ~5 HBAR for the V3 NPM fee on top of whatever the user wants to
-  // turn into SY. Reserve that out of the input. (Hedera EVM: 1 HBAR = 1e18 wei.)
-  const NPM_FEE_WEI = parseEther("5");
+  // Hedera EVM: msg.value is in TINYBARS (1 HBAR = 1e8), not wei (1e18) like
+  // Ethereum. parseEther would oversend by 1e10×. wagmi's writeContract `value`
+  // expects whatever the chain interprets — on Hedera that's tinybars.
+  // 5 HBAR NPM fee = 5 * 1e8 = 5e8 tinybars.
+  const NPM_FEE_TINYBARS = 5n * 10n ** 8n;
 
-  let hbarWei = 0n;
-  try { if (hbar) hbarWei = parseEther(hbar); } catch { /* keep 0 */ }
-
-  const wrapAmountWei = hbarWei; // everything the user typed gets wrapped
-  // WHBAR is 8-dec; convert from 18-dec wei. 1 HBAR (1e18 wei) = 1 WHBAR raw (1e8).
-  const whbarTotalRaw = hbarWei / 10n ** 10n;
-  const swapAmountRaw = whbarTotalRaw / 2n; // swap half to USDC
+  // Total HBAR commit in tinybars = wrap + NPM fee. Contract derives wrap
+  // internally as (msg.value - NPM_FEE).
+  let userHbarTinybars = 0n;
+  try { if (hbar) userHbarTinybars = parseUnits(hbar, 8); } catch { /* keep 0 */ }
+  const totalSendTinybars = userHbarTinybars + NPM_FEE_TINYBARS;
 
   const onZap = () => {
-    if (!user || hbarWei === 0n) return;
+    if (!user || userHbarTinybars === 0n) return;
     writeContract({
       abi: fissionZapAbi,
       address: ADDRESSES.fissionZap,
       functionName: "zapHbarToSy",
       args: [
         sy,
-        wrapAmountWei,
-        swapAmountRaw,
-        0n,           // usdcMinOut — zap also passes its own 5% defaults later if we tighten
-        0n,           // amount0Min on the V3 NFT add
-        0n,           // amount1Min
-        1n,           // minShares
+        0n, // usdcMinOut — wide; tighten in v1.1 via on-chain quoter
+        0n, // amount0Min
+        0n, // amount1Min
+        1n, // minShares
         user,
       ],
-      value: wrapAmountWei + NPM_FEE_WEI,
+      value: totalSendTinybars,
     });
   };
 
-  const tooSmall = hbarWei > 0n && hbarWei < parseEther("1"); // arbitrary floor — V3 NPM fee dominates below ~1 HBAR
+  const tooSmall = userHbarTinybars > 0n && userHbarTinybars < parseUnits("1", 8); // <1 HBAR is mostly NPM fee
 
   return (
     <div className="rounded-2xl border border-border bg-bgCard p-4">
@@ -600,13 +598,13 @@ function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | un
 
       <button
         type="button"
-        disabled={!user || hbarWei === 0n || isPending}
+        disabled={!user || userHbarTinybars === 0n || isPending}
         onClick={onZap}
         className="w-full rounded-[10px] bg-white px-7 py-3.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {!user
           ? "Connect wallet"
-          : hbarWei === 0n
+          : userHbarTinybars === 0n
             ? "Enter HBAR amount"
             : isPending
               ? "Confirming…"
@@ -686,9 +684,9 @@ function LegacyMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` |
       abi: syWriteAbi, address: sy, functionName: "depositLiquidity",
       args: [usdcParsed, whbarParsed, a0Min, a1Min, user, 1n],
       // SY.depositLiquidity is payable — needs ~5 HBAR to cover the V3 NPM
-      // increase-liquidity fee (USD-cents denominated, converted to HBAR
-      // via Hedera's exchange-rate precompile inside the contract).
-      value: parseEther("5"),
+      // increase-liquidity fee. Hedera EVM uses TINYBARS for msg.value, not
+      // wei: 5 HBAR = 5e8 tinybars, NOT parseEther("5") = 5e18.
+      value: parseUnits("5", 8),
     });
   };
 
