@@ -24,6 +24,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { diag } from "@/lib/diag";
 
 type Status = "idle" | "connecting" | "connected" | "error";
 
@@ -107,10 +108,14 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const connect = useCallback(async () => {
+    diag("HederaConnect", { step: "click" });
     setState((s) => ({ ...s, status: "connecting", error: null }));
     try {
+      diag("HederaConnect", { step: "before_init" });
       const connector = await getOrInit();
+      diag("HederaConnect", { step: "init_ok", hasOpenModal: typeof (connector as { openModal?: unknown }).openModal === "function" });
       await connector.openModal();
+      diag("HederaConnect", { step: "openModal_resolved", signerCount: connector.signers?.length ?? 0 });
       const signers = connector.signers;
       if (!signers || signers.length === 0) {
         throw new Error("No signer returned from wallet");
@@ -119,13 +124,16 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
       const accountId = signer.getAccountId().toString();
       const num = Number(accountId.split(".")[2]);
       const evmAddress = ("0x" + num.toString(16).padStart(40, "0")) as `0x${string}`;
+      diag("HederaConnect", { step: "success", accountId, evmAddress });
       setState({ status: "connected", accountId, evmAddress, error: null });
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      diag("HederaConnect", { step: "error", error: msg, stack: e instanceof Error ? e.stack?.slice(0, 400) : undefined });
       setState({
         status: "error",
         accountId: null,
         evmAddress: null,
-        error: e instanceof Error ? e.message : String(e),
+        error: msg,
       });
     }
   }, [getOrInit]);

@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { useAccount, useChainId, useConnect, useSwitchChain } from "wagmi";
+import { useEffect } from "react";
+import { useAccount, useChainId, useSwitchChain } from "wagmi";
 import { FissionLogo } from "./FissionLogo";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { HEDERA_MAINNET_CHAIN_ID } from "@/lib/wagmi";
@@ -17,26 +17,12 @@ export function Nav() {
   const adapter = useWalletAdapter();
   const wagmiAcct = useAccount();
   const chainId = useChainId();
-  const { connectors, connect, isPending: isEvmConnecting, error: evmError } = useConnect();
   const { switchChain } = useSwitchChain();
   const { state: auth, signIn, signOut } = useSiweAuth();
   const hedera = useHederaWallet();
 
-  // Dropdown state for the dual-mode picker.
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const pickerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!pickerOpen) return;
-    function onClick(e: MouseEvent) {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setPickerOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [pickerOpen]);
-
-  // EVM-only chain mismatch banner. Hedera-native mode doesn't have a
+  // EVM-only chain mismatch banner kept for the unlikely case the user
+  // restored a legacy wagmi session. Hedera-native mode doesn't have a
   // "wrong chain" notion — the session is bound to hedera:mainnet at negotiate.
   const onWrongChain =
     adapter.mode === "evm" &&
@@ -46,17 +32,12 @@ export function Nav() {
     if (onWrongChain) switchChain({ chainId: HEDERA_MAINNET_CHAIN_ID });
   }, [onWrongChain, switchChain]);
 
-  const wcConnector = connectors[0];
-  const evmAvailable = Boolean(wcConnector);
   const hederaAvailable = Boolean(process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID);
 
-  const handleConnectEvm = () => {
-    setPickerOpen(false);
-    if (!wcConnector) return;
-    connect({ connector: wcConnector, chainId: HEDERA_MAINNET_CHAIN_ID });
-  };
-  const handleConnectHedera = async () => {
-    setPickerOpen(false);
+  // Single connect path: Reown's WC modal via DAppConnector. The modal
+  // surfaces HashPack, Kabila, Blade, and any other WC-capable wallet,
+  // and the hedera:mainnet namespace accepts both Ed25519 and ECDSA.
+  const handleConnect = async () => {
     await hedera.connect();
   };
   const handleDisconnect = async () => {
@@ -64,9 +45,8 @@ export function Nav() {
     await adapter.disconnect();
   };
 
-  const isConnecting = isEvmConnecting || hedera.status === "connecting";
-  const connectErrorMsg =
-    hedera.error ?? (evmError ? evmError.message : null);
+  const isConnecting = hedera.status === "connecting";
+  const connectErrorMsg = hedera.error;
 
   return (
     <>
@@ -132,53 +112,19 @@ export function Nav() {
               </div>
             )
           ) : (
-            <div ref={pickerRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setPickerOpen((v) => !v)}
-                disabled={isConnecting}
-                className="rounded-[10px] bg-white px-5 py-2 text-[13px] font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isConnecting ? "Connecting…" : "Connect"}
-              </button>
-
-              {pickerOpen && (
-                <div className="absolute right-0 mt-2 w-[300px] overflow-hidden rounded-xl border border-border bg-bgCard shadow-2xl">
-                  <div className="border-b border-border px-3 py-2 text-[10px] uppercase tracking-[1px] text-textDim">
-                    Choose wallet path
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={handleConnectHedera}
-                    disabled={!hederaAvailable}
-                    className="block w-full border-b border-border px-3 py-3 text-left transition hover:bg-white/[0.04] disabled:opacity-40"
-                  >
-                    <div className="text-[13px] font-medium text-text">
-                      Hedera native{" "}
-                      <span className="ml-1 rounded-full bg-success/10 px-1.5 py-0.5 text-[9px] uppercase tracking-[1px] text-success">
-                        recommended
-                      </span>
-                    </div>
-                    <div className="mt-0.5 text-[11px] text-textDim">
-                      Any HashPack / Kabila / Blade account — Ed25519 OR ECDSA. Most accounts work.
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleConnectEvm}
-                    disabled={!evmAvailable}
-                    className="block w-full px-3 py-3 text-left transition hover:bg-white/[0.04] disabled:opacity-40"
-                  >
-                    <div className="text-[13px] font-medium text-text">EVM only</div>
-                    <div className="mt-0.5 text-[11px] text-textDim">
-                      HashPack/Kabila with EVM mode enabled, or MetaMask with Hedera mainnet added. ECDSA keys only.
-                    </div>
-                  </button>
-                </div>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={handleConnect}
+              disabled={isConnecting || !hederaAvailable}
+              title={
+                !hederaAvailable
+                  ? "WalletConnect not configured (NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID missing)"
+                  : "Opens WalletConnect modal — pick any Hedera wallet"
+              }
+              className="rounded-[10px] bg-white px-5 py-2 text-[13px] font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isConnecting ? "Opening modal…" : "Connect"}
+            </button>
           )}
         </div>
       </nav>
