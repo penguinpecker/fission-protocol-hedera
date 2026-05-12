@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
 import { useAccount, useReadContracts, useWriteContract } from "wagmi";
-import { parseUnits } from "viem";
+import { parseEther, parseUnits } from "viem";
 import { Nav } from "@/components/Nav";
 import { diag } from "@/lib/diag";
 import { Footer } from "@/components/Footer";
@@ -578,20 +578,24 @@ function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | un
   const { writeContract, isPending } = useWriteContract();
   const [hbar, setHbar] = useState("");
 
-  // Hedera EVM: msg.value is in TINYBARS (1 HBAR = 1e8), not wei (1e18) like
-  // Ethereum. parseEther would oversend by 1e10×. wagmi's writeContract `value`
-  // expects whatever the chain interprets — on Hedera that's tinybars.
-  // 5 HBAR NPM fee = 5 * 1e8 = 5e8 tinybars.
-  const NPM_FEE_TINYBARS = 5n * 10n ** 8n;
+  // Hedera units gotcha:
+  //   - The SDK's setPayableAmount(N HBAR) makes the contract see msg.value
+  //     as N×1e8 (tinybars).
+  //   - The Hashio JSON-RPC eth_sendTransaction path (what wagmi uses) takes
+  //     `value` in WEI (Ethereum convention, 1 HBAR = 1e18 wei). Hashio
+  //     divides by 1e10 before passing to the Smart Contract Service, so
+  //     the contract still sees tinybars internally.
+  //
+  // Net: contracts treat msg.value as tinybars (NPM_FEE = 5e8 in Solidity);
+  // but wagmi's `value` MUST be wei. Use parseEther.
+  const NPM_FEE_WEI = parseEther("5"); // 5 HBAR
 
-  // Total HBAR commit in tinybars = wrap + NPM fee. Contract derives wrap
-  // internally as (msg.value - NPM_FEE).
-  let userHbarTinybars = 0n;
-  try { if (hbar) userHbarTinybars = parseUnits(hbar, 8); } catch { /* keep 0 */ }
-  const totalSendTinybars = userHbarTinybars + NPM_FEE_TINYBARS;
+  let userHbarWei = 0n;
+  try { if (hbar) userHbarWei = parseEther(hbar); } catch { /* keep 0 */ }
+  const totalSendWei = userHbarWei + NPM_FEE_WEI;
 
   const onZap = () => {
-    if (!user || userHbarTinybars === 0n) return;
+    if (!user || userHbarWei === 0n) return;
     writeContract({
       abi: fissionZapAbi,
       address: ADDRESSES.fissionZap,
@@ -604,11 +608,11 @@ function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | un
         1n, // minShares
         user,
       ],
-      value: totalSendTinybars,
+      value: totalSendWei,
     });
   };
 
-  const tooSmall = userHbarTinybars > 0n && userHbarTinybars < parseUnits("1", 8); // <1 HBAR is mostly NPM fee
+  const tooSmall = userHbarWei > 0n && userHbarWei < parseEther("1"); // <1 HBAR is mostly NPM fee
 
   return (
     <div className="rounded-2xl border border-border bg-bgCard p-4">
@@ -649,13 +653,13 @@ function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | un
 
       <button
         type="button"
-        disabled={!user || userHbarTinybars === 0n || isPending}
+        disabled={!user || userHbarWei === 0n || isPending}
         onClick={onZap}
         className="w-full rounded-[10px] bg-white px-7 py-3.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {!user
           ? "Connect wallet"
-          : userHbarTinybars === 0n
+          : userHbarWei === 0n
             ? "Enter HBAR amount"
             : isPending
               ? "Confirming…"
@@ -734,10 +738,12 @@ function LegacyMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` |
     writeContract({
       abi: syWriteAbi, address: sy, functionName: "depositLiquidity",
       args: [usdcParsed, whbarParsed, a0Min, a1Min, user, 1n],
-      // SY.depositLiquidity is payable — needs ~5 HBAR to cover the V3 NPM
-      // increase-liquidity fee. Hedera EVM uses TINYBARS for msg.value, not
-      // wei: 5 HBAR = 5e8 tinybars, NOT parseEther("5") = 5e18.
-      value: parseUnits("5", 8),
+      // SY.depositLiquidity is payable — needs ~5 HBAR for the V3 NPM fee.
+      // wagmi's `value` is in wei (Ethereum convention); Hashio divides by
+      // 1e10 before the Smart Contract Service, so msg.value inside the
+      // contract is in tinybars (1 HBAR = 1e8). parseEther("5") = 5e18 wei
+      // → 5e8 tinybars inside Solidity.
+      value: parseEther("5"),
     });
   };
 
