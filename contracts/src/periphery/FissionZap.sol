@@ -82,17 +82,22 @@ contract FissionZap {
     uint24 public constant POOL_FEE = 1500; // 0.15% (WHBAR-USDC tier we use elsewhere)
 
     error InsufficientValue();
-    error SwapAmountTooLarge();
-    error SyShareMismatch();
 
     event Zapped(
         address indexed user,
         address indexed sy,
-        uint256 hbarIn,
+        uint256 hbarTinybarsIn,
         uint256 usdcDeposited,
         uint256 whbarDeposited,
         uint256 sharesMinted
     );
+
+    /// @dev Reserved for the V3 NPM fee that SY.depositLiquidity forwards
+    ///      internally (~5 HBAR is what SaucerSwap V3 NPM charges for
+    ///      increaseLiquidity in USD-cents-denominated form). On Hedera EVM
+    ///      msg.value is in TINYBARS (1 HBAR = 1e8 tinybars), NOT wei like
+    ///      Ethereum. So 5 HBAR = 5e8 tinybars here.
+    uint256 internal constant NPM_FEE_TINYBARS = 5 * 1e8;
 
     constructor(
         address whbarContract,
@@ -107,12 +112,16 @@ contract FissionZap {
     }
 
     /// @notice Zap HBAR → SY shares in one transaction.
+    /// @dev    User sends N HBAR via msg.value. The contract reserves
+    ///         NPM_FEE_TINYBARS for the V3 NPM fee, wraps the rest to
+    ///         WHBAR, swaps half to USDC, and deposits both into the SY.
+    ///         No wrapAmount/swapAmount params — derived from msg.value
+    ///         and on-chain WHBAR balance after wrap.
+    ///
+    ///         Hedera EVM unit reminder: msg.value is in TINYBARS, not wei.
+    ///
     /// @param sy             SY contract to mint shares from.
-    /// @param wrapAmount     HBAR (in wei) to wrap to WHBAR. The rest of
-    ///                       msg.value covers the V3 NPM fee (SY.depositLiquidity
-    ///                       requires ~5 HBAR). 1 HBAR = 1e18 wei on Hedera EVM.
-    /// @param swapAmount     WHBAR (in 8-decimal raw) to swap to USDC.
-    /// @param usdcMinOut     Minimum USDC out from the swap (slippage floor).
+    /// @param usdcMinOut     Minimum USDC out from the WHBAR→USDC swap.
     /// @param amount0Min     Minimum USDC actually deposited to the SY's V3 NFT.
     /// @param amount1Min     Minimum WHBAR actually deposited.
     /// @param minShares      Minimum SY shares minted; floor at 1 is fine.
@@ -120,21 +129,23 @@ contract FissionZap {
     /// @return shares        SY shares minted.
     function zapHbarToSy(
         address sy,
-        uint256 wrapAmount,
-        uint256 swapAmount,
         uint256 usdcMinOut,
         uint256 amount0Min,
         uint256 amount1Min,
         uint128 minShares,
         address receiver
     ) external payable returns (uint256 shares) {
-        if (msg.value < wrapAmount) revert InsufficientValue();
-        if (swapAmount > _hbarToWhbarRaw(wrapAmount)) revert SwapAmountTooLarge();
+        if (msg.value <= NPM_FEE_TINYBARS) revert InsufficientValue();
 
-        // 1. Wrap HBAR → WHBAR. The WHBAR contract sees address(this) as the holder.
+        // Reserve NPM fee out of msg.value, wrap the rest. WHBAR is 8-dec
+        // and HBAR/tinybars are also 8-dec on Hedera — 1:1 mapping, so
+        // wrapping N tinybars produces N raw WHBAR.
+        uint256 wrapAmount = msg.value - NPM_FEE_TINYBARS;
         IWHBAR(WHBAR_CONTRACT).deposit{value: wrapAmount}();
 
-        // 2. Swap part of the WHBAR → USDC via SaucerSwap V3 (0.15% pool).
+        // Swap half the wrapped WHBAR to USDC via SaucerSwap V3 (0.15% pool).
+        uint256 whbarBal = IHTSERC20(WHBAR).balanceOf(address(this));
+        uint256 swapAmount = whbarBal / 2;
         IHTSERC20(WHBAR).approve(SAUCER_V3_ROUTER, swapAmount);
         ISaucerSwapV3Router.ExactInputSingleParams memory params = ISaucerSwapV3Router.ExactInputSingleParams({
             tokenIn: WHBAR,
@@ -148,15 +159,14 @@ contract FissionZap {
         });
         ISaucerSwapV3Router(SAUCER_V3_ROUTER).exactInputSingle(params);
 
-        // 3. Deposit USDC + remaining WHBAR into the SY.
+        // Deposit USDC + remaining WHBAR into the SY. Forward all remaining
+        // contract HBAR — SY pulls what NPM needs and the rest gets swept later.
         uint256 usdcBal = IHTSERC20(USDC).balanceOf(address(this));
-        uint256 whbarBal = IHTSERC20(WHBAR).balanceOf(address(this));
+        whbarBal = IHTSERC20(WHBAR).balanceOf(address(this));
         IHTSERC20(USDC).approve(sy, usdcBal);
         IHTSERC20(WHBAR).approve(sy, whbarBal);
 
-        // SY.depositLiquidity is payable — forward leftover HBAR for the NPM fee.
-        uint256 npmHbar = address(this).balance;
-        shares = ISYDepositLiquidity(sy).depositLiquidity{value: npmHbar}(
+        shares = ISYDepositLiquidity(sy).depositLiquidity{value: address(this).balance}(
             usdcBal,
             whbarBal,
             amount0Min,
@@ -167,26 +177,17 @@ contract FissionZap {
 
         emit Zapped(receiver, sy, msg.value, usdcBal, whbarBal, shares);
 
-        // Sweep any dust (some swap router implementations leave WHBAR behind on
-        // partial fills; SY may not consume the full balance either).
+        // Sweep any dust back to caller.
         uint256 dust0 = IHTSERC20(USDC).balanceOf(address(this));
         uint256 dust1 = IHTSERC20(WHBAR).balanceOf(address(this));
         if (dust0 > 0) IHTSERC20(USDC).transfer(msg.sender, dust0);
         if (dust1 > 0) IHTSERC20(WHBAR).transfer(msg.sender, dust1);
 
-        // Refund any HBAR the SY didn't actually consume.
         uint256 hbarLeft = address(this).balance;
         if (hbarLeft > 0) {
             (bool ok, ) = payable(msg.sender).call{value: hbarLeft}("");
             require(ok, "hbar refund failed");
         }
-    }
-
-    /// @dev HBAR is 18-dec on the EVM side but WHBAR is 8-dec. 1 HBAR (1e18 wei)
-    ///      maps to 1 WHBAR raw (1e8 units). Divide accordingly when validating
-    ///      that the swap amount doesn't exceed wrapped balance.
-    function _hbarToWhbarRaw(uint256 hbarWei) internal pure returns (uint256) {
-        return hbarWei / 1e10;
     }
 
     /// @notice Accept HBAR (the WHBAR contract sends some back during deposit).
