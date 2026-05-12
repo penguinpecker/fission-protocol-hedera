@@ -290,11 +290,26 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
 
   // Lazy-load the SDK so it doesn't sit in the initial bundle.
   const sdk = await import("@hashgraph/sdk");
-  const { ContractExecuteTransaction, ContractFunctionParameters, ContractId, Hbar } = sdk;
+  const { ContractExecuteTransaction, ContractFunctionParameters, ContractId, Hbar, AccountId, Client } = sdk;
   // bignumber.js is the SDK's accepted form for uint256/uint128 params.
   const { default: BigNumber } = await import("bignumber.js");
 
   const toBN = (v: bigint): InstanceType<typeof BigNumber> => new BigNumber(v.toString());
+
+  // DAppSigner.populateTransaction (from @hashgraph/hedera-wallet-connect)
+  // only sets the transaction ID, not the node account IDs. Then
+  // tx.freezeWithSigner internally calls tx.freeze(null) which throws
+  // "nodeAccountId must be set or client must be provided with freezeWith".
+  //
+  // Workaround: build a mainnet Client purely for its node list and pass
+  // those IDs to setNodeAccountIds before freezing. The client is never
+  // used to execute — DAppSigner submits via WalletConnect — but it
+  // satisfies the SDK's pre-freeze invariant.
+  const mainnetClient = Client.forMainnet();
+  const nodeIds: InstanceType<typeof AccountId>[] = mainnetClient._network
+    ? (mainnetClient._network.getNodeAccountIdsForExecute?.() as InstanceType<typeof AccountId>[]) ?? []
+    : [];
+  mainnetClient.close();
 
   const cid = (addr: `0x${string}`) => ContractId.fromEvmAddress(0, 0, addr);
   const exec = async (
@@ -309,6 +324,7 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
       .setGas(gas)
       .setFunction(functionName, params);
     if (payableHbar > 0) tx.setPayableAmount(new Hbar(payableHbar));
+    if (nodeIds.length > 0) tx.setNodeAccountIds(nodeIds);
     await tx.freezeWithSigner(signer as never);
     const resp = await tx.executeWithSigner(signer as never);
     // Wait for receipt so callers can rely on the tx being finalized.
