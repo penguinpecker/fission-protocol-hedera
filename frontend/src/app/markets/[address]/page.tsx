@@ -12,6 +12,7 @@ import { useMarketDetail, useUserPosition, MarketDetail } from "@/hooks/useMarke
 import { ADDRESSES, isDeployed, HEDERA_TOKENS, USDC_DECIMALS, WHBAR_DECIMALS } from "@/lib/addresses";
 import { erc20Abi } from "@/lib/abis";
 import { erc20WriteAbi, routerAbi, marketWriteAbi, syWriteAbi, fissionZapAbi } from "@/lib/abis-write";
+import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import {
   impliedApyPct,
   daysUntil,
@@ -300,9 +301,17 @@ function TradeCard({
   user,
   syBalance,
 }: TradeCardProps) {
-  const { writeContract, isPending, data: txHash, reset: resetWrite } = useWriteContract();
+  const adapter = useWalletAdapter();
+  const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [writeError, setWriteError] = useState<string | null>(null);
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
   const routerDeployed = isDeployed(ADDRESSES.router);
+  const isPending = isSubmitting || adapter.isWritePending;
+  const resetWrite = () => {
+    setTxHash(undefined);
+    setWriteError(null);
+  };
 
   // Parse the amount the user typed. If anything is invalid (empty, NaN,
   // negative), this is 0n and we'll treat it as no-amount in the gate.
@@ -343,16 +352,34 @@ function TradeCard({
   const needsApprove =
     strategy !== "mint" && parsedAmt > 0n && allowance < parsedAmt;
 
-  const onApprove = () => {
-    writeContract({
-      abi: erc20WriteAbi,
-      address: detail.syShare,
-      functionName: "approve",
-      args: [spender, parsedAmt],
-    });
+  const wrap = async <T,>(fn: () => Promise<T>) => {
+    setWriteError(null);
+    setIsSubmitting(true);
+    try {
+      return await fn();
+    } catch (e) {
+      setWriteError(e instanceof Error ? e.message : String(e));
+      throw e;
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const onTrade = () => {
+  const onApprove = async () => {
+    try {
+      const { txHash: hash } = await wrap(() =>
+        adapter.write({
+          kind: "approveErc20",
+          token: detail.syShare,
+          spender,
+          amount: parsedAmt,
+        }),
+      );
+      setTxHash(hash as `0x${string}`);
+    } catch { /* error already captured in writeError */ }
+  };
+
+  const onTrade = async () => {
     if (!user || !amount || !routerDeployed) return;
     if (parsedAmt > syBalance) return;
     if (needsApprove) return; // guard — UI button label routes to onApprove first
@@ -360,38 +387,41 @@ function TradeCard({
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     const minOut = (amt * BigInt(10_000 - slippageBps)) / 10_000n;
 
-    if (strategy === "split") {
-      // Direct market.split() — no router needed; no slippage on a 1:1 wrap.
-      writeContract({
-        abi: marketWriteAbi,
-        address: market,
-        functionName: "split",
-        args: [amt],
-      });
-      return;
-    }
-
-    if (strategy === "pt") {
-      // Use router buyPT-style: pay SY exact, receive PT.
-      // Router signature: swapExactSyForPt(market, syIn, ptOut, receiver, deadline).
-      // We approximate ptOut from amount (1 PT ≈ 1/ptPrice SY); user-readable approx.
-      writeContract({
-        abi: routerAbi,
-        address: ADDRESSES.router,
-        functionName: "swapExactSyForPt",
-        args: [market, amt, minOut, user, deadline],
-      });
-      return;
-    }
-
-    if (strategy === "yt") {
-      writeContract({
-        abi: routerAbi,
-        address: ADDRESSES.router,
-        functionName: "buyYT",
-        args: [market, amt, minOut, user, deadline],
-      });
-    }
+    try {
+      let hash: string;
+      if (strategy === "split") {
+        ({ txHash: hash } = await wrap(() =>
+          adapter.write({ kind: "split", market, amount: amt }),
+        ));
+      } else if (strategy === "pt") {
+        ({ txHash: hash } = await wrap(() =>
+          adapter.write({
+            kind: "swapExactSyForPt",
+            router: ADDRESSES.router,
+            market,
+            syIn: amt,
+            minPtOut: minOut,
+            receiver: user,
+            deadline,
+          }),
+        ));
+      } else if (strategy === "yt") {
+        ({ txHash: hash } = await wrap(() =>
+          adapter.write({
+            kind: "buyYT",
+            router: ADDRESSES.router,
+            market,
+            syBudget: amt,
+            minSyOut: minOut,
+            receiver: user,
+            deadline,
+          }),
+        ));
+      } else {
+        return;
+      }
+      setTxHash(hash as `0x${string}`);
+    } catch { /* error already captured */ }
   };
 
   const onPrimary = () => {
@@ -551,6 +581,12 @@ function TradeCard({
           </p>
         )}
 
+        {writeError && (
+          <div className="mt-2 rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-[11px] leading-relaxed text-error">
+            <span className="font-mono">{writeError.slice(0, 240)}</span>
+          </div>
+        )}
+
         {isConfirmed && txHash && (
           <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 text-[12px] leading-relaxed text-success">
             <div className="font-semibold">Transaction confirmed.</div>
@@ -605,45 +641,50 @@ function MintSyForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | und
 }
 
 function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
-  const { writeContract, isPending, data: txHash, reset: resetWrite } = useWriteContract();
+  const adapter = useWalletAdapter();
+  const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
   const [hbar, setHbar] = useState("");
+  const [hbarError, setHbarError] = useState<string | null>(null);
 
-  // Hedera units gotcha:
-  //   - The SDK's setPayableAmount(N HBAR) makes the contract see msg.value
-  //     as N×1e8 (tinybars).
-  //   - The Hashio JSON-RPC eth_sendTransaction path (what wagmi uses) takes
-  //     `value` in WEI (Ethereum convention, 1 HBAR = 1e18 wei). Hashio
-  //     divides by 1e10 before passing to the Smart Contract Service, so
-  //     the contract still sees tinybars internally.
-  //
-  // Net: contracts treat msg.value as tinybars (NPM_FEE = 5e8 in Solidity);
-  // but wagmi's `value` MUST be wei. Use parseEther.
-  const NPM_FEE_WEI = parseEther("5"); // 5 HBAR
+  // Parse user input as a positive number of whole HBAR. Negative/NaN
+  // are coerced to 0 by the gate below.
+  let userHbarN = 0;
+  try {
+    const n = parseFloat(hbar);
+    if (Number.isFinite(n) && n > 0) userHbarN = n;
+  } catch { /* keep 0 */ }
 
-  let userHbarWei = 0n;
-  try { if (hbar) userHbarWei = parseEther(hbar); } catch { /* keep 0 */ }
-  const totalSendWei = userHbarWei + NPM_FEE_WEI;
-
-  const onZap = () => {
-    if (!user || userHbarWei === 0n) return;
-    writeContract({
-      abi: fissionZapAbi,
-      address: ADDRESSES.fissionZap,
-      functionName: "zapHbarToSy",
-      args: [
+  const onZap = async () => {
+    if (!user || userHbarN <= 0) return;
+    setHbarError(null);
+    setIsSubmitting(true);
+    try {
+      const { txHash: hash } = await adapter.write({
+        kind: "zapHbarToSy",
+        zap: ADDRESSES.fissionZap,
         sy,
-        0n, // usdcMinOut — wide; tighten in v1.1 via on-chain quoter
-        0n, // amount0Min
-        0n, // amount1Min
-        1n, // minShares
-        user,
-      ],
-      value: totalSendWei,
-    });
+        receiver: user,
+        hbarIn: userHbarN,
+      });
+      // wagmi returns 0x-prefixed eth tx hash; Hedera path returns Hedera
+      // tx ID. Both are strings — use as-is for the explorer link.
+      setTxHash(hash as `0x${string}`);
+    } catch (e) {
+      setHbarError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const tooSmall = userHbarWei > 0n && userHbarWei < parseEther("1"); // <1 HBAR is mostly NPM fee
+  const resetWrite = () => {
+    setTxHash(undefined);
+    setHbarError(null);
+  };
+
+  const tooSmall = userHbarN > 0 && userHbarN < 1;
+  const isPending = isSubmitting || adapter.isWritePending;
 
   return (
     <div className="rounded-2xl border border-border bg-bgCard p-4">
@@ -680,17 +721,22 @@ function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | un
             Tiny amounts get eaten by the 5 HBAR NPM fee — commit ≥1 HBAR.
           </span>
         )}
+        {hbarError && (
+          <span className="mt-1 block text-[11px] font-medium text-error">
+            {hbarError.slice(0, 200)}
+          </span>
+        )}
       </label>
 
       <button
         type="button"
-        disabled={!user || userHbarWei === 0n || isPending || isConfirming}
+        disabled={!user || userHbarN === 0 || isPending || isConfirming}
         onClick={onZap}
         className="w-full rounded-[10px] bg-white px-7 py-3.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {!user
           ? "Connect wallet"
-          : userHbarWei === 0n
+          : userHbarN === 0
             ? "Enter HBAR amount"
             : isPending
               ? "Sign in HashPack…"
