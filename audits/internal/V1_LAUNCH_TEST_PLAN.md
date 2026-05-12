@@ -343,3 +343,44 @@ The Nav shows the wrong-chain banner, but a user landing directly on a market UR
 ### B-5 — Implied APY ≠ realized APY clarification
 
 The market detail page shows `Implied APY` (derived from `lastLnImpliedRate`). It does NOT show realized YT yield from harvested fees. New users may conflate the two. Consider adding "Realized 7d / 30d" stats once the indexer accumulates history.
+
+---
+
+## Appendix C — Dual-stack wallet test (2026-05-12 work)
+
+After `eb471e1`/`ff…` the dApp speaks two WalletConnect namespaces:
+- `eip155:295` (EVM) — existing path, wagmi + writeContract
+- `hedera:mainnet` (Hedera native) — new, @hashgraph/hedera-wallet-connect's DAppConnector + ContractExecuteTransaction
+
+**ECDSA path** — regression. Every flow must continue to work unchanged for users who pick "EVM only" in the connect picker.
+
+| # | Action | Expected | Verify |
+|---|---|---|---|
+| C1 | Land on `/markets/[address]` while disconnected → click "Connect" | Picker shows two options with "Hedera native" highlighted | Both buttons clickable |
+| C2 | Click "EVM only" → pick HashPack in WC modal → approve | Nav shows `0x32e8…ab90`; address card on /profile shows full 0x | wagmi.isConnected, adapter.mode === 'evm' |
+| C3 | Sign In → SIWE popup in HashPack → approve | Green dot in Nav; cookie set; /profile shows positions | /api/auth/verify {mode:'eip191',...} → 200 |
+| C4 | Mint SY (5 HBAR) → one wallet popup → success card | SY balance increases on /profile; HashScan link works | adapter.write({kind:'zapHbarToSy', hbarIn:5}) → tx mined |
+| C5 | Approve SY for Router → one popup, success card | Button switches to "Buy PT" | adapter.write({kind:'approveErc20'}) → tx mined |
+| C6 | Buy PT (0.000001 SY) → one popup, success card | PT balance increases | adapter.write({kind:'swapExactSyForPt'}) → tx mined |
+| C7 | Split 0.000001 SY → one popup, success card | PT + YT both go up | adapter.write({kind:'split'}) → tx mined |
+
+**Ed25519 path** — net new. Verify each flow works with a non-EVM HashPack account.
+
+| # | Action | Expected | Verify |
+|---|---|---|---|
+| D1 | Land disconnected → click Connect → "Hedera native (recommended)" | Reown WC modal opens with HashPack/Kabila/Blade | All three options visible |
+| D2 | Pick HashPack → choose an **Ed25519** account → approve | Nav shows the Hedera account ID like `0.0.NNNNN`; long-zero EVM derived from accountId stored in adapter.address | adapter.mode === 'hedera'; chainId === 295 (synthetic) |
+| D3 | Sign In → HashPack popup with `Hedera Signed Message:` prefix | Green dot in Nav | /api/auth/verify {mode:'hedera', accountId, message, signatureMap} → 200 |
+| D4 | Mint SY (5 HBAR) → one popup with **Hedera native protobuf** tx | SY mints, success card | adapter routes through ContractExecuteTransaction → executeWithSigner → receipt OK |
+| D5 | Approve SY for Router → one popup | Allowance set | adapter routes erc20.approve via HSDK |
+| D6 | Buy PT (0.000001 SY) → one popup | PT increases | router.swapExactSyForPt via HSDK |
+| D7 | Disconnect → Connect "EVM only" again | Picker re-opens; previous Hedera session cleared | localStorage WC entries removed for hedera namespace |
+
+**Cross-state behaviors:**
+
+| # | Action | Expected |
+|---|---|---|
+| E1 | Connect EVM, then switch to a Hedera-native session WITHOUT disconnecting | EVM session disconnects; new Hedera-native session takes over; previously-signed SIWE invalidated (different address) |
+| E2 | Connect Hedera-native, hard-refresh the page | Session restored on mount; gate passes; positions visible |
+| E3 | On `/markets/[address]`, fail a tx (e.g. set slippage to 0.01% so the swap reverts) | `writeError` shows the revert reason in a red card below the button; UI doesn't get stuck in "Confirming…" |
+| E4 | Vercel runtime logs `[fission-diag]` events for both paths | `diag` body has `mode: "evm"` or `mode: "hedera"`, `gateDecision` field, no PII beyond truncated address |
