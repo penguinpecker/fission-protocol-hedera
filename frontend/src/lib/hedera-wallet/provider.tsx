@@ -77,17 +77,22 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
       throw new Error("NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is not set");
     }
 
-    // Dynamic import + deep path. The package's top-level index.js re-exports
-    // a Wallet class that pulls in @reown/walletkit and @hiero-ledger/sdk —
-    // peers we don't need for the dApp-side. Importing from /dist/lib/dapp
-    // skips the wallet code entirely.
-    const [hwc, sdk] = await Promise.all([
+    // Dynamic imports. We pull from two deep paths to dodge the wallet-side
+    // code in the package's top-level index.js (it imports @reown/walletkit
+    // which we don't need on the dApp side):
+    //   - /dist/lib/dapp     → DAppConnector class
+    //   - /dist/lib/shared   → HederaJsonRpcMethod, HederaSessionEvent,
+    //                          HederaChainId enums (used in constructor)
+    const [hwcDapp, hwcShared, sdk] = await Promise.all([
       import("@hashgraph/hedera-wallet-connect/dist/lib/dapp/index.js"),
+      import("@hashgraph/hedera-wallet-connect/dist/lib/shared/index.js"),
       import("@hashgraph/sdk"),
     ]);
-    const { DAppConnector, HederaJsonRpcMethod, HederaSessionEvent, HederaChainId } =
-      hwc as unknown as {
-        DAppConnector: new (...args: unknown[]) => HederaConnectorShim;
+    const { DAppConnector } = hwcDapp as unknown as {
+      DAppConnector: new (...args: unknown[]) => HederaConnectorShim;
+    };
+    const { HederaJsonRpcMethod, HederaSessionEvent, HederaChainId } =
+      hwcShared as unknown as {
         HederaJsonRpcMethod: Record<string, string>;
         HederaSessionEvent: Record<string, string>;
         HederaChainId: Record<string, string>;
