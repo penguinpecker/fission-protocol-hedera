@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
-import { useAccount, useReadContracts, useWriteContract } from "wagmi";
+import { useAccount, useReadContracts, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { parseEther, parseUnits } from "viem";
 import { Nav } from "@/components/Nav";
 import { diag } from "@/lib/diag";
@@ -300,7 +300,8 @@ function TradeCard({
   user,
   syBalance,
 }: TradeCardProps) {
-  const { writeContract, isPending } = useWriteContract();
+  const { writeContract, isPending, data: txHash, reset: resetWrite } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
   const routerDeployed = isDeployed(ADDRESSES.router);
 
   // Parse the amount the user typed. If anything is invalid (empty, NaN,
@@ -518,6 +519,7 @@ function TradeCard({
             !user ||
             !amount ||
             isPending ||
+            isConfirming ||
             insufficient ||
             (strategy !== "split" && !routerDeployed)
           }
@@ -531,20 +533,48 @@ function TradeCard({
               : insufficient
                 ? "Insufficient SY"
                 : isPending
-                  ? "Confirming…"
-                  : needsApprove
-                    ? `Approve SY for ${strategy === "split" ? "Market" : "Router"}`
-                    : strategy === "split"
-                      ? `Split ${amount} SY`
-                      : strategy === "pt"
-                        ? "Buy PT"
-                        : "Buy YT"}
+                  ? "Sign in HashPack…"
+                  : isConfirming
+                    ? "Waiting for confirmation…"
+                    : needsApprove
+                      ? `Approve SY for ${strategy === "split" ? "Market" : "Router"}`
+                      : strategy === "split"
+                        ? `Split ${amount} SY`
+                        : strategy === "pt"
+                          ? "Buy PT"
+                          : "Buy YT"}
         </button>
 
         {needsApprove && (
           <p className="mt-2 text-[10px] leading-relaxed text-textDim">
             One-time per allowance reset. After approval the button switches to the trade.
           </p>
+        )}
+
+        {isConfirmed && txHash && (
+          <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 text-[12px] leading-relaxed text-success">
+            <div className="font-semibold">Transaction confirmed.</div>
+            <div className="mt-1 break-all font-mono text-[10px] text-success/80">
+              tx: {txHash.slice(0, 18)}…{txHash.slice(-8)}
+            </div>
+            <div className="mt-1.5 flex gap-3">
+              <a
+                href={`https://hashscan.io/mainnet/transaction/${txHash}`}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 hover:text-text"
+              >
+                View on HashScan
+              </a>
+              <button
+                type="button"
+                onClick={() => { resetWrite(); setAmount(""); }}
+                className="underline underline-offset-2 hover:text-text"
+              >
+                New trade
+              </button>
+            </div>
+          </div>
         )}
 
         {strategy !== "split" && !routerDeployed && (
@@ -575,7 +605,8 @@ function MintSyForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | und
 }
 
 function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
-  const { writeContract, isPending } = useWriteContract();
+  const { writeContract, isPending, data: txHash, reset: resetWrite } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
   const [hbar, setHbar] = useState("");
 
   // Hedera units gotcha:
@@ -653,7 +684,7 @@ function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | un
 
       <button
         type="button"
-        disabled={!user || userHbarWei === 0n || isPending}
+        disabled={!user || userHbarWei === 0n || isPending || isConfirming}
         onClick={onZap}
         className="w-full rounded-[10px] bg-white px-7 py-3.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
       >
@@ -662,9 +693,37 @@ function ZapMintForm({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | un
           : userHbarWei === 0n
             ? "Enter HBAR amount"
             : isPending
-              ? "Confirming…"
-              : `Mint SY with ${hbar} HBAR`}
+              ? "Sign in HashPack…"
+              : isConfirming
+                ? "Waiting for confirmation…"
+                : `Mint SY with ${hbar} HBAR`}
       </button>
+
+      {isConfirmed && txHash && (
+        <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 text-[12px] leading-relaxed text-success">
+          <div className="font-semibold">Mint confirmed.</div>
+          <div className="mt-1 break-all font-mono text-[10px] text-success/80">
+            tx: {txHash.slice(0, 18)}…{txHash.slice(-8)}
+          </div>
+          <div className="mt-1.5 flex gap-3">
+            <a
+              href={`https://hashscan.io/mainnet/transaction/${txHash}`}
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2 hover:text-text"
+            >
+              View on HashScan
+            </a>
+            <button
+              type="button"
+              onClick={() => { resetWrite(); setHbar(""); }}
+              className="underline underline-offset-2 hover:text-text"
+            >
+              Mint another
+            </button>
+          </div>
+        </div>
+      )}
 
       <p className="mt-2 text-[10px] leading-relaxed text-textDim">
         One HashPack popup. Slippage is left wide on the underlying V3 swap and LP add — for production sizing we&apos;ll tighten via env-controlled floors.
