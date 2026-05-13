@@ -332,11 +332,23 @@ function TradeCard({
     setWriteError(null);
   };
 
-  // Parse the amount the user typed. If anything is invalid (empty, NaN,
-  // negative), this is 0n and we'll treat it as no-amount in the gate.
+  // Parse the amount the user typed. SY share tokens declare 18 decimals
+  // but the contract issues raw integer amounts (a quirk of the SY-V3-LP
+  // adapter), so we treat the input as a raw bigint count — same scale
+  // the balance display (`formatCompact`) shows and MAX populates.
   let parsedAmt = 0n;
   try {
-    if (amount) parsedAmt = parseUnits(amount, detail.syDecimals);
+    if (amount) {
+      // Accept plain integers (preferred) and integer-valued decimals like
+      // "30728606" or "30728606.0". Reject fractional input — at the raw
+      // scale there are no sub-units to represent.
+      const cleaned = amount.trim().replace(/,/g, "");
+      if (/^[0-9]+(\.0+)?$/.test(cleaned)) {
+        parsedAmt = BigInt(cleaned.split(".")[0] ?? "0");
+      } else {
+        parsedAmt = 0n;
+      }
+    }
   } catch {
     parsedAmt = 0n;
   }
@@ -519,14 +531,10 @@ function TradeCard({
                 <button
                   type="button"
                   onClick={() => {
-                    // Set the input to the user's full balance, denominated
-                    // in the SY decimals. Use a string that exactly round-
-                    // trips parseUnits → formatUnits.
-                    const div = 10n ** BigInt(detail.syDecimals);
-                    const whole = syBalance / div;
-                    const frac = syBalance % div;
-                    const fracStr = frac.toString().padStart(detail.syDecimals, "0").replace(/0+$/, "");
-                    setAmount(fracStr ? `${whole}.${fracStr}` : `${whole}`);
+                    // Match the raw-bigint scale used by formatCompact and
+                    // the BigInt parser above. No decimal conversion — the
+                    // contract treats raw integer counts as the share unit.
+                    setAmount(syBalance.toString());
                   }}
                   className="ml-2 rounded border border-borderHover bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[1px] text-text transition hover:bg-white/[0.08]"
                 >
