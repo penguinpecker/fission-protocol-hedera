@@ -71,6 +71,9 @@ type FlowState =
   | { kind: "approving"; stepIdx: 3 }
   | { kind: "approved"; syAcquired: bigint; stepIdx: 4 }
   | { kind: "buying"; stepIdx: 4 }
+  // MegaZap single-tx path. `stepIdx` 0 distinguishes it from the multi-step
+  // chain so the UI can render a different label without checking ADDRESSES.
+  | { kind: "megaZapping"; stepIdx: 0 }
   | { kind: "done"; finalTxHash: string }
   | { kind: "error"; message: string; failedAt: number; syAcquired?: bigint };
 
@@ -85,6 +88,10 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   // Source toggle. Default HBAR for the common "I only have HBAR" case.
   const [source, setSource] = useState<Source>("hbar");
   const zapAvailable = isDeployed(ADDRESSES.fissionZap);
+  // MegaZap collapses HBAR-source into ONE tx (vs 2-4 with the legacy
+  // FissionZap + Router chain). When deployed, the HBAR path skips the
+  // intermediate `FlowState` machine entirely.
+  const megaZapAvailable = isDeployed(ADDRESSES.megaZap);
   // If the zap contract isn't deployed in this env, force SY mode silently.
   const effectiveSource: Source = zapAvailable ? source : "sy";
 
@@ -114,7 +121,8 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     flowState.kind === "associating" ||
     flowState.kind === "zapping" ||
     flowState.kind === "approving" ||
-    flowState.kind === "buying";
+    flowState.kind === "buying" ||
+    flowState.kind === "megaZapping";
 
   /* ─────────────────────────── parsed amounts (mode-dependent) */
 
@@ -390,6 +398,48 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     [detail.syShare, detail.pt],
   );
 
+  // MegaZap fast-path: HBAR → PT in a single tx. Still pre-associates the
+  // destination HTS tokens (PT for the user, plus the SY-share and WHBAR
+  // that the MegaZap might emit dust against) — association is a wallet
+  // operation, not a contract one, so it can't be folded into the same tx.
+  const runMegaZapPt = useCallback(
+    async (hbarIn: number) => {
+      if (!user) return;
+      setWriteError(null);
+
+      // Step 0 (off-chain): associate destination tokens if needed.
+      const tokens: `0x${string}`[] = [detail.syShare, HEDERA_TOKENS.WHBAR, detail.pt];
+      const okAssoc = await stepAssociate(tokens);
+      if (!okAssoc) return;
+
+      setStatus({ kind: "megaZapping", stepIdx: 0 });
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
+      // Conservative min-PT floor: ptEstimate × (1 − slippage). The MegaZap
+      // sweeps any leftover SY back to the user, so even tight floors are
+      // safe.
+      const minPtOut = (ptEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
+      try {
+        const { txHash } = await adapter.write({
+          kind: "zapHbarToPtMega",
+          megaZap: ADDRESSES.megaZap,
+          market,
+          sy: detail.sy,
+          minPtOut: minPtOut > 0n ? minPtOut : 1n,
+          receiver: user,
+          deadline,
+          hbarIn,
+        });
+        setLastTxHash(txHash);
+        setStatus({ kind: "done", finalTxHash: txHash });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setWriteError(msg);
+        setStatus({ kind: "error", message: msg, failedAt: 0 });
+      }
+    },
+    [adapter, detail.pt, detail.sy, detail.syShare, market, ptEstimate, setStatus, slippageBps, stepAssociate, user],
+  );
+
   const runHbarChainFromStep = useCallback(
     async (startStep: number, carrySyAcquired?: bigint) => {
       setWriteError(null);
@@ -467,18 +517,27 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   const onPrimary = useCallback(async () => {
     if (!user) return;
     if (flowState.kind === "error") {
-      // Retry-from-failed-step.
+      // Retry. MegaZap path: retry the single-tx fast-path. Legacy chain:
+      // resume from the failed step (so a successful zap doesn't re-run).
+      if (effectiveSource === "hbar" && megaZapAvailable) {
+        void runMegaZapPt(hbarAmount);
+        return;
+      }
       const carry = flowState.syAcquired;
       void runHbarChainFromStep(flowState.failedAt, carry);
       return;
     }
     if (effectiveSource === "hbar") {
       if (hbarAmount <= 0 || !zapAvailable) return;
-      void runHbarChainFromStep(1);
+      if (megaZapAvailable) {
+        void runMegaZapPt(hbarAmount);
+      } else {
+        void runHbarChainFromStep(1);
+      }
     } else {
       void runSyChain();
     }
-  }, [effectiveSource, flowState, hbarAmount, runHbarChainFromStep, runSyChain, user, zapAvailable]);
+  }, [effectiveSource, flowState, hbarAmount, megaZapAvailable, runHbarChainFromStep, runMegaZapPt, runSyChain, user, zapAvailable]);
 
   // Reset flow state when the user switches mode or clears their input — so
   // the "Retry from step N" button doesn't linger on a different trade.
@@ -530,7 +589,45 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     }
   };
 
-  const flowSteps: FlowStep[] = effectiveSource === "hbar"
+  // MegaZap path renders a simpler 2-step flow (associate + single MegaZap tx);
+  // legacy chain keeps the 4-step layout so users can see retry progress.
+  const flowSteps: FlowStep[] = effectiveSource === "hbar" && megaZapAvailable
+    ? [
+        {
+          label: "Associate tokens",
+          detail: adapter.mode === "hedera" ? "HTS one-time setup (SY share, WHBAR, PT)" : "EVM mode — HIP-904 covers it",
+          isActive: flowState.kind === "associating",
+          isComplete: flowState.kind === "megaZapping" || isDoneFinal,
+        },
+        {
+          label: "Buy PT via MegaZap (1 tx)",
+          detail: `${shortAddr(ADDRESSES.megaZap)} · HBAR → SY → PT atomically · +5 HBAR NPM fee`,
+          inToken:
+            hbarAmount > 0
+              ? {
+                  sym: "HBAR",
+                  amount: hbarAmount.toFixed(2),
+                  usd: hbarUsd !== undefined ? `≈ $${(hbarAmount * hbarUsd).toFixed(2)}` : undefined,
+                }
+              : undefined,
+          outToken:
+            ptEstimate > 0n
+              ? {
+                  sym: "PT",
+                  amount: `~${formatCompact(ptEstimate)}`,
+                  usd: `min ${formatCompact(minPtOut)} PT`,
+                }
+              : undefined,
+          isActive: flowState.kind === "megaZapping",
+          isComplete: isDoneFinal,
+        },
+        {
+          label: "Your wallet",
+          detail: user ? shortAddr(user) : "—",
+          isComplete: isDoneFinal,
+        },
+      ]
+    : effectiveSource === "hbar"
     ? [
         {
           label: "Associate tokens",
@@ -645,6 +742,15 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     if (effectiveSource === "hbar") {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
+      if (megaZapAvailable) {
+        // Fast path. The MegaZap is a single contract call — at most one
+        // associate popup beforehand on Hedera mode.
+        if (flowState.kind === "error") return "Retry MegaZap";
+        if (flowState.kind === "associating") return "Associating tokens…";
+        if (flowState.kind === "megaZapping") return "HBAR → PT (1 tx)…";
+        if (flowState.kind === "done") return "✓ Done";
+        return "Buy PT via Zap (1 tx)";
+      }
       if (flowState.kind === "error") {
         const stepName = ["", "association", "zap", "approve", "buy"][flowState.failedAt] ?? "step";
         return `Retry from ${stepName}`;
@@ -753,7 +859,9 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
           </div>
           <p className="mt-1.5 font-mono text-[9px] leading-relaxed text-textDim">
             {effectiveSource === "hbar"
-              ? "Auto-mint: HBAR → SY → PT in one chained flow (2-4 wallet popups)."
+              ? megaZapAvailable
+                ? "MegaZap: HBAR → SY → PT atomic in ONE signature."
+                : "Auto-mint: HBAR → SY → PT in one chained flow (2-4 wallet popups)."
               : "Direct: spend SY shares you already hold."}
           </p>
         </div>
@@ -854,7 +962,9 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
 
         {effectiveSource === "hbar" && hbarAmount > 0 && flowState.kind === "idle" && (
           <p className="mt-2 font-mono text-[10px] leading-relaxed text-textDim">
-            Up to 4 HashPack popups: associate tokens, zap to SY, approve, buy PT.
+            {megaZapAvailable
+              ? "One HashPack popup (plus a one-time token-associate if you've never touched SY/PT)."
+              : "Up to 4 HashPack popups: associate tokens, zap to SY, approve, buy PT."}
           </p>
         )}
 

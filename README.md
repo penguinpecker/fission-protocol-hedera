@@ -27,7 +27,8 @@ flowchart TB
         SY["SY_SaucerSwapV2LP<br/>holds 1 fixed-range NFT<br/>0x...009fb089"]
         Factory["FissionFactory<br/>0x...009fb0b3"]
         Market["FissionMarketRewards<br/>(Market 0)<br/>0xfa90...8a6d"]
-        Router["ActionRouter<br/>0x...009fad96"]
+        Router["ActionRouter v3<br/>0x...009fdf89"]
+        Mega["FissionMegaZap<br/>0x...009fdf8c"]
     end
 
     subgraph Tokens["HTS-native tokens (in user wallets)"]
@@ -143,48 +144,53 @@ Provide proportional SY + PT to the AMM, earn 99% of swap fees (the other 1% goe
 
 Each strategy page bundles its underlying contract calls behind a single user interaction. Here's the literal call graph for every flow:
 
-### HBAR-source (the default on `/pt`, `/yt`)
+### HBAR-source (the default on `/pt`, `/yt`, `/lp`)
 
-When a user types `$5` on the Buy PT page, the dApp chains 2-4 transactions back-to-back from the wallet (signed one-by-one — atomic on-chain coordination requires the MegaZap contract, which is unbuilt — see "Future work" below):
+When a user types `$5` on the Buy PT page, the dApp submits **one** transaction — the MegaZap. The contract orchestrates HBAR → SY → PT/YT/LP atomically:
 
 ```
 User HBAR
   │
-  ├─[1] HTS associate SY share + PT (optional, only if max_auto_assoc < required)
+  ├─[0] HTS associate SY share + PT / YT / LP (optional, one batched popup)
   │
-  ├─[2] FissionZap.zapHbarToSy{value: 15 HBAR}(sy, 0, 0, 0, 1, user)
-  │       └─ wraps half to WHBAR, swaps half to USDC on SaucerSwap V3,
-  │          deposits both into SY adapter, mints SY shares to user
-  │
-  ├─[3] SY-share.approve(router, syReceived)            (only if allowance < syReceived)
-  │
-  └─[4] router.swapExactSyForPt(market, syIn, minPtOut, user, deadline)
-          └─ AMM mints PT to user via market._swapExactSyForPt
+  └─[1] FissionMegaZap.zapHbarToPt{value: 15 HBAR}(market, sy, minPtOut, user, deadline)
+          │
+          ├─ FissionZap.zapHbarToSy{value: 15 HBAR}(..., receiver = MegaZap)
+          │     └─ wraps half to WHBAR, swaps half to USDC on SaucerSwap V3,
+          │        deposits both into SY adapter, mints SY shares to MegaZap
+          │
+          ├─ ActionRouter v3.swapExactSyForPt(market, syReceived, minPtOut, user, deadline)
+          │     └─ MegaZap approves SY-share to router, router swaps, AMM mints
+          │        PT directly to user
+          │
+          └─ MegaZap sweeps any leftover SY back to user
 ```
 
-After step 2 the frontend polls Hashio (up to 5×) for the *actual* SY received and uses that delta in steps 3-4 — not the static estimate — since dust + V3 slippage make the static math 1-3% off.
+`zapHbarToYt` and `zapHbarToLp` follow the same pattern (HBAR → SY → router.buyYT / addLiquidityProportional). LP is the most complex: MegaZap mints SY, splits the budget per `ptShareBps` (current pool ratio), swaps half to PT via the router, then deposits both as proportional liquidity.
+
+The legacy 2-4-tx chain still ships as a fallback for environments where `NEXT_PUBLIC_MEGA_ZAP_ADDRESS` isn't set; both the EVM and Hedera wallet adapters dispatch to either path transparently.
 
 ### SY-source (existing-SY-holders)
 
 Skip step 2. User starts with SY already in their wallet (from a previous zap or external mint).
 
-### Add liquidity (calls market directly, NOT router)
+### Add liquidity (router v3)
 
-The dApp calls `market.addLiquidity(syIn, ptIn, minLpOut, receiver)` directly because the router's `addLiquidityProportional` has a typing bug — see "Known router bug" in the contracts section.
+After ActionRouter v3 (2026-05-14) the dApp routes Add LP through the router — the v2 typing bug that forced a market-direct workaround is fixed. Approvals are on the SY-share + PT toward the router.
 
 ```
 User holds SY share + PT
   │
   ├─[1] HTS associate LP token (optional)
   │
-  ├─[2] SY-share.approve(market, syIn)
-  ├─[3] PT.approve(market, ptIn)
+  ├─[2] SY-share.approve(router, syIn)
+  ├─[3] PT.approve(router, ptIn)
   │
-  └─[4] market.addLiquidity(syIn, ptIn, minLpOut, user)
-          └─ pulls SY + PT from msg.sender (= user), mints LP to user
+  └─[4] router.addLiquidityProportional(market, syIn, ptIn, minLpOut, user, deadline)
+          └─ router pulls SY + PT from user → market.addLiquidity → LP to user
 ```
 
-### Remove liquidity (router, works correctly)
+### Remove liquidity (router v3)
 
 ```
 User holds LP
@@ -305,9 +311,11 @@ All deployments tracked in [`deployments/295.json`](deployments/295.json).
 | Contract | EVM address | Hedera ID | Role |
 |---|---|---|---|
 | `FissionFactory` | `0x00000000000000000000000000000000009fb0b3` | `0.0.10465459` | Whitelists SY adapters, deploys Market instances per maturity |
-| `ActionRouter` | `0x00000000000000000000000000000000009fd993` | `0.0.10475923` | Stateless user-facing router — depositAndSplit, swapExactSyForPt, buyYT, addLiquidityProportional, removeLiquidityProportional, redeemAfterExpiryAndUnwrap. Redeployed 2026-05-13 with `maxAutomaticTokenAssociations = -1` (HIP-904) and operator-admin. |
+| `ActionRouter v3` | `0x00000000000000000000000000000000009fdf89` | `0.0.10477449` | Stateless user-facing router. **v3 fixes the SY-share typing bug from v2**: `addLiquidityProportional` now pulls `sy.shareToken()` correctly, so Add LP routes through the router again. `maxAutomaticTokenAssociations = -1`, operator-admin. |
+| `~ActionRouter v2 (abandoned)~` | `~0x00000000000000000000000000000000009fd993~` | `~0.0.10475923~` | `addLiquidityProportional` cast the SY *contract* address as `IERC20` instead of using `sy.shareToken()` — every Add LP through the router reverted. Replaced by v3. PT/YT/SY entries worked correctly so the dApp routed around the bug. Do not interact. |
 | `~ActionRouter v1 (abandoned)~` | `~0x00000000000000000000000000000000009fad96~` | `~0.0.10464662~` | Pre-HIP-904 deploy — `max_auto_assoc = 0` blocked HTS transferFrom into the router. Replaced. Do not interact. |
-| `FissionZap` | `0x00000000000000000000000000000000009fd984` | `0.0.10475908` | One-tx HBAR → SY mint. Wraps half to WHBAR, swaps half to USDC on SaucerSwap V3, deposits into the SY adapter. Permissionless, no admin. |
+| `FissionMegaZap` | `0x00000000000000000000000000000000009fdf8c` | `0.0.10477452` | **NEW.** Atomic HBAR → PT / YT / LP zap. Wraps the FissionZap + ActionRouter v3 internally; one signature instead of 2-4. Permissionless, no admin. `maxAutomaticTokenAssociations = -1`. |
+| `FissionZap` | `0x00000000000000000000000000000000009fd984` | `0.0.10475908` | One-tx HBAR → SY mint. Wraps half to WHBAR, swaps half to USDC on SaucerSwap V3, deposits into the SY adapter. Permissionless, no admin. Still used directly by `MintSyForm`; HBAR-source PT/YT/LP flows now route through the MegaZap. |
 | `~FissionZap v1 (abandoned)~` | `~0x00000000000000000000000000000000009fd97e~` | `~0.0.10475902~` | First deploy treated `wrapAmount` as wei but Hedera msg.value is in tinybars — reverted with `InsufficientValue`. Replaced. |
 | `StandardMarketDeployer` | `0x00000000000000000000000000000000009fb0af` | `0.0.10465455` | Deploys FissionMarket instances (bytecode-isolation; gas-cap workaround) |
 | `RewardsMarketDeployer` | `0x00000000000000000000000000000000009fb0b1` | `0.0.10465457` | Deploys FissionMarketRewards instances |
@@ -317,9 +325,9 @@ All deployments tracked in [`deployments/295.json`](deployments/295.json).
 | `Timelock` | `0x00000000000000000000000000000000009fc1c0` | `0.0.10469824` | OZ TimelockController, 48h delay |
 | Threshold account | `0x00000000000000000000000000000000009fc1be` | `0.0.10469822` | 2-of-2 (operator ECDSA + cosigner Ed25519) — proposer + executor of Timelock |
 
-### Known router bug (workaround live in dApp)
+### Router v2 bug (fixed in v3)
 
-`ActionRouter.addLiquidityProportional` has a typing bug: it casts the SY *contract* address as `IERC20` instead of using `sy.shareToken()`, so the `transferFrom` reverts on the HTS share. `swapExactSyForPt` and `buyYT` use `sy.shareToken()` correctly and work fine. Until the router is redeployed, the dApp bypasses the router for **Add Liquidity** specifically and calls `market.addLiquidity` directly with approvals to the market. Remove Liquidity continues to use the router (it works correctly because it operates on `market.lp()`, not on the SY).
+`ActionRouter v2`'s `addLiquidityProportional` had a typing bug: it cast the SY *contract* address as `IERC20` instead of using `sy.shareToken()`, so the `transferFrom` reverted on the HTS share. `swapExactSyForPt` and `buyYT` used `sy.shareToken()` correctly and worked fine. The dApp routed around it by calling `market.addLiquidity` directly. **v3 (2026-05-14, `0x...009fdf89`) fixes the cast** so Add LP now routes through the router again — same as Remove LP. The v2 contract is abandoned.
 
 ### Market 0 HTS tokens
 
@@ -473,11 +481,15 @@ CRON_SECRET=<32-byte hex>
 
 ## Future work
 
-Filed for the next contract release wave (none of these block v1 because the dApp routes around them):
+Filed for the next contract release wave:
 
-- **MegaZap contract** — atomic `zapHbarToPt(market, hbarIn, minPtOut, receiver)` / `zapHbarToYt` / `zapHbarToLp` that does HBAR → SY → PT/YT/LP in one transaction. Today the dApp chains the calls client-side (2-4 wallet popups). A MegaZap collapses that to one signature and saves ~30% gas by skipping the intermediate SY allowance step.
-- **ActionRouter v3** — fix the addLiquidity typing bug (`IERC20(market.sy())` → `IERC20(market.sy().shareToken())`). Re-enables the router path for Add Liquidity and lets us drop the direct-to-market workaround.
 - **Indexer for activity feed** — `recent_activity` on `/profile` decodes function selectors via a static map; a real indexer (mirror events → Supabase) would surface amounts, P&L, and per-tx outcomes per row.
+- **Permit-style approvals** — collapse the two `approve` legs of Add LP (SY-share + PT toward the router) into a single signed permit so SY-source LP becomes a single tx too. Pendle V2 ships this; the HTS HIP for EIP-2612-style permits is still pending.
+
+Shipped in the 2026-05-14 contract release:
+
+- ~~**MegaZap contract**~~ — `0x...009fdf8c` (`0.0.10477452`). Atomic `zapHbarToPt` / `zapHbarToYt` / `zapHbarToLp` collapses the HBAR-source chain to one signature.
+- ~~**ActionRouter v3**~~ — `0x...009fdf89` (`0.0.10477449`). Fixes the v2 `addLiquidityProportional` typing bug; Add LP routes through the router again.
 
 ---
 

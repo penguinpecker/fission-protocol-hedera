@@ -26,6 +26,7 @@ import {
   marketWriteAbi,
   syWriteAbi,
   fissionZapAbi,
+  megaZapAbi,
 } from "@/lib/abis-write";
 
 export type WriteOp =
@@ -96,6 +97,39 @@ export type WriteOp =
       minPtOut: bigint;
       receiver: `0x${string}`;
       deadline: bigint;
+    }
+  | {
+      kind: "zapHbarToPtMega";
+      megaZap: `0x${string}`;
+      market: `0x${string}`;
+      sy: `0x${string}`;
+      minPtOut: bigint;
+      receiver: `0x${string}`;
+      deadline: bigint;
+      /** User-typed HBAR amount (excluding NPM fee — adapter adds it). */
+      hbarIn: number;
+    }
+  | {
+      kind: "zapHbarToYtMega";
+      megaZap: `0x${string}`;
+      market: `0x${string}`;
+      sy: `0x${string}`;
+      minSyOutFromPtSale: bigint;
+      receiver: `0x${string}`;
+      deadline: bigint;
+      hbarIn: number;
+    }
+  | {
+      kind: "zapHbarToLpMega";
+      megaZap: `0x${string}`;
+      market: `0x${string}`;
+      sy: `0x${string}`;
+      /** Basis points of SY budget converted to PT (5000 = 50/50). */
+      ptShareBps: number;
+      minLpOut: bigint;
+      receiver: `0x${string}`;
+      deadline: bigint;
+      hbarIn: number;
     };
 
 interface AdapterState {
@@ -295,19 +329,17 @@ async function writeEvm(
         }),
       };
     case "addLiquidity":
-      // Direct call to market.addLiquidity (not router). ActionRouter's
-      // addLiquidityProportional has a typing bug: it casts the SY
-      // contract address as IERC20 instead of using `sy.shareToken()`,
-      // so the transferFrom reverts. Pending a router redeploy, we
-      // bypass the router for this one path — the market function
-      // signature is the same except no `deadline` (no async risk;
-      // single-block atomic).
+      // ActionRouter v3 (2026-05-14) fixes the SY-share typing bug from v2
+      // — the router now pulls `sy.shareToken()` correctly, so the dApp
+      // routes Add LP through the router again (matches Remove LP).
+      // Approvals are on the SY-share + PT toward the router, not the
+      // market. v2 deployments without a v3 redeploy will revert here.
       return {
         txHash: await writeContractAsync({
-          abi: marketWriteAbi,
-          address: op.market,
-          functionName: "addLiquidity",
-          args: [op.syIn, op.ptIn, op.minLpOut, op.receiver],
+          abi: routerAbi,
+          address: op.router,
+          functionName: "addLiquidityProportional",
+          args: [op.market, op.syIn, op.ptIn, op.minLpOut, op.receiver, op.deadline],
         }),
       };
     case "removeLiquidity":
@@ -317,6 +349,36 @@ async function writeEvm(
           address: op.router,
           functionName: "removeLiquidityProportional",
           args: [op.market, op.lpIn, op.minSyOut, op.minPtOut, op.receiver, op.deadline],
+        }),
+      };
+    case "zapHbarToPtMega":
+      return {
+        txHash: await writeContractAsync({
+          abi: megaZapAbi,
+          address: op.megaZap,
+          functionName: "zapHbarToPt",
+          args: [op.market, op.sy, op.minPtOut, op.receiver, op.deadline],
+          value: parseEther(String(op.hbarIn + 5)), // +5 HBAR NPM fee
+        }),
+      };
+    case "zapHbarToYtMega":
+      return {
+        txHash: await writeContractAsync({
+          abi: megaZapAbi,
+          address: op.megaZap,
+          functionName: "zapHbarToYt",
+          args: [op.market, op.sy, op.minSyOutFromPtSale, op.receiver, op.deadline],
+          value: parseEther(String(op.hbarIn + 5)),
+        }),
+      };
+    case "zapHbarToLpMega":
+      return {
+        txHash: await writeContractAsync({
+          abi: megaZapAbi,
+          address: op.megaZap,
+          functionName: "zapHbarToLp",
+          args: [op.market, op.sy, op.ptShareBps, op.minLpOut, op.receiver, op.deadline],
+          value: parseEther(String(op.hbarIn + 5)),
         }),
       };
   }
@@ -482,16 +544,19 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
         2_000_000,
       );
     case "addLiquidity":
-      // Direct to market.addLiquidity — see EVM path comment above for why
-      // we skip the router on this op specifically.
+      // ActionRouter v3 fixes the SY-share typing bug — Add LP routes through
+      // the router again (matches Remove LP). Approvals must be on SY-share
+      // + PT toward the router, not the market.
       return exec(
-        op.market,
-        "addLiquidity",
+        op.router,
+        "addLiquidityProportional",
         new ContractFunctionParameters()
+          .addAddress(op.market)
           .addUint256(toBN(op.syIn))
           .addUint256(toBN(op.ptIn))
           .addUint256(toBN(op.minLpOut))
-          .addAddress(op.receiver),
+          .addAddress(op.receiver)
+          .addUint256(toBN(op.deadline)),
         0,
         4_000_000,
       );
@@ -508,6 +573,46 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
           .addUint256(toBN(op.deadline)),
         0,
         4_000_000,
+      );
+    case "zapHbarToPtMega":
+      return exec(
+        op.megaZap,
+        "zapHbarToPt",
+        new ContractFunctionParameters()
+          .addAddress(op.market)
+          .addAddress(op.sy)
+          .addUint256(toBN(op.minPtOut))
+          .addAddress(op.receiver)
+          .addUint256(toBN(op.deadline)),
+        op.hbarIn + 5, // user input + 5 HBAR NPM fee
+        15_000_000,
+      );
+    case "zapHbarToYtMega":
+      return exec(
+        op.megaZap,
+        "zapHbarToYt",
+        new ContractFunctionParameters()
+          .addAddress(op.market)
+          .addAddress(op.sy)
+          .addUint256(toBN(op.minSyOutFromPtSale))
+          .addAddress(op.receiver)
+          .addUint256(toBN(op.deadline)),
+        op.hbarIn + 5,
+        15_000_000,
+      );
+    case "zapHbarToLpMega":
+      return exec(
+        op.megaZap,
+        "zapHbarToLp",
+        new ContractFunctionParameters()
+          .addAddress(op.market)
+          .addAddress(op.sy)
+          .addUint16(op.ptShareBps) // matches contract's uint16
+          .addUint256(toBN(op.minLpOut))
+          .addAddress(op.receiver)
+          .addUint256(toBN(op.deadline)),
+        op.hbarIn + 5,
+        15_000_000,
       );
   }
 }

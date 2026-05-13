@@ -82,8 +82,12 @@
       "evm": "0x00000000000000000000000000000000009fc1c0",
       "minDelay": 0,
       "minDelayPlanned": 172800,
-      "proposers": ["0x00000000000000000000000000000000009fc1be"],
-      "executors": ["0x00000000000000000000000000000000009fc1be"],
+      "proposers": [
+        "0x00000000000000000000000000000000009fc1be"
+      ],
+      "executors": [
+        "0x00000000000000000000000000000000009fc1be"
+      ],
       "admin": "0x0000000000000000000000000000000000000000",
       "deployedAt": "2026-05-08",
       "deployTxId": "0.0.10463169@1778182990.906214243"
@@ -94,7 +98,7 @@
   "marketTreasury": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "syAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "keeper": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
-  "notes": "Market 0 LIVE on chain 295. seed: 500001 SY + 500000 PT, lpTotalSupply=500000 (1000 locked in market). lastLnImpliedRate set \u2713. SaucerSwap V2 LP rewards Pendle-Kyber market is operational \u2014 users can split SY \u2192 PT+YT, swap PT\u2194SY, add/remove LP. HBARX market still pending (skipped per user direction).",
+  "notes": "Market 0 LIVE on chain 295. seed: 500001 SY + 500000 PT, lpTotalSupply=500000 (1000 locked in market). lastLnImpliedRate set ✓. SaucerSwap V2 LP rewards Pendle-Kyber market is operational — users can split SY → PT+YT, swap PT↔SY, add/remove LP. HBARX market still pending (skipped per user direction).",
   "sy_review_window_seconds": 0,
   "markets": [
     {
@@ -134,6 +138,24 @@
       "0xd44caf20cec0b48847ea301efb373f8c3f10b36b",
       "0x52f95a30bfc130efb5295a68bf17448c84c3f7ea"
     ],
-    "reason": "Iteratively redeployed while debugging Hedera-specific bugs: (1) HtsHelpers.createFungible drained msg.value into first call when called 3\u00d7 in setTokens; (2) FissionFactory missed setMaxAutomaticTokenAssociations; (3) SY/Market contracts couldn't receive HTS tokens without explicit associate calls; (4) SaucerSwap V2 NPM requires msg.value (USD-cents-denominated fee converted via tinycentsToTinybars) for V3 NFT mint; (5) _burnYt didn't unfreeze before wipe (frozen YT holders couldn't merge); (6) _mintLp(0xdEaD, MIN_LIQUIDITY) failed because 0xdEaD isn't HTS-associated. All fixed in source; current factory + market are the working set."
+    "reason": "Iteratively redeployed while debugging Hedera-specific bugs: (1) HtsHelpers.createFungible drained msg.value into first call when called 3× in setTokens; (2) FissionFactory missed setMaxAutomaticTokenAssociations; (3) SY/Market contracts couldn't receive HTS tokens without explicit associate calls; (4) SaucerSwap V2 NPM requires msg.value (USD-cents-denominated fee converted via tinycentsToTinybars) for V3 NFT mint; (5) _burnYt didn't unfreeze before wipe (frozen YT holders couldn't merge); (6) _mintLp(0xdEaD, MIN_LIQUIDITY) failed because 0xdEaD isn't HTS-associated. All fixed in source; current factory + market are the working set."
+  },
+  "router_v3": {
+    "id": "0.0.10477449",
+    "evm": "0x00000000000000000000000000000000009fdf89",
+    "deployedAt": "2026-05-13",
+    "tx": "0.0.10463169@1778710017.635895689",
+    "notes": "ActionRouter v3 — fixes addLiquidityProportional typing bug from v2 (now pulls sy.shareToken() instead of the SY contract address). maxAutomaticTokenAssociations=-1, operator-admin. Drop-in ABI-compatible with v2 (0.0.10475923) for the other entries."
+  },
+  "mega_zap": {
+    "id": "0.0.10477452",
+    "evm": "0x00000000000000000000000000000000009fdf8c",
+    "deployedAt": "2026-05-13",
+    "tx": "0.0.10463169@1778710149.425996117",
+    "constructor": {
+      "zap": "0x00000000000000000000000000000000009fd984",
+      "router": "0x00000000000000000000000000000000009fdf89"
+    },
+    "notes": "Atomic HBAR → PT/YT/LP zap. Wraps FissionZap (HBAR→SY) and ActionRouterV3 (SY→PT/YT/LP). Permissionless, no admin. maxAutomaticTokenAssociations=-1."
   }
 }

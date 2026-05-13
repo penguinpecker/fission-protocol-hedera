@@ -43,7 +43,10 @@ loadDotenv();
 
 const deploy = JSON.parse(readFileSync(join(REPO, "deployments/295.json"), "utf8"));
 const MARKET = deploy.markets[0].evm;
-const ROUTER = deploy.router.evm;
+// Prefer the v3 router once it's deployed (fixes addLiquidityProportional). The
+// v2 router is still here for fall-back testing of the other entries, but the
+// dApp now uses v3 in production.
+const ROUTER = deploy.router_v3?.evm ?? deploy.router.evm;
 const SY = deploy.sy_saucer_v2_lp.evm;
 const PT = deploy.markets[0].pt;
 const YT = deploy.markets[0].yt;
@@ -207,21 +210,24 @@ console.log(`PT/YT/LP:     ${PT} / ${YT} / ${LP}`);
   if (ptBefore < PT_IN) {
     console.log(`   skip — insufficient PT (${ptBefore} < ${PT_IN})`);
   } else {
-    // Router has a typing bug — bypass it and call market.addLiquidity
-    // directly. Approvals go to the MARKET, not the router.
-    await approveIfNeeded(shareTok, MARKET, SY_IN, "SY (to market)");
-    await approveIfNeeded(PT, MARKET, PT_IN, "PT (to market)");
+    // ActionRouter v3 fixes the SY-share typing bug. Approvals go to the
+    // ROUTER (v3), not the market. v2 would revert here.
+    await approveIfNeeded(shareTok, ROUTER, SY_IN, "SY (to router v3)");
+    await approveIfNeeded(PT, ROUTER, PT_IN, "PT (to router v3)");
     const MIN_LP_OUT = 0n; // accept whatever; smoke test
+    const DEADLINE = Math.floor(Date.now() / 1000) + 600;
     await execContract(
-      MARKET,
-      "addLiquidity(uint256,uint256,uint256,address)",
+      ROUTER,
+      "addLiquidityProportional(address,uint256,uint256,uint256,address,uint256)",
       new ContractFunctionParameters()
+        .addAddress(MARKET)
         .addUint256(SY_IN.toString())
         .addUint256(PT_IN.toString())
         .addUint256(MIN_LP_OUT.toString())
-        .addAddress(evmAddr),
+        .addAddress(evmAddr)
+        .addUint256(DEADLINE),
       4_000_000,
-      "market.addLiquidity",
+      "router.addLiquidityProportional",
     );
     await new Promise((r) => setTimeout(r, 3000));
     const syAfter = await balanceOf(shareTok, evmAddr);

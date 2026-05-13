@@ -164,6 +164,55 @@ export const fissionZapAbi = [
   },
 ] as const;
 
+// FissionMegaZap (2026-05-14). Atomic HBAR → PT/YT/LP. Wraps FissionZap +
+// ActionRouter v3. msg.value forwarded to FissionZap; +5 HBAR NPM fee
+// included on top of the user budget (same as fissionZapAbi).
+export const megaZapAbi = [
+  {
+    type: "function",
+    name: "zapHbarToPt",
+    stateMutability: "payable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "sy", type: "address" },
+      { name: "minPtOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "ptOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "zapHbarToYt",
+    stateMutability: "payable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "sy", type: "address" },
+      { name: "minSyOutFromPtSale", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [
+      { name: "ytOut", type: "uint256" },
+      { name: "syRefund", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "zapHbarToLp",
+    stateMutability: "payable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "sy", type: "address" },
+      { name: "ptShareBps", type: "uint16" },
+      { name: "minLpOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "lpOut", type: "uint256" }],
+  },
+] as const;
+
 export const syWriteAbi = [
   {
     type: "function",

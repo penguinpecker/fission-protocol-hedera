@@ -22,8 +22,8 @@ import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate } from "@/components/MarketPositionCard";
-import { useSyValueUsd } from "@/hooks/useSyValueUsd";
-import { ADDRESSES, isDeployed } from "@/lib/addresses";
+import { useHbarUsd, useSyValueUsd } from "@/hooks/useSyValueUsd";
+import { ADDRESSES, HEDERA_TOKENS, isDeployed } from "@/lib/addresses";
 import { erc20Abi } from "@/lib/abis";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
@@ -52,6 +52,10 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
   const hedera = useHederaWallet();
   const [tab, setTab] = useState<Tab>("add");
 
+  // Allowances are read against the v3 Router as spender (Add LP now routes
+  // through the router again — see ActionRouterV3's addLiquidityProportional).
+  // The previous v2 workaround approved against the market directly because
+  // v2's router cast SY-contract-as-IERC20 and reverted on transferFrom.
   const balRead = useReadContracts({
     contracts: user
       ? [
@@ -72,7 +76,7 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
             ] as const,
             address: detail.syShare,
             functionName: "allowance",
-            args: [user, market],
+            args: [user, ADDRESSES.router],
           } as const,
           {
             abi: [
@@ -89,7 +93,7 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
             ] as const,
             address: detail.pt,
             functionName: "allowance",
-            args: [user, market],
+            args: [user, ADDRESSES.router],
           } as const,
         ]
       : [],
@@ -278,17 +282,17 @@ function AddLp({
     }
   };
 
-  // Add Liquidity bypasses the router (router has a typing bug — it casts
-  // the SY contract as IERC20 instead of using sy.shareToken(), so the
-  // transferFrom reverts). We call market.addLiquidity directly, which
-  // means both approvals are to the MARKET, not the Router.
+  // Add Liquidity routes through ActionRouter v3 — the v2 bug
+  // (`IERC20(market.sy())` casting the SY contract address as the share token)
+  // is fixed in v3 by pulling `sy.shareToken()` correctly. Approvals are on
+  // the SY-share + PT toward the router.
   const onApproveSy = async () => {
     try {
       const { txHash: hash } = await wrap(() =>
         adapter.write({
           kind: "approveErc20",
           token: detail.syShare,
-          spender: market,
+          spender: ADDRESSES.router,
           amount: parsedSy,
         }),
       );
@@ -304,7 +308,7 @@ function AddLp({
         adapter.write({
           kind: "approveErc20",
           token: detail.pt,
-          spender: market,
+          spender: ADDRESSES.router,
           amount: parsedPt,
         }),
       );
@@ -360,6 +364,11 @@ function AddLp({
   };
 
   const onPrimary = () => {
+    if (effectiveSource === "hbar") {
+      // MegaZap path: no approvals needed (we pay HBAR directly).
+      onZapHbarToLp();
+      return;
+    }
     if (needsSyApprove) onApproveSy();
     else if (needsPtApprove) onApprovePt();
     else onAdd();
@@ -434,11 +443,88 @@ function AddLp({
     },
   ];
 
-  // SOURCE toggle scaffold. HBAR-mode is disabled-with-explainer for now —
-  // LP-from-HBAR needs a multi-hop zap (HBAR → SY → split SY budget → buy PT
-  // → approve SY + PT → addLiquidityProportional) which is queued for
-  // Phase 8 MegaZap. For now only SY-mode is wired up.
-  const [source, setSource] = useState<"hbar" | "sy">("sy");
+  // SOURCE toggle. HBAR mode uses the MegaZap when deployed — single tx that
+  // mints SY, splits the budget per pool ratio, swaps half to PT, then
+  // provides proportional liquidity. SY mode is the legacy "I already hold
+  // SY + PT" path. If MegaZap isn't deployed in this env we keep SY-only.
+  const megaZapAvailable = isDeployed(ADDRESSES.megaZap);
+  const [source, setSource] = useState<"hbar" | "sy">(megaZapAvailable ? "hbar" : "sy");
+  const effectiveSource: "hbar" | "sy" = megaZapAvailable ? source : "sy";
+
+  // HBAR-mode state. Keep parallel to SY-mode so toggling between them
+  // doesn't blow away the entire form.
+  const hbarUsd = useHbarUsd();
+  const hbarAmount = useMemo<number>(() => {
+    if (effectiveSource !== "hbar") return 0;
+    if (inputMode === "usd" && hbarUsd !== undefined) {
+      const usd = parseFloat(usdStr.replace(/,/g, ""));
+      if (!Number.isFinite(usd) || usd <= 0) return 0;
+      return usd / hbarUsd;
+    }
+    const n = parseFloat(syRawStr); // HBAR-mode reuses the SY-raw input slot
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }, [effectiveSource, inputMode, usdStr, syRawStr, hbarUsd]);
+
+  // For the MegaZap call we encode the current pool ratio as `ptShareBps`:
+  // the share of the SY budget converted to PT mid-tx. Clamp to [100, 9900]
+  // bps so the contract guard never trips.
+  const ptShareBps = useMemo<number>(() => {
+    if (!hasPool) return 5000;
+    const ratio = Number(totalPt) * ptRate / (Number(totalSy) + Number(totalPt) * ptRate);
+    const bps = Math.round(ratio * 10_000);
+    return Math.max(100, Math.min(9900, bps));
+  }, [hasPool, totalSy, totalPt, ptRate]);
+
+  const onZapHbarToLp = async () => {
+    if (!user || hbarAmount <= 0 || !megaZapAvailable) return;
+    // Associate the LP token (and SY-share / WHBAR / PT for the dust sweeps
+    // the MegaZap might emit) once.
+    if (adapter.mode === "hedera" && adapter.accountId) {
+      try {
+        const { getMissingAssociations, associateTokens, evmAddressToTokenId } =
+          await import("@/lib/hedera-wallet/associations");
+        const ids = [detail.syShare, HEDERA_TOKENS.WHBAR, detail.pt, detail.lp].map(evmAddressToTokenId);
+        const missing = await getMissingAssociations(adapter.accountId, ids);
+        if (missing.length > 0) {
+          await wrap(() => associateTokens(hedera.getConnector(), adapter.accountId!, missing));
+        }
+      } catch (e) {
+        setWriteError(e instanceof Error ? e.message : String(e));
+        return;
+      }
+    }
+
+    // Estimate LP-out from SY-budget at current pool ratio. Used for the
+    // slippage floor; MegaZap reverts if the realized LP is below.
+    const estSyAfterZap =
+      hbarUsd !== undefined && usdPerShare !== undefined
+        ? BigInt(Math.floor((hbarAmount * hbarUsd) / Math.max(1e-12, usdPerShare)))
+        : 0n;
+    const estLp = detail.lpSupply > 0n && totalSy > 0n
+      ? (((estSyAfterZap * BigInt(10_000 - ptShareBps)) / 10_000n) * detail.lpSupply) / totalSy
+      : 0n;
+    const minLp = (estLp * BigInt(10_000 - slippageBps)) / 10_000n;
+
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
+    try {
+      const { txHash: hash } = await wrap(() =>
+        adapter.write({
+          kind: "zapHbarToLpMega",
+          megaZap: ADDRESSES.megaZap,
+          market,
+          sy: detail.sy,
+          ptShareBps,
+          minLpOut: minLp > 0n ? minLp : 1n,
+          receiver: user,
+          deadline,
+          hbarIn: hbarAmount,
+        }),
+      );
+      setTxHash(hash as `0x${string}`);
+    } catch {
+      /* error captured */
+    }
+  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -460,23 +546,26 @@ function AddLp({
           }
         />
 
-        {/* SOURCE toggle — HBAR is queued for Phase 8 MegaZap, see explainer below. */}
+        {/* SOURCE toggle — HBAR is now wired through MegaZap (single-tx zap). */}
         <div className="mb-3">
           <div className="mb-1.5 flex items-center justify-between">
             <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-textDim">
               Source
             </span>
-            <span className="font-mono text-[9px] uppercase tracking-[1.5px] text-textDim">
-              HBAR mode soon
-            </span>
+            {!megaZapAvailable && (
+              <span className="font-mono text-[9px] uppercase tracking-[1.5px] text-warning">
+                MegaZap unavailable — using SY
+              </span>
+            )}
           </div>
           <div className="flex items-stretch gap-1.5">
             <button
               type="button"
               onClick={() => setSource("hbar")}
-              className={`flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition ${
-                source === "hbar"
-                  ? "border-warning/60 bg-warning/10 text-warning"
+              disabled={!megaZapAvailable}
+              className={`flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                effectiveSource === "hbar"
+                  ? "border-text/60 bg-white/[0.08] text-text"
                   : "border-border bg-bgInput text-textSec hover:border-borderHover hover:text-text"
               }`}
             >
@@ -486,7 +575,7 @@ function AddLp({
               type="button"
               onClick={() => setSource("sy")}
               className={`flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition ${
-                source === "sy"
+                effectiveSource === "sy"
                   ? "border-text/60 bg-white/[0.08] text-text"
                   : "border-border bg-bgInput text-textSec hover:border-borderHover hover:text-text"
               }`}
@@ -494,31 +583,14 @@ function AddLp({
               SY
             </button>
           </div>
+          <p className="mt-1.5 font-mono text-[9px] leading-relaxed text-textDim">
+            {effectiveSource === "hbar"
+              ? "MegaZap: HBAR → SY → swap half to PT → add LP, all in ONE signature."
+              : "Direct: contribute SY + PT you already hold."}
+          </p>
         </div>
 
-        {source === "hbar" && (
-          <div className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-warning">
-            <div className="mb-1 font-semibold uppercase tracking-[1px]">
-              LP from HBAR — coming in Phase 8
-            </div>
-            <p className="mb-2">
-              Adding LP from raw HBAR needs a multi-hop zap (HBAR → SY → split
-              budget → buy PT → approve SY + PT → addLiquidity). That lands in a
-              future MegaZap contract upgrade.
-            </p>
-            <p>
-              For now, mint SY + buy PT first, then return here in SY mode.{" "}
-              <Link
-                href={`/markets/${market}/pt`}
-                className="underline underline-offset-2 hover:text-text"
-              >
-                Buy PT (auto-mints SY from HBAR) →
-              </Link>
-            </p>
-          </div>
-        )}
-
-        {source === "sy" && noPt ? (
+        {effectiveSource === "sy" && noPt ? (
           <div className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-warning">
             <span className="font-semibold">You need PT to add proportional liquidity.</span>{" "}
             <Link href={`/markets/${market}/pt`} className="underline underline-offset-2 hover:text-text">
@@ -530,6 +602,38 @@ function AddLp({
 
         <SectionDivider label="Input" />
 
+        {effectiveSource === "hbar" ? (
+          // HBAR-mode: a single MoneyInput against HBAR (instead of SY).
+          // Caption tells the user the MegaZap split ratio derived from the
+          // current pool composition.
+          <MoneyInput
+            mode={inputMode}
+            setMode={setInputMode}
+            usdStr={usdStr}
+            setUsdStr={setUsdStr}
+            rawStr={syRawStr}
+            setRawStr={setSyRawStr}
+            parsedRaw={BigInt(Math.floor(hbarAmount * 1e8))} // tinybars (display only)
+            balance={0n} // No on-chain HBAR balance read; wallet rejects if insufficient
+            tokenSym="HBAR"
+            label="Total deposit (HBAR)"
+            usdPerUnit={hbarUsd}
+            formatRaw={(v) => (Number(v) / 1e8).toFixed(2)}
+            insufficient={false}
+            outputHint={
+              <span>
+                MegaZap splits this ~{Math.round((10_000 - ptShareBps) / 100)}% SY /
+                {" "}~{Math.round(ptShareBps / 100)}% PT (current pool ratio)
+              </span>
+            }
+            caption={
+              <>
+                Pool ratio {ratioLabel} · +5 HBAR NPM fee · gas ~0.30 HBAR
+              </>
+            }
+            feedback={null}
+          />
+        ) : (
         <MoneyInput
           mode={inputMode}
           setMode={setInputMode}
@@ -591,10 +695,10 @@ function AddLp({
             ) : null
           }
         />
+        )}
 
-        {/* PT override — advanced. Hidden unless the user wants to deviate
-            from the auto-balanced split. We show it inline as a smaller
-            secondary input so it doesn't clutter the default flow. */}
+        {/* PT override — SY-mode only. HBAR mode picks the ratio from pool depth. */}
+        {effectiveSource === "sy" && (
         <details className="mb-3 rounded-lg border border-border bg-white/[0.02] px-3 py-2">
           <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[1.5px] text-textDim">
             Override PT amount
@@ -654,6 +758,7 @@ function AddLp({
             )}
           </div>
         </details>
+        )}
 
         <SectionDivider label="Routing" />
 
@@ -669,22 +774,26 @@ function AddLp({
           type="button"
           disabled={
             !user ||
-            source === "hbar" ||
-            noInput ||
             isPending ||
             isConfirmingFinal ||
-            insufficientSy ||
-            insufficientPt ||
             !routerDeployed ||
-            noPt
+            (effectiveSource === "hbar"
+              ? hbarAmount <= 0 || !megaZapAvailable
+              : noInput || insufficientSy || insufficientPt || noPt)
           }
           onClick={onPrimary}
           className="w-full rounded-[10px] bg-white px-7 py-3.5 font-mono text-sm font-semibold uppercase tracking-[1px] text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {!user
             ? "Connect wallet"
-            : source === "hbar"
-              ? "HBAR mode coming soon"
+            : effectiveSource === "hbar"
+              ? hbarAmount <= 0
+                ? "Enter HBAR amount"
+                : isPending
+                  ? "Adding LP via MegaZap…"
+                  : isConfirmingFinal
+                    ? "Waiting for confirmation…"
+                    : "Add LP via MegaZap (1 tx)"
               : noPt
                 ? "You need PT — buy PT first"
                 : noInput
@@ -706,9 +815,14 @@ function AddLp({
                                 : "Add liquidity"}
         </button>
 
-        {(needsSyApprove || needsPtApprove) && !noInput && (
+        {effectiveSource === "sy" && (needsSyApprove || needsPtApprove) && !noInput && (
           <p className="mt-2 font-mono text-[10px] leading-relaxed text-textDim">
-            Two approvals (SY + PT), then the add-liquidity tx. One HashPack popup each.
+            Two approvals (SY + PT for the Router), then the add-liquidity tx. One HashPack popup each.
+          </p>
+        )}
+        {effectiveSource === "hbar" && hbarAmount > 0 && (
+          <p className="mt-2 font-mono text-[10px] leading-relaxed text-textDim">
+            One HashPack popup (plus a one-time token-associate for LP if you've never held it).
           </p>
         )}
 

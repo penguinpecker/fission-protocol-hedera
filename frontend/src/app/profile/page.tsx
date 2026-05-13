@@ -15,7 +15,6 @@ import { useWatchlist } from "@/hooks/useWatchlist";
 import { impliedApyPct, daysUntil, formatCompact } from "@/hooks/useMarkets";
 import { ptToSyRate, ytToSyRate, type UserPosition } from "@/components/MarketPositionCard";
 import { getMarketDisplay } from "@/lib/markets-metadata";
-import { decodeSelector } from "@/lib/selector-decoder";
 
 /**
  * Terminal-style portfolio page. Sections:
@@ -499,22 +498,34 @@ function PendingClaimsCard({
   );
 }
 
-interface MirrorTx {
-  consensus_timestamp: string;
-  name: string;
-  contract_id?: string;
-  entity_id?: string;
-  transfers?: Array<{ amount: number; account: string }>;
-  result?: string;
-  function_parameters?: string;
-  to?: string;
+/**
+ * Decoded activity row returned by `/api/activity`. Shape mirrors the route's
+ * `ActivityEntry` interface — we duplicate it here so the client doesn't have
+ * to import from a server-only module path. If the two ever drift, the route
+ * is the source of truth.
+ */
+interface ActivityAmount {
+  token: string;
+  raw: string;
+  formatted: string;
+  usd?: number;
+}
+interface ActivityEntry {
+  txId: string;
+  timestamp: number;
+  contract: { address: `0x${string}`; id: string | null; label: string };
+  action: string;
+  result: string;
+  amount?: ActivityAmount;
+  side?: "in" | "out";
+  hashscanUrl: string;
 }
 
 function RecentActivityCard({ userEvm }: { userEvm: `0x${string}` | undefined }) {
   const adapter = useWalletAdapter();
   const accountId = adapter.accountId;
 
-  const [txs, setTxs] = useState<MirrorTx[] | null>(null);
+  const [entries, setEntries] = useState<ActivityEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -522,23 +533,19 @@ function RecentActivityCard({ userEvm }: { userEvm: `0x${string}` | undefined })
     let cancelled = false;
     (async () => {
       try {
-        // /contracts/results returns function_parameters per call which
-        // /transactions does not — needed for the selector decoder.
+        // Server-side decoder. Returns a clean envelope with action, token,
+        // amount + optional USD value. Falls back to the selector decoder for
+        // any contract not in the on-server registry.
         const acc = userEvm ?? accountId;
-        const r = await fetch(
-          `https://mainnet-public.mirrornode.hedera.com/api/v1/contracts/results?from=${acc}&limit=10&order=desc`,
-          { cache: "no-store" },
-        );
+        const r = await fetch(`/api/activity?address=${acc}&limit=10`, {
+          cache: "no-store",
+        });
         if (!r.ok) {
-          if (!cancelled) setError(`mirror_${r.status}`);
+          if (!cancelled) setError(`api_${r.status}`);
           return;
         }
-        const j = (await r.json()) as { results: MirrorTx[] };
-        // Normalize the field name so the rest of the component doesn't care
-        // whether we came from /transactions or /contracts/results.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (j as any).transactions = j.results;
-        if (!cancelled) setTxs((j as unknown as { transactions: MirrorTx[] }).transactions ?? []);
+        const j = (await r.json()) as { entries?: ActivityEntry[] };
+        if (!cancelled) setEntries(j.entries ?? []);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "fetch_failed");
       }
@@ -556,45 +563,84 @@ function RecentActivityCard({ userEvm }: { userEvm: `0x${string}` | undefined })
       <div className="flex flex-col gap-px border border-border bg-border">
         {error ? (
           <div className="bg-white/[0.015] p-4 font-mono text-[11.5px] text-textDim">
-            Mirror Node unavailable — {error}
+            Activity feed unavailable — {error}
           </div>
-        ) : txs === null ? (
+        ) : entries === null ? (
           <div className="bg-white/[0.015] p-4 font-mono text-[11.5px] text-textDim">
             Loading activity…
           </div>
-        ) : txs.length === 0 ? (
+        ) : entries.length === 0 ? (
           <div className="bg-white/[0.015] p-4 font-mono text-[11.5px] text-textDim">
             No contract calls yet on this account.
           </div>
         ) : (
-          txs.map((tx) => <ActivityRow key={tx.consensus_timestamp} tx={tx} />)
+          entries.map((e) => <ActivityRow key={e.txId} entry={e} />)
         )}
       </div>
     </div>
   );
 }
 
-function ActivityRow({ tx }: { tx: MirrorTx }) {
-  const ts = Number(tx.consensus_timestamp.split(".")[0]) * 1000;
-  const when = formatAgo(ts);
-  const contract = tx.contract_id ?? tx.entity_id ?? (tx.to ? shortAddr(tx.to) : "—");
-  const action = decodeSelector(tx.function_parameters ?? undefined);
-  const failed = tx.result && tx.result !== "SUCCESS";
+function ActivityRow({ entry }: { entry: ActivityEntry }) {
+  const when = formatAgo(entry.timestamp * 1000);
+  const failed = entry.result !== "SUCCESS";
+
+  // Sign + color rule per the spec:
+  //   - failed → warning amber on the action line, no sign on the amount
+  //   - side === "in" → "+" prefix in success green (received tokens)
+  //   - side === "out" → "−" prefix in neutral (sent / spent)
+  //   - no side → no prefix
+  const amountSign = failed
+    ? ""
+    : entry.side === "in"
+      ? "+"
+      : entry.side === "out"
+        ? "−"
+        : "";
+  const amountColor = failed
+    ? "text-textSec"
+    : entry.side === "in"
+      ? "text-success"
+      : "text-white";
+
+  // Compose "+1,234.5678 SY-…" style. The raw `formatted` field already has
+  // 4-fractional-digit scaling — we just decorate with the sign + ticker.
+  const amountText = entry.amount
+    ? `${amountSign}${entry.amount.formatted} ${entry.amount.token}`
+    : null;
+  const usdText =
+    entry.amount && typeof entry.amount.usd === "number"
+      ? formatUsd(entry.amount.usd) ?? null
+      : null;
+
   return (
-    <div className="flex justify-between gap-3 bg-white/[0.015] px-4 py-3.5 font-mono text-[11.5px]">
-      <div className="flex flex-col gap-0.5">
-        <span className={failed ? "text-warning" : "text-white"}>{action}{failed ? ` · ${tx.result}` : ""}</span>
+    <a
+      href={entry.hashscanUrl}
+      target="_blank"
+      rel="noreferrer"
+      className="group flex items-start justify-between gap-3 bg-white/[0.015] px-4 py-3.5 font-mono text-[11.5px] transition hover:bg-white/[0.04]"
+    >
+      <div className="min-w-0 flex flex-col gap-0.5">
+        <span className={failed ? "text-warning" : "text-white"}>
+          {entry.action}
+          {failed ? ` · ${entry.result}` : ""}
+        </span>
         <span className="text-textDim text-[10.5px]">
-          {when} · {contract}
+          {when} · {entry.contract.label}
         </span>
       </div>
-      <span className="whitespace-nowrap text-right text-textSec">↗</span>
-    </div>
+      <div className="flex flex-col items-end gap-0.5 whitespace-nowrap text-right">
+        {amountText ? (
+          <span className={`tabular-nums ${amountColor}`}>{amountText}</span>
+        ) : (
+          <span className="text-textSec">↗</span>
+        )}
+        {usdText ? (
+          <span className="text-textDim text-[10.5px] tabular-nums">≈ {usdText}</span>
+        ) : null}
+      </div>
+    </a>
   );
-}
-
-function shortAddr(addr: string): string {
-  return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
 }
 
 function formatAgo(ms: number): string {

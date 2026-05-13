@@ -52,6 +52,8 @@ type FlowState =
   | { kind: "approving"; stepIdx: 3 }
   | { kind: "approved"; syAcquired: bigint; stepIdx: 4 }
   | { kind: "buying"; stepIdx: 4 }
+  // MegaZap single-tx HBAR → YT.
+  | { kind: "megaZapping"; stepIdx: 0 }
   | { kind: "done"; finalTxHash: string }
   | { kind: "error"; message: string; failedAt: number; syAcquired?: bigint };
 
@@ -63,6 +65,9 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
 
   const [source, setSource] = useState<Source>("hbar");
   const zapAvailable = isDeployed(ADDRESSES.fissionZap);
+  // MegaZap collapses HBAR → SY → YT into a single tx (vs. 2-4 with the
+  // legacy chain). When deployed we skip the multi-step FlowState entirely.
+  const megaZapAvailable = isDeployed(ADDRESSES.megaZap);
   const effectiveSource: Source = zapAvailable ? source : "sy";
 
   const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
@@ -87,7 +92,8 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     flowState.kind === "associating" ||
     flowState.kind === "zapping" ||
     flowState.kind === "approving" ||
-    flowState.kind === "buying";
+    flowState.kind === "buying" ||
+    flowState.kind === "megaZapping";
 
   /* ─────────────────────────── parsed amounts */
 
@@ -333,6 +339,42 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     [detail.syShare, detail.yt],
   );
 
+  // MegaZap fast-path: HBAR → YT in a single tx.
+  const runMegaZapYt = useCallback(
+    async (hbarIn: number) => {
+      if (!user) return;
+      setWriteError(null);
+
+      const tokens: `0x${string}`[] = [detail.syShare, HEDERA_TOKENS.WHBAR, detail.yt];
+      const okAssoc = await stepAssociate(tokens);
+      if (!okAssoc) return;
+
+      setStatus({ kind: "megaZapping", stepIdx: 0 });
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
+      // Internal PT sale slippage cap matches the existing chain's logic.
+      const minSyOut = (estimatedSyFromHbar * BigInt(10_000 - slippageBps)) / 10_000n;
+      try {
+        const { txHash } = await adapter.write({
+          kind: "zapHbarToYtMega",
+          megaZap: ADDRESSES.megaZap,
+          market,
+          sy: detail.sy,
+          minSyOutFromPtSale: minSyOut,
+          receiver: user,
+          deadline,
+          hbarIn,
+        });
+        setLastTxHash(txHash);
+        setStatus({ kind: "done", finalTxHash: txHash });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setWriteError(msg);
+        setStatus({ kind: "error", message: msg, failedAt: 0 });
+      }
+    },
+    [adapter, detail.sy, detail.syShare, detail.yt, estimatedSyFromHbar, market, setStatus, slippageBps, stepAssociate, user],
+  );
+
   const runHbarChainFromStep = useCallback(
     async (startStep: number, carrySyAcquired?: bigint) => {
       setWriteError(null);
@@ -398,17 +440,25 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   const onPrimary = useCallback(async () => {
     if (!user) return;
     if (flowState.kind === "error") {
+      if (effectiveSource === "hbar" && megaZapAvailable) {
+        void runMegaZapYt(hbarAmount);
+        return;
+      }
       const carry = flowState.syAcquired;
       void runHbarChainFromStep(flowState.failedAt, carry);
       return;
     }
     if (effectiveSource === "hbar") {
       if (hbarAmount <= 0 || !zapAvailable) return;
-      void runHbarChainFromStep(1);
+      if (megaZapAvailable) {
+        void runMegaZapYt(hbarAmount);
+      } else {
+        void runHbarChainFromStep(1);
+      }
     } else {
       void runSyChain();
     }
-  }, [effectiveSource, flowState, hbarAmount, runHbarChainFromStep, runSyChain, user, zapAvailable]);
+  }, [effectiveSource, flowState, hbarAmount, megaZapAvailable, runHbarChainFromStep, runMegaZapYt, runSyChain, user, zapAvailable]);
 
   useEffect(() => {
     if (flowState.kind !== "done" && flowState.kind !== "error") return;
@@ -458,7 +508,43 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     }
   };
 
-  const flowSteps: FlowStep[] = effectiveSource === "hbar"
+  const flowSteps: FlowStep[] = effectiveSource === "hbar" && megaZapAvailable
+    ? [
+        {
+          label: "Associate tokens",
+          detail: adapter.mode === "hedera" ? "HTS one-time setup (SY share, WHBAR, YT)" : "EVM mode — HIP-904 covers it",
+          isActive: flowState.kind === "associating",
+          isComplete: flowState.kind === "megaZapping" || isDoneFinal,
+        },
+        {
+          label: "Buy YT via MegaZap (1 tx)",
+          detail: `${shortAddr(ADDRESSES.megaZap)} · HBAR → SY → YT atomically · +5 HBAR NPM fee`,
+          inToken:
+            hbarAmount > 0
+              ? {
+                  sym: "HBAR",
+                  amount: hbarAmount.toFixed(2),
+                  usd: hbarUsd !== undefined ? `≈ $${(hbarAmount * hbarUsd).toFixed(2)}` : undefined,
+                }
+              : undefined,
+          outToken:
+            ytEstimate > 0n
+              ? {
+                  sym: "YT",
+                  amount: `~${formatCompact(ytEstimate)}`,
+                  usd: `min ${formatCompact(minYtOut)} YT`,
+                }
+              : undefined,
+          isActive: flowState.kind === "megaZapping",
+          isComplete: isDoneFinal,
+        },
+        {
+          label: "Your wallet",
+          detail: user ? shortAddr(user) : "—",
+          isComplete: isDoneFinal,
+        },
+      ]
+    : effectiveSource === "hbar"
     ? [
         {
           label: "Associate tokens",
@@ -568,6 +654,13 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     if (effectiveSource === "hbar") {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
+      if (megaZapAvailable) {
+        if (flowState.kind === "error") return "Retry MegaZap";
+        if (flowState.kind === "associating") return "Associating tokens…";
+        if (flowState.kind === "megaZapping") return "HBAR → YT (1 tx)…";
+        if (flowState.kind === "done") return "✓ Done";
+        return "Buy YT via Zap (1 tx)";
+      }
       if (flowState.kind === "error") {
         const stepName = ["", "association", "zap", "approve", "buy"][flowState.failedAt] ?? "step";
         return `Retry from ${stepName}`;
@@ -665,7 +758,9 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
           </div>
           <p className="mt-1.5 font-mono text-[9px] leading-relaxed text-textDim">
             {effectiveSource === "hbar"
-              ? "Auto-mint: HBAR → SY → YT in one chained flow (2-4 wallet popups)."
+              ? megaZapAvailable
+                ? "MegaZap: HBAR → SY → YT atomic in ONE signature."
+                : "Auto-mint: HBAR → SY → YT in one chained flow (2-4 wallet popups)."
               : "Direct: spend SY shares you already hold."}
           </p>
         </div>
@@ -766,7 +861,9 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
 
         {effectiveSource === "hbar" && hbarAmount > 0 && flowState.kind === "idle" && (
           <p className="mt-2 font-mono text-[10px] leading-relaxed text-textDim">
-            Up to 4 HashPack popups: associate tokens, zap to SY, approve, buy YT.
+            {megaZapAvailable
+              ? "One HashPack popup (plus a one-time token-associate if you've never touched SY/YT)."
+              : "Up to 4 HashPack popups: associate tokens, zap to SY, approve, buy YT."}
           </p>
         )}
 
