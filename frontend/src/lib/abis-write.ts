@@ -228,4 +228,21 @@ export const marketWriteAbi = [
     ],
     outputs: [{ type: "uint256" }],
   },
+  {
+    // Direct add-liquidity. The ActionRouter has a typing bug
+    // (addLiquidityProportional casts the SY contract as IERC20 instead of
+    // using sy.shareToken()), so the frontend routes around it by calling
+    // market.addLiquidity directly. Same signature, minus the deadline
+    // (the market function is single-block atomic with no async risk).
+    type: "function",
+    name: "addLiquidity",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "syIn", type: "uint256" },
+      { name: "ptIn", type: "uint256" },
+      { name: "minLpOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
 ] as const;

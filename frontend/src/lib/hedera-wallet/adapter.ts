@@ -295,12 +295,19 @@ async function writeEvm(
         }),
       };
     case "addLiquidity":
+      // Direct call to market.addLiquidity (not router). ActionRouter's
+      // addLiquidityProportional has a typing bug: it casts the SY
+      // contract address as IERC20 instead of using `sy.shareToken()`,
+      // so the transferFrom reverts. Pending a router redeploy, we
+      // bypass the router for this one path — the market function
+      // signature is the same except no `deadline` (no async risk;
+      // single-block atomic).
       return {
         txHash: await writeContractAsync({
-          abi: routerAbi,
-          address: op.router,
-          functionName: "addLiquidityProportional",
-          args: [op.market, op.syIn, op.ptIn, op.minLpOut, op.receiver, op.deadline],
+          abi: marketWriteAbi,
+          address: op.market,
+          functionName: "addLiquidity",
+          args: [op.syIn, op.ptIn, op.minLpOut, op.receiver],
         }),
       };
     case "removeLiquidity":
@@ -475,16 +482,16 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
         2_000_000,
       );
     case "addLiquidity":
+      // Direct to market.addLiquidity — see EVM path comment above for why
+      // we skip the router on this op specifically.
       return exec(
-        op.router,
-        "addLiquidityProportional",
+        op.market,
+        "addLiquidity",
         new ContractFunctionParameters()
-          .addAddress(op.market)
           .addUint256(toBN(op.syIn))
           .addUint256(toBN(op.ptIn))
           .addUint256(toBN(op.minLpOut))
-          .addAddress(op.receiver)
-          .addUint256(toBN(op.deadline)),
+          .addAddress(op.receiver),
         0,
         4_000_000,
       );

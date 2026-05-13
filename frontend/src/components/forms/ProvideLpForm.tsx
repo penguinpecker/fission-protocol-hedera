@@ -72,7 +72,7 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
             ] as const,
             address: detail.syShare,
             functionName: "allowance",
-            args: [user, ADDRESSES.router],
+            args: [user, market],
           } as const,
           {
             abi: [
@@ -89,7 +89,7 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
             ] as const,
             address: detail.pt,
             functionName: "allowance",
-            args: [user, ADDRESSES.router],
+            args: [user, market],
           } as const,
         ]
       : [],
@@ -278,13 +278,17 @@ function AddLp({
     }
   };
 
+  // Add Liquidity bypasses the router (router has a typing bug — it casts
+  // the SY contract as IERC20 instead of using sy.shareToken(), so the
+  // transferFrom reverts). We call market.addLiquidity directly, which
+  // means both approvals are to the MARKET, not the Router.
   const onApproveSy = async () => {
     try {
       const { txHash: hash } = await wrap(() =>
         adapter.write({
           kind: "approveErc20",
           token: detail.syShare,
-          spender: ADDRESSES.router,
+          spender: market,
           amount: parsedSy,
         }),
       );
@@ -300,7 +304,7 @@ function AddLp({
         adapter.write({
           kind: "approveErc20",
           token: detail.pt,
-          spender: ADDRESSES.router,
+          spender: market,
           amount: parsedPt,
         }),
       );
