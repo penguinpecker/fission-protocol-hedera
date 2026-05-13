@@ -107,7 +107,33 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
       [HederaChainId.Mainnet],
       "error",
     );
-    await connector.init({ logger: "error" });
+    // `init` tries to rehydrate any persisted WC session. If that session
+    // got serialized in an older library format, the lib can throw inside
+    // `loadPersistedSession → setChainIds` ("Cannot read properties of
+    // undefined (reading 'filter')"). When that happens we clear the WC
+    // localStorage namespace, build a fresh connector, and retry once —
+    // otherwise the user is stuck on every page load with a stale session
+    // they can't recover from without devtools.
+    try {
+      await connector.init({ logger: "error" });
+    } catch (e) {
+      diag("HederaConnect", { step: "init_failed_clear_session", error: e instanceof Error ? e.message : String(e) });
+      try {
+        clearStaleWcStorage();
+      } catch { /* ignore */ }
+      const fresh = new DAppConnector(
+        APP_METADATA,
+        sdk.LedgerId.MAINNET,
+        projectId,
+        Object.values(HederaJsonRpcMethod),
+        [HederaSessionEvent.ChainChanged, HederaSessionEvent.AccountsChanged],
+        [HederaChainId.Mainnet],
+        "error",
+      );
+      await fresh.init({ logger: "error" });
+      connectorRef.current = fresh as unknown as { disconnectAll: () => Promise<void>; signers: unknown[] };
+      return fresh as unknown as HederaConnectorShim;
+    }
     connectorRef.current = connector as unknown as { disconnectAll: () => Promise<void>; signers: unknown[] };
     return connector as unknown as HederaConnectorShim;
   }, []);
@@ -208,4 +234,22 @@ interface HederaConnectorShim {
   openModal(): Promise<unknown>;
   disconnectAll(): Promise<void>;
   signers: unknown[];
+}
+
+/**
+ * Clears all WalletConnect v2 client keys from localStorage. Used when a
+ * persisted session fails to rehydrate (different library version, stale
+ * topic, etc.). Safe to call on a fresh page — just no-ops.
+ */
+function clearStaleWcStorage(): void {
+  if (typeof window === "undefined") return;
+  const toRemove: string[] = [];
+  for (let i = 0; i < window.localStorage.length; i++) {
+    const k = window.localStorage.key(i);
+    if (!k) continue;
+    if (k.startsWith("wc@2:") || k.startsWith("WALLETCONNECT_DEEPLINK_CHOICE")) {
+      toRemove.push(k);
+    }
+  }
+  for (const k of toRemove) window.localStorage.removeItem(k);
 }
