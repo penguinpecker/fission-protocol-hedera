@@ -1,64 +1,35 @@
 import { createConfig, http } from "wagmi";
-import { walletConnect } from "wagmi/connectors";
 import { hederaMainnet } from "./chains";
 
 /**
- * Wagmi config — WalletConnect only, Hedera mainnet only.
+ * Wagmi config — read-only, Hedera mainnet only.
  *
- * Why not injected EVM connectors? Hedera-native wallets (HashPack, Blade,
- * Kabila) speak the WalletConnect v2 protocol. Injected paths require the
- * user to flip "EVM mode" in their wallet settings, which most users miss
- * and which makes the picker confusing. WalletConnect Reown modal handles
- * QR-scan + extension-deep-link uniformly.
+ * No connectors. The dApp uses `@hashgraph/hedera-wallet-connect`'s
+ * DAppConnector directly (see `lib/hedera-wallet/provider.tsx`) which
+ * supports both ECDSA and Ed25519 accounts via the `hedera:mainnet`
+ * namespace. Wagmi is retained ONLY for its read-side hooks
+ * (`useReadContracts`, `useWaitForTransactionReceipt` in EVM mode, etc.)
+ * over Hashio JSON-RPC.
  *
- * Why mainnet only? The protocol is HTS-native and lives on chain 295.
- * Letting users connect to the wrong chain (Hedera testnet, or random EVMs
- * via MetaMask) creates support tickets and lost funds. The connect button
- * forces 295 at session-time; if a wallet refuses, the connect simply fails
- * with a clear error, not a wrong-chain trap.
+ * Why no wagmi `walletConnect` connector: wagmi's connector instantiates
+ * `@walletconnect/ethereum-provider` which shares WC v2 session storage
+ * (`wc@2:client:0.3//session`) with the Hedera DAppConnector. On every
+ * page mount, EthereumProvider tries to rehydrate the Hedera-namespace
+ * session, fails on `setChainIds(undefined)` because there's no
+ * `eip155` namespace, swallows the error and calls `disconnect()` —
+ * wiping the Hedera session as a side effect. Users had to reconnect
+ * on every refresh. Dropping the connector removes the storage
+ * collision entirely.
  *
- * Required env: NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID (free at cloud.reown.com).
- * If unset, the connect button is disabled — the app does not fall back to a
- * bad-experience injected mode.
+ * Required env: NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is still used by
+ * the Hedera DAppConnector (lib/hedera-wallet/provider.tsx), just not
+ * here.
  */
-const wcProjectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
-
 export const HEDERA_MAINNET_CHAIN_ID = 295;
 
 export const wagmiConfig = createConfig({
   chains: [hederaMainnet],
-  connectors: wcProjectId
-    ? [
-        walletConnect({
-          projectId: wcProjectId,
-          metadata: {
-            name: "Fission Protocol",
-            description: "Yield-stripping AMM on Hedera",
-            url: "https://www.fissionp.com",
-            icons: ["https://www.fissionp.com/icon.png"],
-          },
-          showQrModal: true,
-          // Reown explorer wallet IDs — verified against
-          // https://explorer-api.walletconnect.com/v3/wallets?search=...
-          // HashPack and Kabila both advertise eip155:295 (Hedera mainnet EVM)
-          // so they will negotiate the wagmi session correctly. Blade is
-          // omitted: its Reown listing currently exposes hedera:mainnet but
-          // NOT eip155:295, so featuring it would lead to dead-clicks.
-          qrModalOptions: {
-            themeMode: "dark",
-            // wagmi v2 ships @walletconnect/modal v2 (legacy API), so the
-            // option name is explorerRecommendedWalletIds, not featuredWalletIds
-            // (Reown AppKit's newer naming).
-            explorerRecommendedWalletIds: [
-              // HashPack
-              "a29498d225fa4b13468ff4d6cf4ae0ea4adcbd95f07ce8a843a1dee10b632f3f",
-              // Kabila
-              "c40c24b39500901a330a025938552d70def4890fffe9bd315046bd33a2ece24d",
-            ],
-          },
-        }),
-      ]
-    : [],
+  connectors: [],
   transports: {
     [hederaMainnet.id]: http(),
   },
