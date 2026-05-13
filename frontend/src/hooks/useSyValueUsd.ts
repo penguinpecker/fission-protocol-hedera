@@ -273,6 +273,15 @@ export interface SyValueUsd {
    * SY locked" if a caller wants to render it as $ instead of share-units.
    */
   totalLpUsd: number | undefined;
+  /**
+   * Per-raw-share underlying token amounts. With these the caller can convert
+   * a SY balance into "how much USDC and WHBAR does this represent" — which
+   * is what the `pending_claims` panel needs to show per-asset breakdowns.
+   * Both are token-decimal-adjusted (USDC has 6 decimals, WHBAR 8). Undefined
+   * until the LP NFT + pool reads resolve.
+   */
+  usdcPerShare: number | undefined;
+  whbarPerShare: number | undefined;
   isLoading: boolean;
 }
 
@@ -422,7 +431,7 @@ export function useSyValueUsd(sy: `0x${string}` | undefined): SyValueUsd {
     token0 === undefined ||
     token1 === undefined
   ) {
-    return { usdPerShare: undefined, totalLpUsd: undefined, isLoading };
+    return { usdPerShare: undefined, totalLpUsd: undefined, usdcPerShare: undefined, whbarPerShare: undefined, isLoading };
   }
 
   // 7) Sanity-check that the NPM ticks match the SY ticks. If a future
@@ -431,7 +440,7 @@ export function useSyValueUsd(sy: `0x${string}` | undefined): SyValueUsd {
   // belt-and-braces — we trust the NPM as the source of truth.
   const liquidity = positionTuple[5];
   if (liquidity === 0n) {
-    return { usdPerShare: 0, totalLpUsd: 0, isLoading: false };
+    return { usdPerShare: 0, totalLpUsd: 0, usdcPerShare: 0, whbarPerShare: 0, isLoading: false };
   }
 
   const sqrtP = slot0[0];
@@ -469,7 +478,7 @@ export function useSyValueUsd(sy: `0x${string}` | undefined): SyValueUsd {
   const usd0 = valueSide(t0, amount0);
   const usd1 = valueSide(t1, amount1);
   if (usd0 === undefined || usd1 === undefined) {
-    return { usdPerShare: undefined, totalLpUsd: undefined, isLoading: false };
+    return { usdPerShare: undefined, totalLpUsd: undefined, usdcPerShare: undefined, whbarPerShare: undefined, isLoading: false };
   }
 
   const totalLpUsd = usd0 + usd1;
@@ -477,8 +486,17 @@ export function useSyValueUsd(sy: `0x${string}` | undefined): SyValueUsd {
   // treats the bigint as a count, no decimal division). totalSupply is in
   // the same units; division gives $-per-raw-share-unit.
   const usdPerShare = totalLpUsd / Number(totalSupplyShares);
+  // Per-asset decomposition for the pending_claims panel — caller can
+  // multiply by the user's claimable SY balance to get the underlying
+  // USDC + WHBAR they'd receive on redeem. token0/token1 may be swapped
+  // for older markets, so resolve by address rather than position.
+  const t0IsUsdc = t0 === USDC_ADDR.toLowerCase();
+  const usdcRaw = t0IsUsdc ? amount0 : amount1;
+  const whbarRaw = t0IsUsdc ? amount1 : amount0;
+  const usdcPerShare = (Number(usdcRaw) / 1e6) / Number(totalSupplyShares);
+  const whbarPerShare = (Number(whbarRaw) / 1e8) / Number(totalSupplyShares);
 
-  return { usdPerShare, totalLpUsd, isLoading: false };
+  return { usdPerShare, totalLpUsd, usdcPerShare, whbarPerShare, isLoading: false };
 }
 
 /**

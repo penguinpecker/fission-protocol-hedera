@@ -15,6 +15,7 @@ import { useWatchlist } from "@/hooks/useWatchlist";
 import { impliedApyPct, daysUntil, formatCompact } from "@/hooks/useMarkets";
 import { ptToSyRate, ytToSyRate, type UserPosition } from "@/components/MarketPositionCard";
 import { getMarketDisplay } from "@/lib/markets-metadata";
+import { decodeSelector } from "@/lib/selector-decoder";
 
 /**
  * Terminal-style portfolio page. Sections:
@@ -66,6 +67,10 @@ interface PortfolioTotals {
   lpRaw: bigint;
   ptPayoutUsd: number | undefined;
   unclaimedYieldUsd: number | undefined;
+  /** Per-asset breakdown of the unclaimed yield — what the user would
+   *  receive if they redeemed their SY-denominated claim right now. */
+  unclaimedUsdc: number | undefined;
+  unclaimedWhbar: number | undefined;
 }
 
 function ProfileBody() {
@@ -96,6 +101,8 @@ function ProfileBody() {
     let lpRaw = 0n;
     let ptPayoutUsd: number | undefined = undefined;
     let unclaimedYieldUsd: number | undefined = undefined;
+    let unclaimedUsdc: number | undefined = undefined;
+    let unclaimedWhbar: number | undefined = undefined;
 
     for (const t of Object.values(totalsByMarket)) {
       if (t.portfolioUsd !== undefined)
@@ -107,9 +114,13 @@ function ProfileBody() {
         ptPayoutUsd = (ptPayoutUsd ?? 0) + t.ptPayoutUsd;
       if (t.unclaimedYieldUsd !== undefined)
         unclaimedYieldUsd = (unclaimedYieldUsd ?? 0) + t.unclaimedYieldUsd;
+      if (t.unclaimedUsdc !== undefined)
+        unclaimedUsdc = (unclaimedUsdc ?? 0) + t.unclaimedUsdc;
+      if (t.unclaimedWhbar !== undefined)
+        unclaimedWhbar = (unclaimedWhbar ?? 0) + t.unclaimedWhbar;
     }
 
-    return { portfolioUsd, ptRaw, ytRaw, lpRaw, ptPayoutUsd, unclaimedYieldUsd };
+    return { portfolioUsd, ptRaw, ytRaw, lpRaw, ptPayoutUsd, unclaimedYieldUsd, unclaimedUsdc, unclaimedWhbar };
   }, [totalsByMarket]);
 
   return (
@@ -124,7 +135,11 @@ function ProfileBody() {
 
         {/* right — sidebars */}
         <aside className="flex flex-col gap-6">
-          <PendingClaimsCard unclaimedYieldUsd={totals.unclaimedYieldUsd} />
+          <PendingClaimsCard
+            unclaimedYieldUsd={totals.unclaimedYieldUsd}
+            unclaimedUsdc={totals.unclaimedUsdc}
+            unclaimedWhbar={totals.unclaimedWhbar}
+          />
           <RecentActivityCard userEvm={address} />
           <WatchlistCard />
         </aside>
@@ -443,18 +458,32 @@ function PosNum({
 
 /* ─────────────────────────────────────────────────────── sidebar cards */
 
-function PendingClaimsCard({ unclaimedYieldUsd }: { unclaimedYieldUsd: number | undefined }) {
-  // We don't have a per-asset breakdown for the yield stream — for v1 it's
-  // SY-shares, which unwrap to USDC + WHBAR at claim time. Show "—" for each
-  // leg and the total at the bottom (which we DO know in USD).
+function PendingClaimsCard({
+  unclaimedYieldUsd,
+  unclaimedUsdc,
+  unclaimedWhbar,
+}: {
+  unclaimedYieldUsd: number | undefined;
+  unclaimedUsdc: number | undefined;
+  unclaimedWhbar: number | undefined;
+}) {
+  // Yield is paid in SY shares; at claim time those decompose into the SY's
+  // underlying V3 LP balance (USDC + WHBAR). We show the equivalent each
+  // would yield right now, derived from the V3 NFT amounts / total supply.
+  const fmtTok = (n: number | undefined, decimals: number): string => {
+    if (n === undefined) return "—";
+    if (n === 0) return "0";
+    if (n < 0.0001) return n.toExponential(2);
+    return n.toFixed(decimals);
+  };
   return (
     <div className="flex flex-col gap-px border border-border bg-border">
       <div className="bg-white/[0.015] p-5">
         <h4 className="mb-3.5 font-mono text-[10.5px] uppercase tracking-[0.2em] text-textDim">
           // pending_claims
         </h4>
-        <SideRow k="USDC" v="—" />
-        <SideRow k="WHBAR" v="—" />
+        <SideRow k="USDC" v={fmtTok(unclaimedUsdc, 6)} />
+        <SideRow k="WHBAR" v={fmtTok(unclaimedWhbar, 4)} />
         <SideRow
           k="Total ≈"
           v={unclaimedYieldUsd !== undefined ? (formatUsd(unclaimedYieldUsd) ?? "$0.00") : "$0.00"}
@@ -477,6 +506,8 @@ interface MirrorTx {
   entity_id?: string;
   transfers?: Array<{ amount: number; account: string }>;
   result?: string;
+  function_parameters?: string;
+  to?: string;
 }
 
 function RecentActivityCard({ userEvm }: { userEvm: `0x${string}` | undefined }) {
@@ -491,18 +522,23 @@ function RecentActivityCard({ userEvm }: { userEvm: `0x${string}` | undefined })
     let cancelled = false;
     (async () => {
       try {
-        // Mirror Node accepts both 0.0.X and EVM-address (with-or-without 0x).
-        const acc = accountId ?? userEvm;
+        // /contracts/results returns function_parameters per call which
+        // /transactions does not — needed for the selector decoder.
+        const acc = userEvm ?? accountId;
         const r = await fetch(
-          `https://mainnet-public.mirrornode.hedera.com/api/v1/transactions?account.id=${acc}&limit=10&order=desc&transactiontype=contractcall`,
+          `https://mainnet-public.mirrornode.hedera.com/api/v1/contracts/results?from=${acc}&limit=10&order=desc`,
           { cache: "no-store" },
         );
         if (!r.ok) {
           if (!cancelled) setError(`mirror_${r.status}`);
           return;
         }
-        const j = (await r.json()) as { transactions: MirrorTx[] };
-        if (!cancelled) setTxs(j.transactions ?? []);
+        const j = (await r.json()) as { results: MirrorTx[] };
+        // Normalize the field name so the rest of the component doesn't care
+        // whether we came from /transactions or /contracts/results.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (j as any).transactions = j.results;
+        if (!cancelled) setTxs((j as unknown as { transactions: MirrorTx[] }).transactions ?? []);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "fetch_failed");
       }
@@ -541,16 +577,13 @@ function RecentActivityCard({ userEvm }: { userEvm: `0x${string}` | undefined })
 function ActivityRow({ tx }: { tx: MirrorTx }) {
   const ts = Number(tx.consensus_timestamp.split(".")[0]) * 1000;
   const when = formatAgo(ts);
-  const contract = tx.contract_id ?? tx.entity_id ?? "—";
-  // Mirror Node's "name" field for contractcall is "CONTRACT_CALL". We don't
-  // have a function decoder here (would need the ABI for every contract the
-  // user touched), so show the txn result as the action and the contract as
-  // the context. Future: index events server-side to surface "split", etc.
-  const action = tx.result === "SUCCESS" ? "contractCall" : tx.result ?? "call";
+  const contract = tx.contract_id ?? tx.entity_id ?? (tx.to ? shortAddr(tx.to) : "—");
+  const action = decodeSelector(tx.function_parameters ?? undefined);
+  const failed = tx.result && tx.result !== "SUCCESS";
   return (
     <div className="flex justify-between gap-3 bg-white/[0.015] px-4 py-3.5 font-mono text-[11.5px]">
       <div className="flex flex-col gap-0.5">
-        <span className="text-white">{action}</span>
+        <span className={failed ? "text-warning" : "text-white"}>{action}{failed ? ` · ${tx.result}` : ""}</span>
         <span className="text-textDim text-[10.5px]">
           {when} · {contract}
         </span>
@@ -558,6 +591,10 @@ function ActivityRow({ tx }: { tx: MirrorTx }) {
       <span className="whitespace-nowrap text-right text-textSec">↗</span>
     </div>
   );
+}
+
+function shortAddr(addr: string): string {
+  return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
 }
 
 function formatAgo(ms: number): string {
@@ -633,16 +670,16 @@ function PositionAccumulator({
 }) {
   const { data: detail } = useMarketDetail(market);
   const { data: position } = useUserPosition(market, detail, user);
-  const { usdPerShare } = useSyValueUsd(detail?.sy);
+  const { usdPerShare, usdcPerShare, whbarPerShare } = useSyValueUsd(detail?.sy);
 
   useEffect(() => {
     if (!detail || !position) {
       onReport([], {});
       return;
     }
-    const { rows, totals } = buildRows(market, detail, position, usdPerShare);
+    const { rows, totals } = buildRows(market, detail, position, usdPerShare, usdcPerShare, whbarPerShare);
     onReport(rows, totals);
-  }, [market, detail, position, usdPerShare, onReport]);
+  }, [market, detail, position, usdPerShare, usdcPerShare, whbarPerShare, onReport]);
 
   return null;
 }
@@ -652,6 +689,8 @@ function buildRows(
   detail: MarketDetail,
   position: UserPosition,
   usdPerShare: number | undefined,
+  usdcPerShare: number | undefined,
+  whbarPerShare: number | undefined,
 ): { rows: PortfolioRow[]; totals: Partial<PortfolioTotals> } {
   const meta = getMarketDisplay(market);
   const symbol = meta?.shortName ?? detail.syName ?? "Market";
@@ -760,6 +799,16 @@ function buildRows(
     usdPerShare !== undefined
       ? Number(position.claimableYield) * usdPerShare
       : undefined;
+  // Per-asset breakdown of the unclaimed yield — what redeeming this SY
+  // amount through the V3 LP would land in the user's wallet.
+  const unclaimedUsdc =
+    usdcPerShare !== undefined
+      ? Number(position.claimableYield) * usdcPerShare
+      : undefined;
+  const unclaimedWhbar =
+    whbarPerShare !== undefined
+      ? Number(position.claimableYield) * whbarPerShare
+      : undefined;
 
   return {
     rows,
@@ -770,6 +819,8 @@ function buildRows(
       lpRaw: position.lp,
       ptPayoutUsd,
       unclaimedYieldUsd,
+      unclaimedUsdc,
+      unclaimedWhbar,
     },
   };
 }

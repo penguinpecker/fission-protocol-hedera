@@ -40,7 +40,7 @@ const NAV = [
 export function Footer() {
   return (
     <footer className="border-t border-border bg-bg">
-      <div className="mx-auto max-w-[1180px] px-6 py-16">
+      <div className="mx-auto max-w-[1440px] px-7 py-16">
         <div className="grid gap-10 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
           <div>
             <Link href="/" className="inline-flex items-center gap-2.5">
