@@ -10,6 +10,7 @@ import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { useUserProfile, type ProfilePatch } from "@/hooks/useUserProfile";
 import { useCachedMarkets } from "@/hooks/useCachedMarkets";
 import { useMarketDetail, useUserPosition } from "@/hooks/useMarket";
+import { useSyValueUsd, shareBalanceToUsd, formatUsd } from "@/hooks/useSyValueUsd";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ArrowOutIcon } from "@/components/Icons";
 
@@ -148,6 +149,12 @@ function MarketPositionRow({
 }) {
   const { data: detail } = useMarketDetail(market);
   const { data: position } = useUserPosition(market, detail, user);
+  // SY-share-in-USD hint, only when the SY adapter is the SaucerSwap-V2-LP
+  // shape (HBARX SYs return undefined naturally because they don't expose
+  // `npm() / positionTokenId()`). `formatUsd` returns null when undefined so
+  // we hide the hint line until both reads complete.
+  const { usdPerShare } = useSyValueUsd(detail?.sy);
+  const syUsd = formatUsd(shareBalanceToUsd(position?.sy, usdPerShare));
 
   if (!detail) {
     return <div className="h-24 animate-pulse rounded-2xl border border-border bg-bgCard" />;
@@ -195,7 +202,7 @@ function MarketPositionRow({
       </div>
 
       <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-border md:grid-cols-5">
-        <PosCell label="SY" value={formatCompact(position?.sy ?? 0n)} />
+        <PosCell label="SY" value={formatCompact(position?.sy ?? 0n)} hint={syUsd ? `≈ ${syUsd}` : null} />
         <PosCell label="PT" value={formatCompact(position?.pt ?? 0n)} tone="success" />
         <PosCell label="YT" value={formatCompact(position?.yt ?? 0n)} tone="warning" />
         <PosCell label="LP" value={formatCompact(position?.lp ?? 0n)} />
@@ -233,11 +240,15 @@ function PosCell({
   value,
   tone,
   accent,
+  hint,
 }: {
   label: string;
   value: string;
   tone?: "success" | "warning";
   accent?: boolean;
+  /** Optional sub-line (e.g. "≈ $3.79"). Rendered only when truthy; layout
+   *  shifts a row up otherwise — that's fine since this is purely additive. */
+  hint?: string | null;
 }) {
   const toneClass =
     tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-text";
@@ -247,6 +258,9 @@ function PosCell({
         {label}
       </div>
       <div className={`mt-1 font-mono text-[13px] font-semibold ${toneClass}`}>{value}</div>
+      {hint ? (
+        <div className="mt-0.5 font-mono text-[10px] font-medium text-textDim">{hint}</div>
+      ) : null}
     </div>
   );
 }

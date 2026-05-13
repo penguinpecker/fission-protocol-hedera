@@ -59,3 +59,4 @@ audits/mutation/run.log
 # real values depend on PROD_THRESHOLD_EVM + PROD_TIMELOCK at handoff time)
 deployments/handoff/
 deployments/safe-handoff/
+.vercel
