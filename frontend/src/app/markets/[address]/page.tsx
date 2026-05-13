@@ -11,6 +11,7 @@ import { WalletGate } from "@/components/WalletGate";
 import { useMarketDetail, useUserPosition, MarketDetail } from "@/hooks/useMarket";
 import { useSyValueUsd } from "@/hooks/useSyValueUsd";
 import { MarketPositionCard } from "@/components/MarketPositionCard";
+import { StrategyOverview } from "@/components/StrategyOverview";
 import { ADDRESSES, isDeployed, HEDERA_TOKENS, USDC_DECIMALS, WHBAR_DECIMALS } from "@/lib/addresses";
 import { erc20Abi } from "@/lib/abis";
 import { erc20WriteAbi, routerAbi, marketWriteAbi, syWriteAbi, fissionZapAbi } from "@/lib/abis-write";
@@ -138,6 +139,18 @@ export default function MarketDetailPage({ params }: { params: Promise<{ address
             />
           </div>
         )}
+
+        <StrategyOverview
+          detail={detail}
+          onPick={(s) => {
+            setStrategy(s);
+            if (typeof document !== "undefined") {
+              document
+                .getElementById("trade-card")
+                ?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+          }}
+        />
 
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_360px]">
           <PositionInfoCard detail={detail} expired={expired} strategy={strategy} />
@@ -493,7 +506,7 @@ function TradeCard({
   };
 
   return (
-    <aside className="flex flex-col gap-3">
+    <aside id="trade-card" className="flex flex-col gap-3 scroll-mt-24">
       <div className="rounded-2xl border border-border bg-bgCard p-4">
         <div className="mb-3 text-[10px] font-semibold uppercase tracking-[2px] text-textDim">Strategy</div>
         <div className="flex gap-1">

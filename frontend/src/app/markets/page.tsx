@@ -19,6 +19,7 @@ import {
 } from "@/hooks/useMarkets";
 import { useWatchlist } from "@/hooks/useWatchlist";
 import { useCachedMarkets } from "@/hooks/useCachedMarkets";
+import { getMarketDisplay } from "@/lib/markets-metadata";
 
 const factoryDeployed = isDeployed(ADDRESSES.factory);
 
@@ -108,59 +109,76 @@ export default function MarketsPage() {
 
         {markets.length > 0 && (
           <div className="flex flex-col gap-3">
-            {markets.map((m) => (
-              <article
-                key={m.address}
-                className="group relative overflow-hidden rounded-2xl border border-border bg-bgCard transition hover:border-borderHover hover:bg-white/[0.02]"
-              >
-                {/* subtle gradient flair on hover */}
-                <div
-                  aria-hidden
-                  className="pointer-events-none absolute -right-32 -top-32 size-64 rounded-full bg-[radial-gradient(circle,rgba(125,211,252,0.08),transparent_70%)] opacity-0 transition group-hover:opacity-100"
-                />
-                <Link
-                  href={`/markets/${m.address}`}
-                  className="absolute inset-0 z-10 rounded-2xl"
-                  aria-label={`View ${m.syName ?? m.symbol}`}
-                />
-                <div className="pointer-events-none relative z-20 grid grid-cols-[auto_2.2fr_1fr_1fr_1fr_1fr] items-center gap-4 px-6 py-5">
-                  <div className="pointer-events-auto">
-                    <StarButton
-                      watched={isWatched(chainId, m.address)}
-                      signedIn={signedIn}
-                      onClick={() => toggle(chainId, m.address)}
-                    />
-                  </div>
-                  <div className="pointer-events-none">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[15px] font-semibold tracking-tight">{m.syName ?? m.symbol}</span>
-                      <span className="rounded-full bg-white/[0.05] px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[1.5px] text-textDim">
-                        {m.symbol.includes("rwd") ? "Rewards SY" : "Yield SY"}
-                      </span>
+            {markets.map((m) => {
+              const meta = getMarketDisplay(m.address);
+              const label = meta?.displayName ?? m.syName ?? m.symbol;
+              // Fixed APY ≡ Implied APY when buying PT at the current AMM
+              // mark. We label it "Fixed" on the list because that's the
+              // headline number a user is comparing across markets.
+              return (
+                <article
+                  key={m.address}
+                  className="group relative overflow-hidden rounded-2xl border border-border bg-bgCard transition hover:border-borderHover hover:bg-white/[0.02]"
+                >
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute -right-32 -top-32 size-64 rounded-full bg-[radial-gradient(circle,rgba(125,211,252,0.08),transparent_70%)] opacity-0 transition group-hover:opacity-100"
+                  />
+                  <Link
+                    href={`/markets/${m.address}`}
+                    className="absolute inset-0 z-10 rounded-2xl"
+                    aria-label={`View ${label}`}
+                  />
+                  <div className="pointer-events-none relative z-20 grid grid-cols-[auto_2.4fr_1fr_1fr_1fr] items-center gap-4 px-6 py-5">
+                    <div className="pointer-events-auto">
+                      <StarButton
+                        watched={isWatched(chainId, m.address)}
+                        signedIn={signedIn}
+                        onClick={() => toggle(chainId, m.address)}
+                      />
                     </div>
-                    <div className="mt-1 flex items-center gap-2 text-xs text-textDim">
-                      <span className={m.daysLeft <= 7 ? "text-warning" : ""}>
-                        {m.daysLeft}d to maturity
-                      </span>
-                      <span className="text-border">·</span>
-                      <span>{m.expiryDate}</span>
+                    <div className="pointer-events-none">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[15px] font-semibold tracking-tight">{label}</span>
+                        {meta?.assets.map((a) => (
+                          <span
+                            key={a}
+                            className="rounded-full border border-border bg-white/[0.04] px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[1px] text-textSec"
+                          >
+                            {a}
+                          </span>
+                        ))}
+                        {meta && (
+                          <span className="rounded-full bg-white/[0.05] px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[1.5px] text-textDim">
+                            {meta.protocol}
+                            {meta.poolFeePct !== undefined && ` · ${meta.poolFeePct}%`}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1.5 text-[12px] text-textSec">
+                        {meta?.yieldSource ?? "Tokenized yield"}
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-2 text-[11px] text-textDim">
+                        <span className={m.daysLeft <= 7 ? "text-warning" : ""}>
+                          {m.daysLeft}d to maturity
+                        </span>
+                        <span className="text-border">·</span>
+                        <span>{m.expiryDate}</span>
+                      </div>
+                    </div>
+                    <div className="pointer-events-none">
+                      <Stat label="Fixed APY" value={`${m.impliedApy.toFixed(2)}%`} accent="white" />
+                    </div>
+                    <div className="pointer-events-none">
+                      <Stat label="SY locked" value={formatCompact(m.totalSy)} accent="silver" />
+                    </div>
+                    <div className="pointer-events-none">
+                      <Stat label="Liquidity" value={formatCompact(m.lpSupply)} accent="silver" />
                     </div>
                   </div>
-                  <div className="pointer-events-none">
-                    <Stat label="Implied APY" value={`${m.impliedApy.toFixed(2)}%`} accent="white" />
-                  </div>
-                  <div className="pointer-events-none">
-                    <Stat label="SY locked" value={formatCompact(m.totalSy)} accent="silver" />
-                  </div>
-                  <div className="pointer-events-none">
-                    <Stat label="PT in pool" value={formatCompact(m.totalPt)} accent="silver" />
-                  </div>
-                  <div className="pointer-events-none">
-                    <Stat label="LP supply" value={formatCompact(m.lpSupply)} accent="silver" />
-                  </div>
-                </div>
-              </article>
-            ))}
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
