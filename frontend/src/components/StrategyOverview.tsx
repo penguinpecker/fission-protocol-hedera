@@ -2,36 +2,34 @@
 
 /**
  * Three-strategy overview block, shown on the market detail page below the
- * user's position summary and above the TradeCard. Renders three side-by-side
- * "pick your path" cards (Buy PT, Buy YT, Provide LP). Each card has a tag,
- * title, big metric, one-line pitch, inline SVG chart, "why pick this"
- * paragraph, and a CTA that scrolls to the TradeCard and selects the strategy.
+ * user's position summary. Each card has a tag, title, big metric, one-line
+ * pitch, inline SVG chart, "why pick this" paragraph, and a CTA that links
+ * to the strategy sub-page (`/markets/[addr]/pt|yt|lp`).
  *
- * The overview is purely an entry-point — the actual trade UI lives in
- * TradeCard. The page lifts the click handler so we can call
- * setStrategy(s) and scrollIntoView the trade card in one motion.
+ * The overview is purely an entry point — full trade UI lives on the
+ * sub-pages.
  */
 
+import Link from "next/link";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate, ytToSyRate } from "@/components/MarketPositionCard";
 
-type PickStrategy = "pt" | "yt" | "split";
-
 interface OverviewProps {
   detail: MarketDetail;
-  onPick: (s: PickStrategy) => void;
+  /** Market address — used to build sub-page hrefs. */
+  market: `0x${string}`;
 }
 
-export function StrategyOverview({ detail, onPick }: OverviewProps) {
+export function StrategyOverview({ detail, market }: OverviewProps) {
   const apy = impliedApyPct(detail.lastLnImpliedRate);
   const days = daysUntil(detail.expiry);
   const apyDisplay = apy === null ? 0 : apy;
   return (
     <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-      <PtCard detail={detail} days={days} apy={apyDisplay} onPick={onPick} />
-      <YtCard detail={detail} days={days} apy={apyDisplay} onPick={onPick} />
-      <LpCard detail={detail} onPick={onPick} />
+      <PtCard detail={detail} days={days} apy={apyDisplay} market={market} />
+      <YtCard detail={detail} days={days} apy={apyDisplay} market={market} />
+      <LpCard detail={detail} market={market} />
     </div>
   );
 }
@@ -82,24 +80,14 @@ function WhyPick({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Cta({
-  children,
-  onClick,
-  disabled,
-}: {
-  children: React.ReactNode;
-  onClick?: () => void;
-  disabled?: boolean;
-}) {
+function CtaLink({ children, href }: { children: React.ReactNode; href: string }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="mt-5 w-full rounded-[10px] bg-white px-4 py-2.5 text-[13px] font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+    <Link
+      href={href}
+      className="mt-5 block w-full rounded-[10px] bg-white px-4 py-2.5 text-center text-[13px] font-semibold text-bg transition hover:opacity-90"
     >
       {children}
-    </button>
+    </Link>
   );
 }
 
@@ -109,15 +97,15 @@ function PtCard({
   detail: _detail,
   days,
   apy,
-  onPick,
+  market,
 }: {
   detail: MarketDetail;
   days: number;
   apy: number;
-  onPick: (s: PickStrategy) => void;
+  market: `0x${string}`;
 }) {
   const ptRate = ptToSyRate(apy, days);
-  const yieldAtMaturity = Math.max(0, 1 - ptRate); // "+0.018 SY" style label
+  const yieldAtMaturity = Math.max(0, 1 - ptRate);
 
   return (
     <CardShell>
@@ -138,19 +126,11 @@ function PtCard({
         You want a guaranteed return, locked in today. Best if you expect yields to fall or stay below {apy.toFixed(2)}% over the next {days} days.
       </WhyPick>
 
-      <Cta onClick={() => onPick("pt")}>Open Buy PT →</Cta>
+      <CtaLink href={`/markets/${market}/pt`}>Open Buy PT →</CtaLink>
     </CardShell>
   );
 }
 
-/**
- * PT yield-growth curve: clean line from bottom-left (today, 0 yield) to
- * top-right (maturity, +yield SY). Right-edge horizontal label shows the
- * final yield value formatted to 4dp.
- *
- * 280×80 viewbox; we leave ~70px on the right edge for the label so the
- * line ends around x=210 to avoid colliding with the text.
- */
 function PtChart({ yieldAtMaturity }: { yieldAtMaturity: number }) {
   const W = 280;
   const H = 80;
@@ -170,40 +150,13 @@ function PtChart({ yieldAtMaturity }: { yieldAtMaturity: number }) {
       role="img"
       aria-label={`PT yield curve, accruing ${label} over the term`}
     >
-      {/* baseline */}
-      <line
-        x1={x0}
-        y1={y0}
-        x2={x1}
-        y2={y0}
-        stroke="currentColor"
-        strokeOpacity={0.15}
-        strokeDasharray="2 3"
-      />
-      {/* growth line */}
-      <line
-        x1={x0}
-        y1={y0}
-        x2={x1}
-        y2={y1}
-        stroke="currentColor"
-        strokeWidth={2}
-        strokeLinecap="round"
-      />
-      {/* end-point dot */}
+      <line x1={x0} y1={y0} x2={x1} y2={y0} stroke="currentColor" strokeOpacity={0.15} strokeDasharray="2 3" />
+      <line x1={x0} y1={y0} x2={x1} y2={y1} stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
       <circle cx={x1} cy={y1} r={3} fill="currentColor" />
-      {/* "today" label at left */}
       <text x={x0} y={H - 4} fill="currentColor" fillOpacity={0.55} fontSize={9}>
         today
       </text>
-      {/* right-edge yield label */}
-      <text
-        x={x1 + 6}
-        y={y1 + 4}
-        fill="currentColor"
-        fontSize={11}
-        fontWeight={600}
-      >
+      <text x={x1 + 6} y={y1 + 4} fill="currentColor" fontSize={11} fontWeight={600}>
         {label}
       </text>
     </svg>
@@ -216,12 +169,12 @@ function YtCard({
   detail: _detail,
   days,
   apy,
-  onPick,
+  market,
 }: {
   detail: MarketDetail;
   days: number;
   apy: number;
-  onPick: (s: PickStrategy) => void;
+  market: `0x${string}`;
 }) {
   const ytRate = ytToSyRate(apy, days);
   return (
@@ -243,20 +196,11 @@ function YtCard({
         You think the pool will earn MORE than {apy.toFixed(2)}% APY over the next {days} days. Leveraged exposure to yield — could 2-5x or go to ~0.
       </WhyPick>
 
-      <Cta onClick={() => onPick("yt")}>Open Buy YT →</Cta>
+      <CtaLink href={`/markets/${market}/yt`}>Open Buy YT →</CtaLink>
     </CardShell>
   );
 }
 
-/**
- * Deterministic, seeded pseudo-random walk that oscillates around the
- * current implied APY. We don't have historical data, so this is a
- * representative sparkline rather than a real series — but it's stable
- * across renders (seed derived from APY) so it doesn't jitter on re-render.
- *
- * 32 sample points, ±15% of APY noise band. Walk uses a simple LCG seeded
- * from a hash of the APY bucket so identical APYs render identically.
- */
 function YtChart({ apy }: { apy: number }) {
   const W = 280;
   const H = 80;
@@ -266,8 +210,6 @@ function YtChart({ apy }: { apy: number }) {
   const padB = 12;
   const N = 32;
 
-  // Mulberry32-style seeded PRNG. Bucket APY to 0.01% so trivial recompute
-  // differences don't reshuffle the walk.
   const seed = Math.max(1, Math.floor(apy * 100));
   let s = seed >>> 0;
   const rand = () => {
@@ -278,14 +220,12 @@ function YtChart({ apy }: { apy: number }) {
     return (((t ^ (t >>> 14)) >>> 0) % 10_000) / 10_000;
   };
 
-  // Generate the walk in APY-space ±15%, then map to viewbox.
-  const band = apy * 0.15 + 0.5; // small floor for very-low-APY markets
+  const band = apy * 0.15 + 0.5;
   const series: number[] = [];
   let v = apy;
   for (let i = 0; i < N; i++) {
     const step = (rand() - 0.5) * band * 0.4;
     v = v + step;
-    // soft re-center so it doesn't drift to infinity
     v = v + (apy - v) * 0.12;
     series.push(v);
   }
@@ -308,16 +248,7 @@ function YtChart({ apy }: { apy: number }) {
       role="img"
       aria-label={`Implied APY sparkline around ${apy.toFixed(2)}%`}
     >
-      {/* mid-line at current APY */}
-      <line
-        x1={padL}
-        y1={y(apy)}
-        x2={W - padR}
-        y2={y(apy)}
-        stroke="currentColor"
-        strokeOpacity={0.18}
-        strokeDasharray="2 3"
-      />
+      <line x1={padL} y1={y(apy)} x2={W - padR} y2={y(apy)} stroke="currentColor" strokeOpacity={0.18} strokeDasharray="2 3" />
       <path d={d} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" />
       <circle cx={lastX} cy={lastY} r={3} fill="currentColor" />
       <text x={lastX + 6} y={lastY + 4} fill="currentColor" fontSize={11} fontWeight={600}>
@@ -331,13 +262,11 @@ function YtChart({ apy }: { apy: number }) {
 
 function LpCard({
   detail,
-  onPick,
+  market,
 }: {
   detail: MarketDetail;
-  onPick: (s: PickStrategy) => void;
+  market: `0x${string}`;
 }) {
-  // bigint → Number for ratio math. Both fit comfortably in 2^53 for any
-  // realistic pool size; we're only computing a fraction in [0, 1].
   const totalPt = Number(detail.totalPt);
   const totalSy = Number(detail.totalSy);
   const sum = totalPt + totalSy;
@@ -374,22 +303,11 @@ function LpCard({
         You want passive yield without picking a side. LPs earn trading fees + protocol rewards while exposed to both sides of the AMM.
       </WhyPick>
 
-      {/* LP path isn't wired through TradeCard yet — we hand off to "split" as
-          a placeholder so the user still sees a related flow. Phase 3 will
-          add a proper "Add liquidity" path (mint LP via market.mint) and the
-          route handler that scrolls there. */}
-      <Cta onClick={() => onPick("split")}>Open LP →</Cta>
+      <CtaLink href={`/markets/${market}/lp`}>Open LP →</CtaLink>
     </CardShell>
   );
 }
 
-/**
- * Two-arc donut. PT in `text-text`, SY in `text-textDim`. Stroke-based
- * (no fill) for the clean Pendle-y look. When the pool has no composition
- * yet (both reserves 0) we render an empty stroked circle.
- *
- * 72×72 viewbox, r=28, stroke=8. Start angle at the top (-90°).
- */
 function LpDonut({
   ptShare,
   syShare,
@@ -423,7 +341,6 @@ function LpDonut({
       aria-label={`Pool composition donut, ${(ptShare * 100).toFixed(0)}% PT and ${(syShare * 100).toFixed(0)}% SY`}
     >
       <g transform={`rotate(-90 ${cx} ${cy})`}>
-        {/* PT arc (text-text) */}
         <circle
           className="text-text"
           cx={cx}
@@ -436,7 +353,6 @@ function LpDonut({
           strokeDashoffset={0}
           strokeLinecap="butt"
         />
-        {/* SY arc (text-textDim), offset to start where PT ends */}
         <circle
           className="text-textDim"
           cx={cx}

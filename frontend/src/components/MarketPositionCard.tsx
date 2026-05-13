@@ -147,10 +147,11 @@ export function MarketPositionCard({
     { month: "short", day: "numeric", year: "numeric" },
   );
 
-  // Action hrefs — link back into the market detail page with the right
-  // strategy preselected (the TradeCard reads state, not URL, today — so
-  // these query params are forward-looking; mention in the report).
-  const h = (qs: string) => `/markets/${market}?${qs}`;
+  // Action hrefs — link to the dedicated strategy sub-pages introduced in
+  // Phase 3. Post-expiry redeem is the only action that stays on the
+  // overview route (the redeem CTA lives there).
+  const sub = (segment: "pt" | "yt" | "lp" | "") =>
+    segment ? `/markets/${market}/${segment}` : `/markets/${market}`;
 
   const Header = () => (
     <div className="flex flex-wrap items-baseline justify-between gap-3 px-5 py-4">
@@ -212,8 +213,8 @@ export function MarketPositionCard({
         }
         actions={
           expired
-            ? [{ label: "Redeem PT", href: h("action=redeem") }]
-            : [{ label: "Sell PT", href: h("strategy=pt") }]
+            ? [{ label: "Redeem PT", href: sub("") }]
+            : [{ label: "Sell PT", href: sub("pt") }]
         }
         dim={p.pt === 0n}
       />
@@ -234,9 +235,9 @@ export function MarketPositionCard({
           </>
         }
         actions={[
-          { label: "Sell YT", href: h("strategy=yt") },
+          { label: "Sell YT", href: sub("yt") },
           ...(p.claimableYield > 0n
-            ? [{ label: "Claim yield", href: h("action=claim") }]
+            ? [{ label: "Claim yield", href: sub("") }]
             : []),
         ]}
         dim={p.yt === 0n && p.claimableYield === 0n}
@@ -263,7 +264,7 @@ export function MarketPositionCard({
             </span>
           </>
         }
-        actions={[{ label: "Add liquidity", href: h("action=lp") }]}
+        actions={[{ label: "Add liquidity", href: sub("lp") }]}
         dim={p.lp === 0n}
       />
 
@@ -274,8 +275,8 @@ export function MarketPositionCard({
         usd={usdSy}
         meta={null}
         actions={[
-          { label: "Mint more", href: h("strategy=mint") },
-          { label: "Split → PT + YT", href: h("strategy=split") },
+          { label: "Mint more", href: sub("") },
+          { label: "Buy PT", href: sub("pt") },
         ]}
         dim={p.sy === 0n}
       />

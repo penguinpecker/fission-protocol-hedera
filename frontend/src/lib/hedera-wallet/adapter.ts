@@ -76,6 +76,26 @@ export type WriteOp =
       ptIn: bigint;
       ytIn: bigint;
       receiver: `0x${string}`;
+    }
+  | {
+      kind: "addLiquidity";
+      router: `0x${string}`;
+      market: `0x${string}`;
+      syIn: bigint;
+      ptIn: bigint;
+      minLpOut: bigint;
+      receiver: `0x${string}`;
+      deadline: bigint;
+    }
+  | {
+      kind: "removeLiquidity";
+      router: `0x${string}`;
+      market: `0x${string}`;
+      lpIn: bigint;
+      minSyOut: bigint;
+      minPtOut: bigint;
+      receiver: `0x${string}`;
+      deadline: bigint;
     };
 
 interface AdapterState {
@@ -274,6 +294,24 @@ async function writeEvm(
           args: [op.ptIn, op.ytIn, op.receiver],
         }),
       };
+    case "addLiquidity":
+      return {
+        txHash: await writeContractAsync({
+          abi: routerAbi,
+          address: op.router,
+          functionName: "addLiquidityProportional",
+          args: [op.market, op.syIn, op.ptIn, op.minLpOut, op.receiver, op.deadline],
+        }),
+      };
+    case "removeLiquidity":
+      return {
+        txHash: await writeContractAsync({
+          abi: routerAbi,
+          address: op.router,
+          functionName: "removeLiquidityProportional",
+          args: [op.market, op.lpIn, op.minSyOut, op.minPtOut, op.receiver, op.deadline],
+        }),
+      };
   }
 }
 
@@ -435,6 +473,34 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
           .addAddress(op.receiver),
         0,
         2_000_000,
+      );
+    case "addLiquidity":
+      return exec(
+        op.router,
+        "addLiquidityProportional",
+        new ContractFunctionParameters()
+          .addAddress(op.market)
+          .addUint256(toBN(op.syIn))
+          .addUint256(toBN(op.ptIn))
+          .addUint256(toBN(op.minLpOut))
+          .addAddress(op.receiver)
+          .addUint256(toBN(op.deadline)),
+        0,
+        4_000_000,
+      );
+    case "removeLiquidity":
+      return exec(
+        op.router,
+        "removeLiquidityProportional",
+        new ContractFunctionParameters()
+          .addAddress(op.market)
+          .addUint256(toBN(op.lpIn))
+          .addUint256(toBN(op.minSyOut))
+          .addUint256(toBN(op.minPtOut))
+          .addAddress(op.receiver)
+          .addUint256(toBN(op.deadline)),
+        0,
+        4_000_000,
       );
   }
 }
