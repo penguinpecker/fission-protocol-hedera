@@ -1,30 +1,37 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { useChainId } from "wagmi";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { WalletGate } from "@/components/WalletGate";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
-import { useUserProfile, type ProfilePatch } from "@/hooks/useUserProfile";
 import { useCachedMarkets } from "@/hooks/useCachedMarkets";
-import { useMarketDetail, useUserPosition } from "@/hooks/useMarket";
-import { useSyValueUsd } from "@/hooks/useSyValueUsd";
-import { MarketPositionCard } from "@/components/MarketPositionCard";
-import { ArrowOutIcon } from "@/components/Icons";
+import { useMarketDetail, useUserPosition, type MarketDetail } from "@/hooks/useMarket";
+import { useSyValueUsd, formatUsd } from "@/hooks/useSyValueUsd";
+import { useWatchlist } from "@/hooks/useWatchlist";
+import { impliedApyPct, daysUntil, formatCompact } from "@/hooks/useMarkets";
+import { ptToSyRate, ytToSyRate, type UserPosition } from "@/components/MarketPositionCard";
+import { getMarketDisplay } from "@/lib/markets-metadata";
 
 /**
- * Pendle-style portfolio page. Sections:
- *   1. Aggregate stats (total positions value in SY units, total claimable yield)
- *   2. Per-market position table with PT / YT / LP balances + claim CTA
- *   3. Account settings expander (display name, avatar, twitter)
+ * Terminal-style portfolio page. Sections:
  *
- * Wallet gated; SIWE-gated for the settings panel only (positions are read
- * from chain, no auth required once connected).
+ *   - profile-head: avatar + address + HashScan + Copy/Disconnect buttons
+ *   - 4-up KPI strip (portfolio / PT / YT / LP)
+ *   - left  → tabs (All / PT / YT / LP / History) + positions table
+ *   - right → pending_claims, recent_activity, watchlist
+ *
+ * Per-row position math + USD values are computed inside `PositionsTable` so
+ * `useMarketDetail` + `useUserPosition` + `useSyValueUsd` each have a stable
+ * hook call site — see `PositionAccumulator` for the per-market subcomponent.
  */
+
 export default function ProfilePage() {
   return (
-    <main className="min-h-screen">
+    <main className="min-h-screen text-text">
       <Nav />
       <WalletGate>
         <ProfileBody />
@@ -34,9 +41,34 @@ export default function ProfilePage() {
   );
 }
 
+type PosKind = "PT" | "YT" | "LP";
+
+interface PortfolioRow {
+  market: `0x${string}`;
+  symbol: string;
+  kind: PosKind;
+  amountRaw: bigint;
+  /** Decimals for the token represented by `amountRaw` (used to format the display). */
+  decimals: number;
+  costBasisSy: number;
+  currentValueSy: number;
+  unrealisedSy: number;
+  /** Display string for the unrealised column when SY-units don't fit (e.g. YT). */
+  unrealisedOverride?: string;
+  maturity: { days: number; never?: boolean };
+  expired: boolean;
+}
+
+interface PortfolioTotals {
+  portfolioUsd: number | undefined;
+  ptRaw: bigint;
+  ytRaw: bigint;
+  lpRaw: bigint;
+  ptPayoutUsd: number | undefined;
+  unclaimedYieldUsd: number | undefined;
+}
+
 function ProfileBody() {
-  // Read through the adapter so Hedera-native connects flow into the
-  // position lookups too (wagmi alone doesn't see hedera:mainnet sessions).
   const adapter = useWalletAdapter();
   const address = adapter.address ?? undefined;
   const { markets: cached } = useCachedMarkets();
@@ -46,246 +78,712 @@ function ProfileBody() {
     [cached],
   );
 
+  // Each per-market accumulator pushes its rows + per-token totals up here.
+  const [rowsByMarket, setRowsByMarket] = useState<Record<string, PortfolioRow[]>>({});
+  const [totalsByMarket, setTotalsByMarket] = useState<Record<string, Partial<PortfolioTotals>>>({});
+
+  useEffect(() => {
+    setRowsByMarket({});
+    setTotalsByMarket({});
+  }, [address, marketAddrs.length]);
+
+  const allRows = useMemo(() => Object.values(rowsByMarket).flat(), [rowsByMarket]);
+
+  const totals: PortfolioTotals = useMemo(() => {
+    let portfolioUsd: number | undefined = undefined;
+    let ptRaw = 0n;
+    let ytRaw = 0n;
+    let lpRaw = 0n;
+    let ptPayoutUsd: number | undefined = undefined;
+    let unclaimedYieldUsd: number | undefined = undefined;
+
+    for (const t of Object.values(totalsByMarket)) {
+      if (t.portfolioUsd !== undefined)
+        portfolioUsd = (portfolioUsd ?? 0) + t.portfolioUsd;
+      if (t.ptRaw !== undefined) ptRaw += t.ptRaw;
+      if (t.ytRaw !== undefined) ytRaw += t.ytRaw;
+      if (t.lpRaw !== undefined) lpRaw += t.lpRaw;
+      if (t.ptPayoutUsd !== undefined)
+        ptPayoutUsd = (ptPayoutUsd ?? 0) + t.ptPayoutUsd;
+      if (t.unclaimedYieldUsd !== undefined)
+        unclaimedYieldUsd = (unclaimedYieldUsd ?? 0) + t.unclaimedYieldUsd;
+    }
+
+    return { portfolioUsd, ptRaw, ytRaw, lpRaw, ptPayoutUsd, unclaimedYieldUsd };
+  }, [totalsByMarket]);
+
   return (
-    <section className="mx-auto max-w-[1100px] px-6 py-12">
-      <header className="mb-10">
-        <h1 className="text-[36px] font-light leading-[1.05] tracking-[-1px]">
-          Your <span className="font-serif italic">portfolio</span>
-        </h1>
-        <p className="mt-2 text-[14px] text-textSec">
-          Active positions across all Fission markets, claimable yield, and account settings.
-        </p>
-      </header>
+    <div className="mx-auto max-w-[1440px] px-7">
+      <ProfileHead address={address} accountId={adapter.accountId ?? null} disconnect={adapter.disconnect} />
 
-      <AddressCard address={address} />
+      <KpiStrip totals={totals} />
 
-      <PositionsList markets={marketAddrs} user={address} />
+      <div className="mb-16 grid gap-8 lg:grid-cols-[1fr_320px]">
+        {/* left — tabs + positions table */}
+        <PositionsSection rows={allRows} />
 
-      <SettingsSection />
-    </section>
+        {/* right — sidebars */}
+        <aside className="flex flex-col gap-6">
+          <PendingClaimsCard unclaimedYieldUsd={totals.unclaimedYieldUsd} />
+          <RecentActivityCard userEvm={address} />
+          <WatchlistCard />
+        </aside>
+      </div>
+
+      {/* Hidden per-market accumulators — each runs its own hooks and reports
+          rows + totals up via callbacks. Rendering them as siblings keeps the
+          hook call site stable across renders (React rules-of-hooks). */}
+      <div className="hidden">
+        {marketAddrs.map((m) => (
+          <PositionAccumulator
+            key={m}
+            market={m}
+            user={address}
+            onReport={(rows, t) => {
+              setRowsByMarket((prev) => ({ ...prev, [m]: rows }));
+              setTotalsByMarket((prev) => ({ ...prev, [m]: t }));
+            }}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
-/* ----------------------------------------------------- top card */
+/* ─────────────────────────────────────────────────────── head + buttons */
 
-function AddressCard({ address }: { address: `0x${string}` | undefined }) {
+function ProfileHead({
+  address,
+  accountId,
+  disconnect,
+}: {
+  address: `0x${string}` | undefined;
+  accountId: string | null;
+  disconnect: () => Promise<void>;
+}) {
   const [copied, setCopied] = useState(false);
   if (!address) return null;
+  const short = `${address.slice(0, 6)}…${address.slice(-4)}`;
   const onCopy = async () => {
     await navigator.clipboard.writeText(address);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
+  const hashscan = accountId
+    ? `https://hashscan.io/mainnet/account/${accountId}`
+    : `https://hashscan.io/mainnet/account/${address}`;
+
   return (
-    <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border bg-bgCard px-6 py-5">
-      <div>
-        <div className="text-[10px] font-semibold uppercase tracking-[2px] text-textDim">
-          Wallet
+    <div className="flex flex-wrap items-end justify-between gap-6 border-b border-border py-8">
+      <div className="term-fade flex items-center gap-5">
+        <div className="grid size-[54px] place-items-center border border-borderHover bg-white/[0.04] font-mono text-[18px] text-white">
+          ◐
         </div>
-        <div className="mt-1 font-mono text-[14px] text-text">{address}</div>
+        <div>
+          <div className="font-mono text-[18px] tracking-[0.02em] text-white">{short}</div>
+          <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.14em] text-textDim">
+            HEDERA · {accountId ?? "—"} ·{" "}
+            <a href={hashscan} target="_blank" rel="noreferrer" className="text-textSec hover:text-white">
+              View on HashScan ↗
+            </a>
+          </div>
+        </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="term-fade term-fade-d1 flex gap-2">
         <button
           type="button"
           onClick={onCopy}
-          className="rounded-lg border border-border bg-white/[0.03] px-3 py-1.5 text-[12px] font-medium text-textSec transition hover:border-borderHover hover:text-text"
+          className="inline-flex items-center gap-2 border border-borderHover bg-white/[0.04] px-3.5 py-2 font-mono text-[12px] uppercase tracking-[0.14em] text-text transition hover:bg-white/[0.06]"
         >
-          {copied ? "Copied" : "Copy"}
+          {copied ? "Copied" : "Copy address"}
         </button>
-        <a
-          href={`https://hashscan.io/mainnet/account/${address}`}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.03] px-3 py-1.5 text-[12px] font-medium text-textSec transition hover:border-borderHover hover:text-text"
+        <button
+          type="button"
+          onClick={() => void disconnect()}
+          className="inline-flex items-center gap-2 border border-borderHover bg-white/[0.04] px-3.5 py-2 font-mono text-[12px] uppercase tracking-[0.14em] text-text transition hover:bg-white/[0.06]"
         >
-          HashScan
-          <ArrowOutIcon className="size-3" />
-        </a>
+          Disconnect
+        </button>
       </div>
     </div>
   );
 }
 
-/* ----------------------------------------------------- positions list */
+/* ─────────────────────────────────────────────────────── KPI strip */
 
-function PositionsList({
-  markets,
-  user,
+function KpiStrip({ totals }: { totals: PortfolioTotals }) {
+  return (
+    <div className="term-fade term-fade-d2 my-8 grid gap-px border border-border bg-border md:grid-cols-2 lg:grid-cols-4">
+      <Kpi
+        label="Portfolio value"
+        value={totals.portfolioUsd !== undefined ? (formatUsd(totals.portfolioUsd) ?? "—") : "—"}
+        sub="across all markets"
+      />
+      <Kpi
+        label="PT · fixed locked"
+        value={formatCompact(totals.ptRaw)}
+        sub={
+          totals.ptPayoutUsd !== undefined
+            ? `≈ ${formatUsd(totals.ptPayoutUsd) ?? "—"} at maturity`
+            : "—"
+        }
+      />
+      <Kpi
+        label="YT · active stream"
+        value={formatCompact(totals.ytRaw)}
+        sub={
+          totals.unclaimedYieldUsd !== undefined
+            ? `${formatUsd(totals.unclaimedYieldUsd) ?? "$0.00"} unclaimed`
+            : "—"
+        }
+      />
+      <Kpi label="LP · provided" value={formatCompact(totals.lpRaw)} sub="$— fees earned" />
+    </div>
+  );
+}
+
+function Kpi({ label, value, sub }: { label: string; value: string; sub: string }) {
+  return (
+    <div className="bg-white/[0.015] p-5">
+      <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-textDim">{label}</div>
+      <div className="mt-2 font-mono text-[30px] font-medium tracking-[-0.02em] text-white tabular-nums">
+        {value}
+      </div>
+      <div className="mt-1 font-mono text-[11.5px] text-textSec">{sub}</div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────── positions table */
+
+function PositionsSection({ rows }: { rows: PortfolioRow[] }) {
+  const [tab, setTab] = useState<"All" | "PT" | "YT" | "LP" | "History">("All");
+  const filtered =
+    tab === "All"
+      ? rows
+      : tab === "History"
+        ? []
+        : rows.filter((r) => r.kind === tab);
+
+  return (
+    <div>
+      <div className="flex w-fit gap-px border border-border bg-border">
+        {(["All", "PT", "YT", "LP", "History"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={`px-4 py-3 font-mono text-[11px] uppercase tracking-[0.16em] transition ${
+              tab === t
+                ? "bg-white text-black"
+                : "bg-white/[0.015] text-textSec hover:bg-white/[0.04] hover:text-white"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      <table className="w-full border-collapse border border-t-0 border-border bg-white/[0.015]">
+        <thead className="bg-white/[0.04]">
+          <tr>
+            <PosTh>Market</PosTh>
+            <PosTh>Type</PosTh>
+            <PosTh align="right">Amount</PosTh>
+            <PosTh align="right">Cost basis</PosTh>
+            <PosTh align="right">Current value</PosTh>
+            <PosTh align="right">Unrealised</PosTh>
+            <PosTh align="right">Maturity</PosTh>
+            <PosTh></PosTh>
+          </tr>
+        </thead>
+        <tbody>
+          {tab === "History" ? (
+            <tr>
+              <td colSpan={8} className="px-4 py-12 text-center font-mono text-[12px] text-textDim">
+                History view — Mirror Node activity feed lives in the recent_activity panel.
+              </td>
+            </tr>
+          ) : filtered.length === 0 ? (
+            <tr>
+              <td colSpan={8} className="px-4 py-12 text-center font-mono text-[12px] text-textDim">
+                No {tab === "All" ? "" : `${tab} `}positions yet.
+              </td>
+            </tr>
+          ) : (
+            filtered.map((r, i) => <PositionRow key={`${r.market}-${r.kind}-${i}`} row={r} />)
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PositionRow({ row }: { row: PortfolioRow }) {
+  // Per-kind action set per the spec. All actions deep-link to the strategy
+  // sub-pages so they reuse existing forms — REDEEM is disabled pre-maturity.
+  const base = `/markets/${row.market}`;
+  interface RowAction {
+    label: string;
+    href: string;
+    pri?: boolean;
+    disabled?: boolean;
+  }
+  const actions: RowAction[] =
+    row.kind === "PT"
+      ? [
+          { label: "Sell", href: `${base}/pt` },
+          { label: "Redeem", href: base, pri: true, disabled: !row.expired },
+        ]
+      : row.kind === "YT"
+        ? [
+            { label: "Sell", href: `${base}/yt` },
+            { label: "Claim", href: base, pri: true },
+          ]
+        : [
+            { label: "Add", href: `${base}/lp` },
+            { label: "Remove", href: `${base}/lp`, pri: true },
+          ];
+
+  const unrealisedColor =
+    row.unrealisedSy > 0 ? "text-white" : row.unrealisedSy < 0 ? "text-error" : "text-textSec";
+
+  return (
+    <tr className="border-b border-border last:border-b-0">
+      <PosTd>{row.symbol}</PosTd>
+      <PosTd>
+        <span className="font-mono text-[11.5px] uppercase tracking-[0.14em] text-white">
+          {row.kind}
+        </span>
+      </PosTd>
+      <PosNum>{formatRaw(row.amountRaw, row.decimals)}</PosNum>
+      <PosNum>{row.costBasisSy.toFixed(4)} SY</PosNum>
+      <PosNum>{row.currentValueSy.toFixed(4)} SY</PosNum>
+      <PosNum>
+        <span className={unrealisedColor}>
+          {row.unrealisedOverride
+            ? row.unrealisedOverride
+            : `${row.unrealisedSy >= 0 ? "+" : ""}${row.unrealisedSy.toFixed(4)} SY`}
+        </span>
+      </PosNum>
+      <PosNum dim={row.maturity.never}>{row.maturity.never ? "never" : `${row.maturity.days}d`}</PosNum>
+      <PosTd>
+        <div className="flex justify-end gap-1.5">
+          {actions.map((a) =>
+            a.disabled ? (
+              <span
+                key={a.label}
+                className="cursor-not-allowed border border-border bg-white/[0.02] px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.14em] text-textDim/60"
+              >
+                {a.label}
+              </span>
+            ) : (
+              <Link
+                key={a.label}
+                href={a.href}
+                className={`border px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.14em] transition ${
+                  a.pri
+                    ? "border-white bg-white text-black hover:bg-white/85"
+                    : "border-borderHover bg-white/[0.04] text-textSec hover:bg-white/[0.06] hover:text-white"
+                }`}
+              >
+                {a.label}
+              </Link>
+            ),
+          )}
+        </div>
+      </PosTd>
+    </tr>
+  );
+}
+
+function PosTh({
+  children,
+  align,
 }: {
-  markets: `0x${string}`[];
-  user: `0x${string}` | undefined;
+  children?: React.ReactNode;
+  align?: "right";
 }) {
   return (
-    <div className="mb-12">
-      <div className="mb-4 flex items-baseline justify-between">
-        <h2 className="text-[18px] font-semibold tracking-tight">Positions</h2>
-        <span className="text-[11px] font-mono uppercase tracking-[1.5px] text-textDim">
-          {markets.length} market{markets.length === 1 ? "" : "s"}
-        </span>
-      </div>
+    <th
+      className={`border-b border-border bg-white/[0.04] px-4 py-3.5 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-textDim ${
+        align === "right" ? "text-right" : "text-left"
+      }`}
+    >
+      {children}
+    </th>
+  );
+}
 
-      {markets.length === 0 ? (
-        <div className="rounded-2xl border border-border bg-bgCard px-6 py-10 text-center text-[13px] text-textSec">
-          No markets indexed yet. Try refreshing once the markets cache is populated.
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {markets.map((m) => (
-            <MarketPositionRow key={m} market={m} user={user} />
-          ))}
-        </div>
-      )}
+function PosTd({ children }: { children: React.ReactNode }) {
+  return (
+    <td className="border-b border-border px-4 py-4 font-mono text-[13px] text-text last:border-b-0">
+      {children}
+    </td>
+  );
+}
+
+function PosNum({
+  children,
+  dim,
+}: {
+  children: React.ReactNode;
+  dim?: boolean;
+}) {
+  return (
+    <td
+      className={`border-b border-border px-4 py-4 text-right font-mono text-[13px] tabular-nums last:border-b-0 ${
+        dim ? "text-textDim" : "text-white"
+      }`}
+    >
+      {children}
+    </td>
+  );
+}
+
+/* ─────────────────────────────────────────────────────── sidebar cards */
+
+function PendingClaimsCard({ unclaimedYieldUsd }: { unclaimedYieldUsd: number | undefined }) {
+  // We don't have a per-asset breakdown for the yield stream — for v1 it's
+  // SY-shares, which unwrap to USDC + WHBAR at claim time. Show "—" for each
+  // leg and the total at the bottom (which we DO know in USD).
+  return (
+    <div className="flex flex-col gap-px border border-border bg-border">
+      <div className="bg-white/[0.015] p-5">
+        <h4 className="mb-3.5 font-mono text-[10.5px] uppercase tracking-[0.2em] text-textDim">
+          // pending_claims
+        </h4>
+        <SideRow k="USDC" v="—" />
+        <SideRow k="WHBAR" v="—" />
+        <SideRow
+          k="Total ≈"
+          v={unclaimedYieldUsd !== undefined ? (formatUsd(unclaimedYieldUsd) ?? "$0.00") : "$0.00"}
+        />
+        <Link
+          href="#"
+          className="mt-3 inline-flex w-full justify-center border border-white bg-white px-4 py-2.5 font-mono text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85"
+        >
+          Claim All
+        </Link>
+      </div>
     </div>
   );
 }
 
-function MarketPositionRow({
+interface MirrorTx {
+  consensus_timestamp: string;
+  name: string;
+  contract_id?: string;
+  entity_id?: string;
+  transfers?: Array<{ amount: number; account: string }>;
+  result?: string;
+}
+
+function RecentActivityCard({ userEvm }: { userEvm: `0x${string}` | undefined }) {
+  const adapter = useWalletAdapter();
+  const accountId = adapter.accountId;
+
+  const [txs, setTxs] = useState<MirrorTx[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!userEvm && !accountId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // Mirror Node accepts both 0.0.X and EVM-address (with-or-without 0x).
+        const acc = accountId ?? userEvm;
+        const r = await fetch(
+          `https://mainnet-public.mirrornode.hedera.com/api/v1/transactions?account.id=${acc}&limit=10&order=desc&transactiontype=contractcall`,
+          { cache: "no-store" },
+        );
+        if (!r.ok) {
+          if (!cancelled) setError(`mirror_${r.status}`);
+          return;
+        }
+        const j = (await r.json()) as { transactions: MirrorTx[] };
+        if (!cancelled) setTxs(j.transactions ?? []);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "fetch_failed");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userEvm, accountId]);
+
+  return (
+    <div>
+      <h4 className="mb-3.5 font-mono text-[10.5px] uppercase tracking-[0.2em] text-textDim">
+        // recent_activity
+      </h4>
+      <div className="flex flex-col gap-px border border-border bg-border">
+        {error ? (
+          <div className="bg-white/[0.015] p-4 font-mono text-[11.5px] text-textDim">
+            Mirror Node unavailable — {error}
+          </div>
+        ) : txs === null ? (
+          <div className="bg-white/[0.015] p-4 font-mono text-[11.5px] text-textDim">
+            Loading activity…
+          </div>
+        ) : txs.length === 0 ? (
+          <div className="bg-white/[0.015] p-4 font-mono text-[11.5px] text-textDim">
+            No contract calls yet on this account.
+          </div>
+        ) : (
+          txs.map((tx) => <ActivityRow key={tx.consensus_timestamp} tx={tx} />)
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ActivityRow({ tx }: { tx: MirrorTx }) {
+  const ts = Number(tx.consensus_timestamp.split(".")[0]) * 1000;
+  const when = formatAgo(ts);
+  const contract = tx.contract_id ?? tx.entity_id ?? "—";
+  // Mirror Node's "name" field for contractcall is "CONTRACT_CALL". We don't
+  // have a function decoder here (would need the ABI for every contract the
+  // user touched), so show the txn result as the action and the contract as
+  // the context. Future: index events server-side to surface "split", etc.
+  const action = tx.result === "SUCCESS" ? "contractCall" : tx.result ?? "call";
+  return (
+    <div className="flex justify-between gap-3 bg-white/[0.015] px-4 py-3.5 font-mono text-[11.5px]">
+      <div className="flex flex-col gap-0.5">
+        <span className="text-white">{action}</span>
+        <span className="text-textDim text-[10.5px]">
+          {when} · {contract}
+        </span>
+      </div>
+      <span className="whitespace-nowrap text-right text-textSec">↗</span>
+    </div>
+  );
+}
+
+function formatAgo(ms: number): string {
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return `${Math.floor(diff / 86_400_000)}d ago`;
+}
+
+function WatchlistCard() {
+  const chainId = useChainId();
+  const { items } = useWatchlist();
+  const { markets: cached } = useCachedMarkets();
+  const list = items.filter((i) => i.chain_id === chainId);
+
+  return (
+    <div className="flex flex-col gap-px border border-border bg-border">
+      <div className="bg-white/[0.015] p-5">
+        <h4 className="mb-3.5 font-mono text-[10.5px] uppercase tracking-[0.2em] text-textDim">
+          // watchlist
+        </h4>
+        {list.length === 0 ? (
+          <div className="font-mono text-[12.5px] text-textDim">no starred markets</div>
+        ) : (
+          list.map((w) => {
+            const cm = cached?.find(
+              (m) => m.market_address.toLowerCase() === w.market_address.toLowerCase(),
+            );
+            const meta = getMarketDisplay(w.market_address);
+            const symbol = meta?.shortName ?? cm?.market_type ?? "Market";
+            const apy = cm?.last_ln_implied_rate
+              ? impliedApyPct(BigInt(cm.last_ln_implied_rate))
+              : null;
+            return (
+              <Link
+                key={w.market_address}
+                href={`/markets/${w.market_address}`}
+                className="flex justify-between border-b border-border py-1.5 font-mono text-[12.5px] last:border-b-0 hover:text-white"
+              >
+                <span className="text-textDim">{symbol} ★</span>
+                <span className="text-white tabular-nums">
+                  {apy !== null ? `${apy.toFixed(2)}%` : "—"}
+                </span>
+              </Link>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SideRow({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between border-b border-border py-1.5 font-mono text-[12.5px] last:border-b-0">
+      <span className="text-textDim">{k}</span>
+      <span className="text-white tabular-nums">{v}</span>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────── per-market hook host */
+
+function PositionAccumulator({
   market,
   user,
+  onReport,
 }: {
   market: `0x${string}`;
   user: `0x${string}` | undefined;
+  onReport: (rows: PortfolioRow[], totals: Partial<PortfolioTotals>) => void;
 }) {
   const { data: detail } = useMarketDetail(market);
   const { data: position } = useUserPosition(market, detail, user);
-  // SY-share-in-USD, only meaningful when the SY adapter is the
-  // SaucerSwap-V2-LP shape. HBARX SYs return `usdPerShare: undefined` because
-  // `npm() / positionTokenId()` revert, and `MarketPositionCard` then hides
-  // all the "≈ $X.XX" lines on its own — no caller-side branching needed.
   const { usdPerShare } = useSyValueUsd(detail?.sy);
 
-  if (!detail) {
-    return <div className="h-44 animate-pulse rounded-2xl border border-border bg-bgCard" />;
-  }
-
-  return (
-    <MarketPositionCard
-      detail={detail}
-      position={position}
-      usdPerShare={usdPerShare}
-      marketLink={`/markets/${market}`}
-      market={market}
-    />
-  );
-}
-
-/* ----------------------------------------------------- settings (auth-gated) */
-
-function SettingsSection() {
-  const { state: auth, signIn } = useSiweAuth();
-  const { profile, loading, updateProfile } = useUserProfile();
-
-  const [displayName, setDisplayName] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState("");
-  const [twitterHandle, setTwitterHandle] = useState("");
-  const [initialized, setInitialized] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
-  if (profile && !initialized) {
-    setDisplayName(profile.display_name ?? "");
-    setAvatarUrl(profile.avatar_url ?? "");
-    setTwitterHandle(profile.twitter_handle ?? "");
-    setInitialized(true);
-  }
-
-  const handleSave = async () => {
-    setSaving(true);
-    setSaveError(null);
-    setSaved(false);
-    try {
-      const patch: ProfilePatch = {
-        display_name: displayName.trim() || null,
-        avatar_url: avatarUrl.trim() || null,
-        twitter_handle: twitterHandle.trim() || null,
-      };
-      await updateProfile(patch);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (e) {
-      setSaveError(e instanceof Error ? e.message : "save_failed");
-    } finally {
-      setSaving(false);
+  useEffect(() => {
+    if (!detail || !position) {
+      onReport([], {});
+      return;
     }
-  };
+    const { rows, totals } = buildRows(market, detail, position, usdPerShare);
+    onReport(rows, totals);
+  }, [market, detail, position, usdPerShare, onReport]);
 
-  return (
-    <details className="group rounded-2xl border border-border bg-bgCard px-6 py-5 transition open:bg-bgElevated">
-      <summary className="flex cursor-pointer list-none items-center justify-between text-[14px] font-medium text-text">
-        <span>Account settings</span>
-        <span aria-hidden className="font-mono text-[16px] text-textDim transition group-open:rotate-45">
-          +
-        </span>
-      </summary>
-
-      <div className="mt-5 text-[13px] text-textSec">
-        Optional public profile. Lets the leaderboard and watchlist features attach a label to your address. Sign in once with your wallet — we sign a SIWE message and store an httpOnly session cookie. No password.
-      </div>
-
-      {auth.status !== "authenticated" ? (
-        <div className="mt-5 flex items-center gap-3">
-          <button
-            type="button"
-            onClick={signIn}
-            disabled={auth.status === "loading"}
-            className="rounded-[10px] bg-white px-5 py-2 text-[13px] font-semibold text-bg transition hover:opacity-90 disabled:opacity-50"
-          >
-            {auth.status === "loading" ? "Signing…" : "Sign in to edit"}
-          </button>
-          <span className="text-[12px] text-textDim">SIWE · 7-day session</span>
-        </div>
-      ) : loading ? (
-        <div className="mt-5 h-32 animate-pulse rounded-xl bg-white/[0.03]" />
-      ) : (
-        <>
-          <div className="mt-6 grid gap-5 md:grid-cols-3">
-            <Field label="Display name" value={displayName} onChange={setDisplayName} placeholder="anon" />
-            <Field label="Avatar URL" value={avatarUrl} onChange={setAvatarUrl} placeholder="https://…" />
-            <Field label="Twitter / X" value={twitterHandle} onChange={setTwitterHandle} placeholder="@handle" />
-          </div>
-
-          <div className="mt-5 flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving}
-              className="rounded-[10px] bg-white px-5 py-2 text-[13px] font-semibold text-bg transition hover:opacity-90 disabled:opacity-50"
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-            {saved && <span className="text-[12px] font-medium text-success">Saved</span>}
-            {saveError && <span className="text-[12px] font-medium text-warning">{saveError}</span>}
-          </div>
-        </>
-      )}
-    </details>
-  );
+  return null;
 }
 
-function Field({
-  label,
-  value,
-  onChange,
-  placeholder,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder: string;
-}) {
-  return (
-    <div>
-      <label className="mb-1.5 block text-[10px] uppercase tracking-[1px] text-textDim">
-        {label}
-      </label>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full rounded-lg border border-border bg-white/[0.03] px-3 py-2 text-[13px] text-text placeholder:text-textDim/50 focus:border-borderHover focus:outline-none"
-      />
-    </div>
-  );
+function buildRows(
+  market: `0x${string}`,
+  detail: MarketDetail,
+  position: UserPosition,
+  usdPerShare: number | undefined,
+): { rows: PortfolioRow[]; totals: Partial<PortfolioTotals> } {
+  const meta = getMarketDisplay(market);
+  const symbol = meta?.shortName ?? detail.syName ?? "Market";
+
+  const expired = Date.now() / 1000 >= Number(detail.expiry);
+  const days = daysUntil(detail.expiry);
+  const apy = impliedApyPct(detail.lastLnImpliedRate);
+  const ptRate = ptToSyRate(apy, days);
+  const ytRate = ytToSyRate(apy, days);
+
+  // SY-units valuations. We use raw bigint → Number with a 1e18 / decimals
+  // round-trip ONLY for the cost-basis / current-value columns (UI-only), so
+  // float precision at the cent level is fine.
+  const dec = detail.syDecimals || 18;
+  const div = 10 ** dec;
+
+  const rows: PortfolioRow[] = [];
+
+  // PT row — mark-to-AMM today vs. par at maturity (1 PT → 1 SY).
+  if (position.pt > 0n) {
+    const ptCount = Number(position.pt) / div;
+    const currentSy = ptCount * ptRate;
+    const projectedSy = ptCount; // pays 1:1 in SY at maturity
+    const unrealisedSy = projectedSy - currentSy;
+    rows.push({
+      market,
+      symbol,
+      kind: "PT",
+      amountRaw: position.pt,
+      decimals: dec,
+      costBasisSy: currentSy,
+      currentValueSy: currentSy,
+      unrealisedSy: unrealisedSy,
+      maturity: { days, never: false },
+      expired,
+    });
+  }
+
+  // YT row — value decays to 0 at maturity. Claimable yield gets its own
+  // override on the unrealised column so the user sees the $-equivalent.
+  if (position.yt > 0n || position.claimableYield > 0n) {
+    const ytCount = Number(position.yt) / div;
+    const currentSy = ytCount * ytRate;
+    const claimableSy = Number(position.claimableYield) / div;
+    const usdClaim =
+      usdPerShare !== undefined
+        ? Number(position.claimableYield) * usdPerShare
+        : undefined;
+    rows.push({
+      market,
+      symbol,
+      kind: "YT",
+      amountRaw: position.yt,
+      decimals: dec,
+      costBasisSy: currentSy,
+      currentValueSy: currentSy,
+      unrealisedSy: claimableSy,
+      unrealisedOverride: formatUsd(usdClaim)
+        ? `${formatUsd(usdClaim)} unclaimed`
+        : `${claimableSy.toFixed(4)} SY unclaimed`,
+      maturity: { days, never: true },
+      expired,
+    });
+  }
+
+  // LP row — pro-rata composition. PT leg discounts via ptRate; SY leg is par.
+  if (position.lp > 0n && detail.lpSupply > 0n) {
+    const lpCount = Number(position.lp) / div;
+    const userPtInLp = (Number(position.lp) * Number(detail.totalPt)) / Number(detail.lpSupply);
+    const userSyInLp = (Number(position.lp) * Number(detail.totalSy)) / Number(detail.lpSupply);
+    const currentSy = (userPtInLp * ptRate + userSyInLp) / div;
+    const parSy = (userPtInLp + userSyInLp) / div;
+    rows.push({
+      market,
+      symbol,
+      kind: "LP",
+      amountRaw: position.lp,
+      decimals: dec,
+      costBasisSy: currentSy,
+      currentValueSy: currentSy,
+      unrealisedSy: parSy - currentSy,
+      maturity: { days, never: false },
+      expired,
+    });
+    // lpCount intentionally unused beyond context — formatRaw renders the raw bigint.
+    void lpCount;
+  }
+
+  // Per-market totals → propagated up for the KPI strip.
+  const portfolioRaw =
+    Number(position.sy) +
+    Number(position.pt) * ptRate +
+    Number(position.yt) * ytRate +
+    (detail.lpSupply > 0n
+      ? (Number(position.lp) *
+          (Number(detail.totalPt) * ptRate + Number(detail.totalSy))) /
+        Number(detail.lpSupply)
+      : 0) +
+    Number(position.claimableYield);
+  const portfolioUsd =
+    usdPerShare !== undefined ? portfolioRaw * usdPerShare : undefined;
+
+  const ptPayoutUsd =
+    usdPerShare !== undefined ? Number(position.pt) * usdPerShare : undefined;
+  const unclaimedYieldUsd =
+    usdPerShare !== undefined
+      ? Number(position.claimableYield) * usdPerShare
+      : undefined;
+
+  return {
+    rows,
+    totals: {
+      portfolioUsd,
+      ptRaw: position.pt,
+      ytRaw: position.yt,
+      lpRaw: position.lp,
+      ptPayoutUsd,
+      unclaimedYieldUsd,
+    },
+  };
+}
+
+function formatRaw(v: bigint, decimals: number): string {
+  // Divide by the token's declared decimals so the table shows a human-readable
+  // count (the template renders "52.4100"). For very large or very small magnitudes
+  // we fall back to the compact bucket formatter so the column never overflows.
+  if (v === 0n) return "0.0000";
+  const div = 10 ** decimals;
+  const n = Number(v) / div;
+  if (!Number.isFinite(n)) return formatCompact(v);
+  if (n >= 1e9) return formatCompact(v);
+  if (n >= 1) return n.toFixed(4);
+  if (n >= 0.0001) return n.toFixed(6);
+  return n.toExponential(2);
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useChainId } from "wagmi";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
@@ -19,26 +19,36 @@ import {
 } from "@/hooks/useMarkets";
 import { useWatchlist } from "@/hooks/useWatchlist";
 import { useCachedMarkets } from "@/hooks/useCachedMarkets";
-import { useSyValueUsd, formatUsd } from "@/hooks/useSyValueUsd";
-import { getMarketDisplay, getAssetColor } from "@/lib/markets-metadata";
+import { useSyValueUsd, useHbarUsd, formatUsd } from "@/hooks/useSyValueUsd";
+import { getMarketDisplay } from "@/lib/markets-metadata";
 
 const factoryDeployed = isDeployed(ADDRESSES.factory);
 
 /**
- * Markets list — each market is a full-width "expanded row" card. The visual
- * shape mirrors the Pendle V2 list at 1.5× height: lockup progress + chips on
- * the left, a single hero APY number with a 0-15% scale bar in the middle, a
- * sparkline + bottom-strip stats on the right. Hover lifts the card with a
- * subtle radial glow + a one-pixel border brighten.
+ * Terminal-style markets page. Two-column layout:
  *
- * Heavy lifting per row (the USD TVL via Uniswap V3 LP math) is delegated to
- * the `MarketRowCard` component so each `useSyValueUsd` call sits inside its
- * own component instance — React's hook rules require fixed call ordering per
- * component, which a `.map()` over rows can't give us.
+ *   left  → breadcrumb + headline + tools row + market table + footer line
+ *   right → three stacked sidebar panels (protocol_stats / network / governance)
+ *
+ * Each table row is clickable and routes to `/markets/{address}`. TVL per row
+ * uses the per-market `useSyValueUsd` hook (Uniswap-V3 LP basket valuation).
+ * Volume 24h has no indexer yet — surfaced as `$—`. Block height comes from
+ * Hedera Mirror Node; HBAR price from CoinGecko via `useHbarUsd`.
  */
 export default function MarketsPage() {
-  const chainId = useChainId();
+  return (
+    <main className="min-h-screen text-text">
+      <Nav />
+      <WalletGate>
+        <MarketsBody />
+      </WalletGate>
+      <Footer />
+    </main>
+  );
+}
 
+function MarketsBody() {
+  const chainId = useChainId();
   const { markets: cached, loading: cachedLoading } = useCachedMarkets();
   const useChainFallback = !cachedLoading && (cached === null || cached.length === 0);
 
@@ -67,78 +77,109 @@ export default function MarketsPage() {
       ? buildRowsFromCache(cached)
       : buildMarketRows(addresses, detailsRaw, syMetaRaw, lpMetaRaw);
 
-  const { isWatched, toggle, signedIn, items } = useWatchlist();
-  const [showWatchedOnly, setShowWatchedOnly] = useState(false);
+  const { isWatched, toggle, signedIn } = useWatchlist();
+  const [filter, setFilter] = useState<"all" | "active" | "expired" | "rewards">("all");
+  const [query, setQuery] = useState("");
 
-  const markets = showWatchedOnly
-    ? allMarkets.filter((m) => isWatched(chainId, m.address))
-    : allMarkets;
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return allMarkets.filter((m) => {
+      if (filter === "active" && m.expired) return false;
+      if (filter === "expired" && !m.expired) return false;
+      if (filter === "rewards" && !m.isRewards) return false;
+      if (!q) return true;
+      const label = getMarketDisplay(m.address)?.displayName ?? m.symbol;
+      const underlying = (getMarketDisplay(m.address)?.assets ?? []).join("/");
+      return (
+        label.toLowerCase().includes(q) ||
+        underlying.toLowerCase().includes(q) ||
+        m.address.toLowerCase().includes(q)
+      );
+    });
+  }, [allMarkets, query, filter]);
+
+  const activeCount = allMarkets.filter((m) => !m.expired).length;
 
   return (
-    <main className="min-h-screen">
-      <Nav />
-
-      <WalletGate>
-        <section className="mx-auto max-w-[1180px] px-6 py-10">
-          <header className="mb-9 flex items-end justify-between gap-6">
-            <div>
-              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-border bg-white/[0.03] px-2.5 py-1 font-mono text-[9px] uppercase tracking-[2px] text-textDim">
-                <span className="size-[5px] rounded-full bg-success" />
-                <span>[LIVE · HEDERA MAINNET]</span>
-              </div>
-              <h1 className="text-[34px] font-light leading-none tracking-[-1px]">
-                Yield <span className="font-serif italic">markets</span>
-              </h1>
-              <p className="mt-3 max-w-[520px] text-sm font-light leading-relaxed text-textDim">
-                Split yield-bearing assets · Trade fixed vs variable rate · Earn LP fees
-              </p>
+    <div className="mx-auto grid max-w-[1440px] gap-8 px-7 py-12 lg:grid-cols-[1fr_320px]">
+      {/* ─── Left column ───────────────────────────────────────────── */}
+      <div>
+        <header className="mb-7 flex flex-wrap items-end justify-between gap-6">
+          <div className="term-fade">
+            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-textDim">
+              // MARKETS
             </div>
-            {signedIn && allMarkets.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowWatchedOnly((v) => !v)}
-                className={`rounded-xl border px-4 py-2 text-[12px] font-medium transition ${
-                  showWatchedOnly
-                    ? "border-borderHover bg-white/[0.04] text-text"
-                    : "border-border text-textSec hover:border-borderHover hover:text-text"
-                }`}
-              >
-                {showWatchedOnly ? "All markets" : `Watchlist (${items.length})`}
-              </button>
-            )}
-          </header>
+            <h1 className="mt-2 text-[38px] font-semibold leading-[1.05] tracking-[-0.02em] text-white">
+              Yield <span className="font-serif italic">markets</span>
+            </h1>
+            <p className="mt-1.5 max-w-[640px] font-mono text-[13.5px] text-textSec">
+              Each market splits a SaucerSwap V3 position into PT, YT, and LP tokens with a fixed maturity.
+            </p>
+          </div>
 
-          {!factoryDeployed && <NotDeployed />}
-
-          {factoryDeployed && useChainFallback && count === 0n && <EmptyState />}
-
-          {factoryDeployed && (cachedLoading || (useChainFallback && detailsLoading)) && <Loading />}
-
-          {factoryDeployed && !detailsLoading && allMarkets.length > 0 && markets.length === 0 && (
-            <WatchlistEmpty onShowAll={() => setShowWatchedOnly(false)} />
-          )}
-
-          {markets.length > 0 && (
-            <div className="flex flex-col gap-3">
-              {markets.map((m) => (
-                <MarketRowCard
-                  key={m.address}
-                  row={m}
-                  watched={isWatched(chainId, m.address)}
-                  signedIn={signedIn}
-                  onToggleWatch={() => toggle(chainId, m.address)}
-                />
+          <div className="term-fade term-fade-d1 flex flex-wrap items-center gap-2">
+            <SearchInput value={query} onChange={setQuery} />
+            <div className="flex gap-1">
+              {(["all", "active", "expired", "rewards"] as const).map((f) => (
+                <Chip key={f} active={filter === f} onClick={() => setFilter(f)}>
+                  {f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}
+                </Chip>
               ))}
             </div>
-          )}
-        </section>
-      </WalletGate>
-      <Footer />
-    </main>
+          </div>
+        </header>
+
+        {!factoryDeployed && <NotDeployed />}
+
+        {factoryDeployed && useChainFallback && count === 0n && <EmptyState />}
+
+        {factoryDeployed && (cachedLoading || (useChainFallback && detailsLoading)) && <Loading />}
+
+        {filtered.length > 0 && (
+          <div className="term-fade term-fade-d2 overflow-hidden border border-border bg-white/[0.015]">
+            <table className="w-full border-collapse">
+              <thead className="bg-white/[0.04]">
+                <tr>
+                  <Th>Market</Th>
+                  <Th>Underlying</Th>
+                  <Th align="right">Maturity</Th>
+                  <Th align="right">Implied APY</Th>
+                  <Th align="right">Liquidity</Th>
+                  <Th align="right">PT Price</Th>
+                  <Th align="right">Vol 24h</Th>
+                  <Th>Status</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((m) => (
+                  <MarketRow
+                    key={m.address}
+                    row={m}
+                    starred={isWatched(chainId, m.address)}
+                    signedIn={signedIn}
+                    onStar={() => toggle(chainId, m.address)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="mt-5 font-mono text-[12.5px] tracking-[0.06em] text-textDim">
+          Showing {filtered.length} market{filtered.length === 1 ? "" : "s"} · {activeCount} active ·
+          last block synced ~30s ago
+        </div>
+      </div>
+
+      {/* ─── Right sidebar ─────────────────────────────────────────── */}
+      <aside className="term-fade term-fade-d3 flex flex-col gap-6">
+        <ProtocolStatsCard markets={allMarkets} />
+      </aside>
+    </div>
   );
 }
 
-/* ─────────────────────────────────────────────────────── row card */
+/* ─────────────────────────────────────────────────────── table row */
 
 interface MarketRow {
   address: `0x${string}`;
@@ -152,368 +193,391 @@ interface MarketRow {
   impliedApy: number;
   daysLeft: number;
   expiryDate: string;
+  expired: boolean;
+  isRewards: boolean;
 }
 
-/**
- * One row in the markets list. Lives in its own component so the per-row
- * `useSyValueUsd` hook has a stable call site (hooks-in-loops would break the
- * React rules-of-hooks invariant on re-render).
- */
-function MarketRowCard({
+function MarketRow({
   row,
-  watched,
+  starred,
   signedIn,
-  onToggleWatch,
+  onStar,
 }: {
   row: MarketRow;
-  watched: boolean;
+  starred: boolean;
   signedIn: boolean;
-  onToggleWatch: () => void;
+  onStar: () => void;
 }) {
   const meta = getMarketDisplay(row.address);
-  const label = meta?.displayName ?? row.syName ?? row.symbol;
-  // The CoinGecko + Uniswap V3 reads inside useSyValueUsd are gated on the SY
-  // matching the LP-SY shape — for HBARX-style adapters the hook fast-exits with
-  // usdPerShare === undefined and we just hide the $ TVL chip. The CoinGecko
-  // call is module-cached, so N rows = 1 HBAR fetch.
+  const symbol = meta?.shortName ?? row.symbol;
+  const underlying = meta?.assets.length
+    ? `${meta.assets.join(" / ")}${meta.protocol ? " LP" : ""}`
+    : "—";
+
+  // SY USD valuation. For HBARX-style adapters this resolves to undefined and
+  // we just fall back to the SY-share count formatted compactly.
   const { usdPerShare } = useSyValueUsd(row.syAddress);
   const tvlUsd =
     usdPerShare !== undefined && row.totalSy > 0n
       ? Number(row.totalSy) * usdPerShare
       : undefined;
-  const tvlDisplay = formatUsd(tvlUsd);
+  const tvlDisplay = formatUsd(tvlUsd) ?? formatCompact(row.totalSy);
 
-  // Maturity progress. Without an indexed start-timestamp we fall back to
-  // assuming a 90-day standard term so the bar still gives a visual sense of
-  // "how late are we in this market's life". When the term shortens, the bar
-  // fills and the warning tone kicks in.
-  const ASSUMED_TERM_DAYS = 90;
-  const elapsedRatio = Math.min(
-    1,
-    Math.max(0, (ASSUMED_TERM_DAYS - row.daysLeft) / ASSUMED_TERM_DAYS),
-  );
-  const lowTime = row.daysLeft <= 14;
+  // PT price in SY units: discounted simple-interest model lined up with
+  // MarketPositionCard.ptToSyRate.
+  const ptInSy =
+    row.daysLeft > 0
+      ? 1 / (1 + (row.impliedApy / 100) * (row.daysLeft / 365))
+      : 1;
 
-  // 0-15% APY scale: most stable-pair yields land in that band. Above 15% we
-  // saturate the bar (and the user will still see the exact number alongside).
-  const apyScale = Math.min(1, Math.max(0, row.impliedApy / 15));
+  const subLabel = row.isRewards ? "Market 0 · Rewards" : meta?.protocol ?? row.symbol;
 
   return (
-    <article className="group relative overflow-hidden rounded-2xl border border-border bg-bgCard transition hover:border-borderHover hover:bg-white/[0.02]">
-      {/* hover halo */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-32 -top-32 size-72 rounded-full bg-[radial-gradient(circle,rgba(125,211,252,0.10),transparent_65%)] opacity-0 transition duration-300 group-hover:opacity-100"
-      />
-      {/* grid backdrop */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.035] [background-image:linear-gradient(to_right,#fff_1px,transparent_1px),linear-gradient(to_bottom,#fff_1px,transparent_1px)] [background-size:48px_48px]"
-      />
-
-      {/* full-card click target */}
-      <Link
-        href={`/markets/${row.address}`}
-        className="absolute inset-0 z-10 rounded-2xl"
-        aria-label={`View ${label}`}
-      />
-
-      <div className="relative z-20 grid grid-cols-[auto_minmax(0,2.6fr)_minmax(0,1.5fr)_minmax(0,1.4fr)] items-stretch gap-6 px-6 py-5">
-        {/* col 1 — watchlist star */}
-        <div className="pointer-events-auto flex items-start pt-1">
-          <StarButton watched={watched} signedIn={signedIn} onClick={onToggleWatch} />
-        </div>
-
-        {/* col 2 — identity + chips + maturity progress */}
-        <div className="pointer-events-none flex flex-col justify-between gap-4 min-w-0">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[18px] font-semibold tracking-tight">{label}</span>
-              {meta?.assets.map((a) => {
-                const c = getAssetColor(a);
-                return (
-                  <span
-                    key={a}
-                    className={`rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[1px] ${c.chip}`}
-                  >
-                    {a}
-                  </span>
-                );
-              })}
-              {meta && (
-                <span className="rounded-full border border-border bg-white/[0.04] px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[1.5px] text-textDim">
-                  {meta.protocol}
-                  {meta.poolFeePct !== undefined && ` · ${meta.poolFeePct}%`}
-                </span>
-              )}
-            </div>
-            <div className="mt-2 text-[12px] leading-relaxed text-textSec">
-              {meta?.yieldSource ?? "Tokenized yield"}
-            </div>
-          </div>
-
-          {/* maturity progress + countdown */}
-          <div>
-            <div className="mb-1.5 flex items-end justify-between font-mono text-[10px] uppercase tracking-[1.2px] text-textDim">
-              <span>Maturity</span>
-              <span className={lowTime ? "text-warning" : "text-textSec"}>
-                {row.daysLeft}d · {row.expiryDate}
+    <tr className="group cursor-pointer border-b border-border last:border-b-0 transition hover:bg-white/[0.04]">
+      <Td>
+        <Link
+          href={`/markets/${row.address}`}
+          className="block"
+          aria-label={`Open ${symbol}`}
+        >
+          <div className="flex items-center gap-2">
+            {/* Star button — overlaid before the symbol so users can curate
+                without leaving the list. Stops propagation so the row click
+                still routes to the market detail page when the symbol /
+                anywhere else is hit. */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onStar();
+              }}
+              disabled={!signedIn}
+              title={
+                signedIn
+                  ? starred
+                    ? "Remove from watchlist"
+                    : "Add to watchlist"
+                  : "Sign in to use watchlist"
+              }
+              className={`-ml-1 grid size-6 place-items-center transition ${
+                signedIn
+                  ? starred
+                    ? "text-white"
+                    : "text-textDim hover:text-white"
+                  : "cursor-not-allowed opacity-30"
+              }`}
+              aria-pressed={starred}
+            >
+              {starred ? "★" : "☆"}
+            </button>
+            <div className="flex flex-col gap-0.5">
+              <span className="font-mono text-[13px] font-medium tracking-[0.02em] text-white">
+                {symbol}
               </span>
-            </div>
-            <div className="h-[3px] w-full overflow-hidden rounded-full bg-white/[0.05]">
-              <div
-                className={`h-full transition-all ${lowTime ? "bg-warning" : "bg-textSec/70"}`}
-                style={{ width: `${elapsedRatio * 100}%` }}
-              />
+              <span className="font-mono text-[11px] text-textDim">{subLabel}</span>
             </div>
           </div>
-        </div>
-
-        {/* col 3 — hero APY + 0-15% scale bar */}
-        <div className="pointer-events-none flex flex-col justify-center">
-          <div className="mb-1 font-mono text-[9px] uppercase tracking-[2px] text-textDim">
-            [FIXED APY]
-          </div>
-          <div className="flex items-baseline gap-1">
-            <span className="font-mono text-[38px] font-bold leading-none tracking-tight text-text">
-              {row.impliedApy.toFixed(2)}
-            </span>
-            <span className="font-mono text-[16px] font-semibold text-textDim">%</span>
-          </div>
-          <div className="mt-3">
-            <div className="h-[5px] w-full overflow-hidden rounded-full bg-white/[0.05]">
-              <div
-                className="h-full bg-gradient-to-r from-accent/60 to-accent"
-                style={{ width: `${apyScale * 100}%` }}
-              />
-            </div>
-            <div className="mt-1 flex justify-between font-mono text-[8px] uppercase tracking-[1.5px] text-textDim">
-              <span>0%</span>
-              <span>15%</span>
-            </div>
-          </div>
-        </div>
-
-        {/* col 4 — sparkline + bottom stats */}
-        <div className="pointer-events-none flex flex-col justify-between gap-3">
-          <ApySparkline apy={row.impliedApy} />
-          <div className="grid grid-cols-3 gap-2 border-t border-border pt-2.5">
-            <MiniStat
-              label="TVL"
-              value={tvlDisplay ?? formatCompact(row.totalSy)}
-              accent={tvlDisplay ? "white" : "silver"}
-            />
-            <MiniStat label="SY" value={formatCompact(row.totalSy)} accent="silver" />
-            <MiniStat label="Liq" value={formatCompact(row.lpSupply)} accent="silver" />
-          </div>
-        </div>
-      </div>
-    </article>
+        </Link>
+      </Td>
+      <Td>
+        <Link href={`/markets/${row.address}`} className="block font-mono text-[13px] text-text">
+          {underlying}
+        </Link>
+      </Td>
+      <NumTd dim={row.expired}>{row.expired ? "—" : `${row.daysLeft}d · ${row.expiryDate}`}</NumTd>
+      <NumTd accent>{row.expired ? "—" : `${row.impliedApy.toFixed(2)}%`}</NumTd>
+      <NumTd>{tvlDisplay}</NumTd>
+      <NumTd dim={row.expired}>{row.expired ? "—" : `${ptInSy.toFixed(4)} SY`}</NumTd>
+      <NumTd dim>$—</NumTd>
+      <Td>
+        {row.expired ? (
+          <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-textDim">
+            expired
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.12em] text-textSec">
+            <span className="term-pulse-dot inline-block size-[5px] rounded-full bg-white" />
+            LIVE
+          </span>
+        )}
+      </Td>
+    </tr>
   );
 }
 
-/* ─────────────────────────────────────────────────────── sparkline */
+/* ─────────────────────────────────────────────────────── sidebar cards */
+
+function ProtocolStatsCard({ markets }: { markets: MarketRow[] }) {
+  return (
+    <SidePanel>
+      <SideCard title="// protocol_stats">
+        <ProtocolStatsRows markets={markets} />
+      </SideCard>
+      <SideCard title="// network">
+        <NetworkRows />
+      </SideCard>
+      <SideCard title="// governance">
+        <SideRow k="Admin" v="Timelock" />
+        <SideRow k="Delay" v="48 hours" />
+        <SideRow k="Threshold" v="2-of-2" />
+        <SideRow k="Pending ops" v="0" />
+      </SideCard>
+    </SidePanel>
+  );
+}
+
+function ProtocolStatsRows({ markets }: { markets: MarketRow[] }) {
+  // Per-market TVL aggregation. We need each row's `useSyValueUsd` hook to
+  // run at a stable call site, so the summing component dispatches one tiny
+  // child per market that reports its USD value up. This sidesteps the
+  // hooks-in-loops rule while keeping the parent re-renders cheap.
+  const [tvlByMarket, setTvlByMarket] = useState<Record<string, number | undefined>>({});
+
+  // Reset when the market list changes (post-cache refresh).
+  useEffect(() => {
+    setTvlByMarket({});
+  }, [markets.length]);
+
+  const totalSyShares = markets.reduce((acc, m) => acc + m.totalSy, 0n);
+  const totalPt = markets.reduce((acc, m) => acc + m.totalPt, 0n);
+  const totalLp = markets.reduce((acc, m) => acc + m.lpSupply, 0n);
+
+  const tvlSum = Object.values(tvlByMarket).reduce<number | undefined>(
+    (acc, v) => (acc === undefined ? v : v === undefined ? acc : acc + v),
+    undefined,
+  );
+
+  return (
+    <>
+      <SideRow k="Total TVL" v={tvlSum !== undefined ? (formatUsd(tvlSum) ?? "$—") : "$—"} />
+      <SideRow k="Markets active" v={String(markets.filter((m) => !m.expired).length)} />
+      <SideRow k="Total PT supply" v={formatCompact(totalPt)} />
+      <SideRow k="Total YT supply" v={formatCompact(totalPt) /* PT == YT supply by construction */} />
+      <SideRow k="Total LP supply" v={formatCompact(totalLp)} />
+      <SideRow k="Total SY shares" v={formatCompact(totalSyShares)} />
+      <SideRow k="Treasury balance" v="$0.00" />
+
+      {markets.map((m) => (
+        <TvlReporter
+          key={m.address}
+          syAddress={m.syAddress}
+          totalSy={m.totalSy}
+          onReport={(usd) =>
+            setTvlByMarket((prev) => {
+              if (prev[m.address] === usd) return prev;
+              return { ...prev, [m.address]: usd };
+            })
+          }
+        />
+      ))}
+    </>
+  );
+}
 
 /**
- * 140×40 SVG APY sparkline. Uses the same seeded-random walk pattern as the YT
- * card in `StrategyOverview` so the visual language stays consistent — kept
- * inline rather than imported so we can tweak the dimensions without touching
- * the strategy card. Deterministic per-APY: the seed is `Math.floor(apy*100)`,
- * which means re-renders with the same APY produce the same wiggle.
+ * Headless per-market TVL probe. Runs `useSyValueUsd` for one address and
+ * pushes the resulting USD figure up via callback. Rendered as a sibling of
+ * the table so the hook call site is stable.
  */
-function ApySparkline({ apy }: { apy: number }) {
-  const W = 160;
-  const H = 44;
-  const padL = 4;
-  const padR = 30;
-  const padT = 4;
-  const padB = 12;
-  const N = 28;
+function TvlReporter({
+  syAddress,
+  totalSy,
+  onReport,
+}: {
+  syAddress: `0x${string}` | undefined;
+  totalSy: bigint;
+  onReport: (usd: number | undefined) => void;
+}) {
+  const { usdPerShare } = useSyValueUsd(syAddress);
+  useEffect(() => {
+    const tvl =
+      usdPerShare !== undefined && totalSy > 0n ? Number(totalSy) * usdPerShare : undefined;
+    onReport(tvl);
+    // onReport identity is stable in practice (parent uses functional setState)
+    // but we list deps explicitly so the linter is happy.
+  }, [usdPerShare, totalSy, onReport]);
+  return null;
+}
 
-  const seed = Math.max(1, Math.floor(apy * 100));
-  let s = seed >>> 0;
-  const rand = () => {
-    s = (s + 0x6d2b79f5) >>> 0;
-    let t = s;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return (((t ^ (t >>> 14)) >>> 0) % 10_000) / 10_000;
-  };
+function NetworkRows() {
+  const hbarUsd = useHbarUsd();
+  const [block, setBlock] = useState<string | null>(null);
 
-  const band = apy * 0.15 + 0.4;
-  const series: number[] = [];
-  let v = apy;
-  for (let i = 0; i < N; i++) {
-    const step = (rand() - 0.5) * band * 0.4;
-    v = v + step;
-    v = v + (apy - v) * 0.14;
-    series.push(v);
-  }
-  const lo = Math.min(...series, apy - band);
-  const hi = Math.max(...series, apy + band);
-  const range = Math.max(1e-6, hi - lo);
-
-  const x = (i: number) => padL + ((W - padL - padR) * i) / (N - 1);
-  const y = (val: number) => padT + (H - padT - padB) * (1 - (val - lo) / range);
-
-  const d = series
-    .map((val, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(2)},${y(val).toFixed(2)}`)
-    .join(" ");
-  const lastX = x(N - 1);
-  const lastVal = series[series.length - 1] ?? apy;
-  const lastY = y(lastVal);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(
+          "https://mainnet-public.mirrornode.hedera.com/api/v1/blocks?limit=1&order=desc",
+          { cache: "no-store" },
+        );
+        if (!r.ok) return;
+        const j = (await r.json()) as { blocks: Array<{ number: number }> };
+        const n = j.blocks?.[0]?.number;
+        if (!cancelled && typeof n === "number") {
+          setBlock(n.toLocaleString("en-US"));
+        }
+      } catch {
+        /* swallow — non-critical */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      className="block h-[44px] w-full text-accent"
-      role="img"
-      aria-label={`APY sparkline near ${apy.toFixed(2)}%`}
-    >
-      <line
-        x1={padL}
-        y1={y(apy)}
-        x2={W - padR}
-        y2={y(apy)}
-        stroke="currentColor"
-        strokeOpacity={0.18}
-        strokeDasharray="2 3"
+    <>
+      <SideRow k="Chain" v="Hedera · 295" />
+      <SideRow k="Block" v={block ?? "—"} />
+      <SideRow k="Gas (HBAR)" v="$0.0001" />
+      <SideRow
+        k="HBAR price"
+        v={hbarUsd !== undefined ? `$${hbarUsd.toFixed(4)}` : "—"}
       />
-      <path
-        d={d}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx={lastX} cy={lastY} r={2.5} fill="currentColor" />
-    </svg>
+    </>
   );
 }
 
-/* ─────────────────────────────────────────────────────── bits */
+/* ─────────────────────────────────────────────────────── primitives */
 
-function MiniStat({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent: "white" | "silver";
-}) {
+function SidePanel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-w-0">
-      <div className="font-mono text-[8px] uppercase tracking-[1.5px] text-textDim">{label}</div>
-      <div
-        className={`mt-0.5 truncate font-mono text-[12px] font-bold tracking-tight ${
-          accent === "white" ? "text-text" : "text-silver"
-        }`}
-      >
-        {value}
-      </div>
+    <div className="flex flex-col gap-px border border-border bg-border">{children}</div>
+  );
+}
+
+function SideCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-white/[0.015] p-5">
+      <h4 className="mb-3.5 font-mono text-[10.5px] uppercase tracking-[0.2em] text-textDim">
+        {title}
+      </h4>
+      {children}
     </div>
   );
 }
 
-function StarButton({
-  watched,
-  signedIn,
+function SideRow({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between border-b border-border py-1.5 font-mono text-[12.5px] last:border-b-0">
+      <span className="text-textDim">{k}</span>
+      <span className="text-white tabular-nums">{v}</span>
+    </div>
+  );
+}
+
+function Th({ children, align }: { children: React.ReactNode; align?: "right" }) {
+  return (
+    <th
+      className={`border-b border-border px-[18px] py-3.5 font-mono text-[10px] font-medium uppercase tracking-[0.2em] text-textDim ${
+        align === "right" ? "text-right" : "text-left"
+      }`}
+    >
+      {children}
+    </th>
+  );
+}
+
+function Td({ children }: { children: React.ReactNode }) {
+  return (
+    <td className="border-b border-border px-[18px] py-[18px] font-mono text-[13.5px] text-text last:border-b-0">
+      {children}
+    </td>
+  );
+}
+
+function NumTd({
+  children,
+  accent,
+  dim,
+}: {
+  children: React.ReactNode;
+  accent?: boolean;
+  dim?: boolean;
+}) {
+  return (
+    <td
+      className={`border-b border-border px-[18px] py-[18px] text-right font-mono text-[13.5px] tabular-nums last:border-b-0 ${
+        dim ? "text-textDim" : accent ? "font-medium text-white" : "text-white"
+      }`}
+    >
+      {children}
+    </td>
+  );
+}
+
+function SearchInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="flex w-[260px] items-center gap-2 border border-borderHover bg-white/[0.015] px-3 py-2">
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        className="text-textDim"
+      >
+        <circle cx="11" cy="11" r="8" />
+        <path d="m21 21-4.3-4.3" />
+      </svg>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="search by symbol or underlying"
+        className="flex-1 bg-transparent font-mono text-[12.5px] text-text outline-none placeholder:text-textDim"
+      />
+    </label>
+  );
+}
+
+function Chip({
+  children,
+  active,
   onClick,
 }: {
-  watched: boolean;
-  signedIn: boolean;
-  onClick: () => void;
+  children: React.ReactNode;
+  active?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <button
       type="button"
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        onClick();
-      }}
-      disabled={!signedIn}
-      title={signedIn ? (watched ? "Remove from watchlist" : "Add to watchlist") : "Sign in to use watchlist"}
-      className={`relative z-10 grid size-8 place-items-center rounded-lg transition ${
-        signedIn
-          ? watched
-            ? "text-warning hover:bg-white/[0.05]"
-            : "text-textDim hover:bg-white/[0.05] hover:text-text"
-          : "cursor-not-allowed text-textDim opacity-40"
+      onClick={onClick}
+      className={`border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.1em] transition ${
+        active
+          ? "border-white bg-white text-black"
+          : "border-borderHover bg-white/[0.015] text-textSec hover:border-white/15 hover:text-white"
       }`}
-      aria-pressed={watched}
-      aria-label={watched ? "Remove from watchlist" : "Add to watchlist"}
     >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill={watched ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-      </svg>
+      {children}
     </button>
   );
 }
 
-function WatchlistEmpty({ onShowAll }: { onShowAll: () => void }) {
-  return (
-    <div className="flex min-h-[260px] flex-col items-center justify-center rounded-2xl border border-border bg-bgCard p-10 text-center">
-      <div className="mb-2 text-base font-semibold">No watched markets yet</div>
-      <p className="mb-5 max-w-[420px] text-sm text-textSec">
-        Star a market on the all-markets view to add it here. Your watchlist is per-wallet and
-        synced across devices once you&rsquo;re signed in.
-      </p>
-      <button
-        type="button"
-        onClick={onShowAll}
-        className="rounded-xl border border-borderHover px-4 py-2 text-[12px] font-medium text-text transition hover:bg-white/[0.03]"
-      >
-        Show all markets
-      </button>
-    </div>
-  );
-}
+/* ─────────────────────────────────────────────────────── empty states */
 
 function NotDeployed() {
   return (
-    <div className="flex min-h-[420px] flex-col items-center justify-center rounded-2xl border border-border bg-bgCard p-12 text-center">
-      <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-border bg-white/[0.03] px-3 py-1">
-        <span className="size-[5px] rounded-full bg-warning" />
-        <span className="text-[10px] font-medium uppercase tracking-[2px] text-textSec">
-          Pre-launch · Audit gate
-        </span>
+    <div className="border border-border bg-white/[0.015] p-10 text-center">
+      <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-warning">
+        // pre-launch · audit gate
       </div>
-
-      <h2 className="mb-3 text-[28px] font-light tracking-[-0.5px]">
+      <h2 className="text-[24px] font-semibold tracking-[-0.02em] text-white">
         No markets <span className="font-serif italic">live</span> yet
       </h2>
-
-      <p className="mb-7 max-w-[460px] text-sm font-light leading-relaxed text-textSec">
-        The protocol is code-complete and through two internal audit passes (
-        <span className="font-mono text-text">0 H/M findings</span>), but mainnet deployment is
-        gated on the external audit pipeline (HashEx → ChainSecurity → Code4rena → Immunefi).
-        Once Safe + Timelock are provisioned and the factory is deployed, markets land here.
-      </p>
-
-      <div className="mb-6 flex items-center gap-3">
-        <a
-          href="https://github.com/penguinpecker/fission-protocol-hedera"
-          target="_blank"
-          rel="noreferrer"
-          className="rounded-xl border border-borderHover px-5 py-2.5 text-[13px] font-medium text-text transition hover:bg-white/[0.03]"
-        >
-          View source
-        </a>
-        <a
-          href="https://github.com/penguinpecker/fission-protocol-hedera/tree/main/audits/internal"
-          target="_blank"
-          rel="noreferrer"
-          className="rounded-xl border border-borderHover px-5 py-2.5 text-[13px] font-medium text-textSec transition hover:bg-white/[0.03]"
-        >
-          Audit reports
-        </a>
-      </div>
-
-      <p className="font-mono text-[10px] text-textDim">
-        v1 lineup: HBARX (Stader) · SaucerSwap V2 LP (WHBAR/USDC, Pendle-Kyber)
+      <p className="mx-auto mt-3 max-w-[460px] font-mono text-[13px] leading-relaxed text-textSec">
+        The protocol is code-complete and through two internal audit passes. Mainnet
+        deployment is gated on the external audit pipeline.
       </p>
     </div>
   );
@@ -521,14 +585,10 @@ function NotDeployed() {
 
 function EmptyState() {
   return (
-    <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-border bg-bgCard p-10 text-center">
-      <div className="mb-2 text-base font-semibold">Factory deployed — no markets created yet</div>
-      <p className="max-w-[460px] text-sm text-textSec">
-        Markets enter via the 7-day SY whitelist:&nbsp;
-        <span className="font-mono text-textSec">proposeSY</span> →&nbsp;wait 7d →&nbsp;
-        <span className="font-mono text-textSec">confirmSY</span> →&nbsp;
-        <span className="font-mono text-textSec">createMarket</span> →&nbsp;
-        <span className="font-mono text-textSec">initialize</span>.
+    <div className="border border-border bg-white/[0.015] p-10 text-center">
+      <div className="font-semibold text-white">Factory deployed — no markets created yet</div>
+      <p className="mx-auto mt-2 max-w-[460px] font-mono text-[12.5px] text-textSec">
+        Markets enter via the 7-day SY whitelist: proposeSY → wait 7d → confirmSY → createMarket → initialize.
       </p>
     </div>
   );
@@ -536,9 +596,9 @@ function EmptyState() {
 
 function Loading() {
   return (
-    <div className="space-y-3">
-      {[0, 1].map((i) => (
-        <div key={i} className="h-[148px] animate-pulse rounded-2xl border border-border bg-bgCard" />
+    <div className="space-y-2">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="h-[58px] animate-pulse border border-border bg-white/[0.015]" />
       ))}
     </div>
   );
@@ -555,6 +615,7 @@ function buildRowsFromCache(
     const daysLeft = expiryDate
       ? Math.max(0, Math.floor((expiryDate.getTime() - Date.now()) / 86_400_000))
       : 0;
+    const expired = expiryDate ? expiryDate.getTime() <= Date.now() : false;
     return {
       address: m.market_address,
       syAddress: m.sy_address,
@@ -567,8 +628,10 @@ function buildRowsFromCache(
       impliedApy: impliedApyPct(lastLn),
       daysLeft,
       expiryDate: expiryDate
-        ? expiryDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+        ? expiryDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })
         : "—",
+      expired,
+      isRewards: m.market_type === "rewards",
     };
   });
 }
@@ -598,6 +661,8 @@ function buildMarketRows(
 
     const addr = addresses[i];
     if (!addr) continue;
+    const expirySec = Number(expiry);
+    const expired = expirySec * 1000 <= Date.now();
     rows.push({
       address: addr,
       syAddress: syAddr,
@@ -609,11 +674,12 @@ function buildMarketRows(
       lpSupply,
       impliedApy: impliedApyPct(lastLn),
       daysLeft: daysUntil(expiry),
-      expiryDate: new Date(Number(expiry) * 1000).toLocaleDateString("en-US", {
+      expiryDate: new Date(expirySec * 1000).toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
-        year: "numeric",
       }),
+      expired,
+      isRewards: symbol.toLowerCase().includes("rwd"),
     });
   }
   return rows;
