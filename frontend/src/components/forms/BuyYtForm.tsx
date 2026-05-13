@@ -12,6 +12,7 @@ import { formatCompact } from "@/hooks/useMarkets";
 import { ADDRESSES, isDeployed } from "@/lib/addresses";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
+import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
 
 interface Props {
   market: `0x${string}`;
@@ -52,6 +53,9 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   }
   const insufficient = parsedAmt > syBalance;
   const needsSy = syBalance === 0n;
+  // Same size cap as BuyPtForm — prevents AMM impact from exceeding the
+  // user's slippage tolerance at low pool depth.
+  const sizeLimit = computeSizeLimit(parsedAmt, detail.totalSy, detail.totalPt);
 
   const spender: `0x${string}` = ADDRESSES.router;
   const allowanceRead = useReadContracts({
@@ -204,6 +208,14 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
             Insufficient SY — you have {formatCompact(syBalance)}.
           </span>
         )}
+        {!insufficient && sizeLimit.message && (
+          <span className="mt-1.5 block text-[11px] font-medium text-warning">
+            {sizeLimit.message}
+          </span>
+        )}
+        <span className="mt-1.5 block text-[10px] text-textDim">
+          Pool depth: {formatCompact(sizeLimit.poolDepth)} · max trade {MAX_TRADE_PCT_OF_POOL}% = {formatCompact(sizeLimit.maxAllowed)}
+        </span>
       </label>
 
       {user && needsSy && (
@@ -214,22 +226,28 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
       )}
 
       <label className="mb-3 block">
-        <span className="mb-1.5 block text-xs text-textSec">
-          Slippage tolerance: {(slippageBps / 100).toFixed(2)}%
+        <span className="mb-1.5 flex items-center justify-between text-xs">
+          <span className="text-textSec">Slippage tolerance: {(slippageBps / 100).toFixed(2)}%</span>
+          {slippageBps > 50 && (
+            <span className="font-mono text-[10px] uppercase tracking-[1px] text-warning">⚠ above safe</span>
+          )}
         </span>
         <input
           type="range"
           min={5}
-          max={500}
+          max={100}
           value={slippageBps}
           onChange={(e) => setSlippageBps(Number(e.target.value))}
           className="w-full"
         />
+        <span className="mt-1 block text-[10px] text-textDim">
+          Capped at 1.00%. Combined with the 1%-of-pool trade-size limit, actual slippage stays well under your tolerance.
+        </span>
       </label>
 
       <button
         type="button"
-        disabled={!user || !amount || isPending || isConfirmingFinal || insufficient || !routerDeployed}
+        disabled={!user || !amount || isPending || isConfirmingFinal || insufficient || sizeLimit.exceeded || !routerDeployed}
         onClick={onPrimary}
         className="w-full rounded-[10px] bg-white px-7 py-3.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
       >
@@ -239,13 +257,15 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
             ? "Enter amount"
             : insufficient
               ? "Insufficient SY"
-              : isPending
-                ? "Sign in HashPack…"
-                : isConfirmingFinal
-                  ? "Waiting for confirmation…"
-                  : needsApprove
-                    ? "Approve SY for Router"
-                    : "Buy YT"}
+              : sizeLimit.exceeded
+                ? "Trade too large for pool"
+                : isPending
+                  ? "Sign in HashPack…"
+                  : isConfirmingFinal
+                    ? "Waiting for confirmation…"
+                    : needsApprove
+                      ? "Approve SY for Router"
+                      : "Buy YT"}
       </button>
 
       {needsApprove && (
