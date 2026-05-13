@@ -9,7 +9,8 @@ import { diag } from "@/lib/diag";
 import { Footer } from "@/components/Footer";
 import { WalletGate } from "@/components/WalletGate";
 import { useMarketDetail, useUserPosition, MarketDetail } from "@/hooks/useMarket";
-import { useSyValueUsd, shareBalanceToUsd, formatUsd } from "@/hooks/useSyValueUsd";
+import { useSyValueUsd } from "@/hooks/useSyValueUsd";
+import { MarketPositionCard } from "@/components/MarketPositionCard";
 import { ADDRESSES, isDeployed, HEDERA_TOKENS, USDC_DECIMALS, WHBAR_DECIMALS } from "@/lib/addresses";
 import { erc20Abi } from "@/lib/abis";
 import { erc20WriteAbi, routerAbi, marketWriteAbi, syWriteAbi, fissionZapAbi } from "@/lib/abis-write";
@@ -42,16 +43,14 @@ export default function MarketDetailPage({ params }: { params: Promise<{ address
   const adapter = useWalletAdapter();
   const user = adapter.address ?? undefined;
   const { data: position } = useUserPosition(market, detail, user);
-  // USD hint for the user's SY balance. Pendle-style markets normally show the
-  // SY count + the underlying $-value side-by-side. We compute the per-share
-  // value from the underlying V3 LP (USDC + WHBAR) and multiply by the user's
-  // raw share count. Suppressed in EVM mode (our EVM testing path doesn't need
-  // it and avoids hammering CoinGecko during mainnet smoke tests).
+  // USD valuation for the user's position. Pendle-style markets show the
+  // SY/PT/YT/LP counts plus the $-value of each, derived from the underlying
+  // V3 LP (USDC + WHBAR). Suppressed in EVM mode (our EVM testing path
+  // doesn't need it and avoids hammering CoinGecko during mainnet smoke
+  // tests). `MarketPositionCard` hides every "≈ $X.XX" line on its own when
+  // usdPerShare is undefined.
   const showUsdHint = adapter.mode !== "evm";
   const { usdPerShare } = useSyValueUsd(showUsdHint ? detail?.sy : undefined);
-  const syUsd = showUsdHint
-    ? formatUsd(shareBalanceToUsd(position?.sy, usdPerShare))
-    : null;
 
   const [strategy, setStrategy] = useState<Strategy>("pt");
   const [amount, setAmount] = useState("");
@@ -129,13 +128,14 @@ export default function MarketDetailPage({ params }: { params: Promise<{ address
           <Stat label="SY rate" value={formatBigInt(detail.syExchangeRate, 18, 4)} mono />
         </div>
 
-        {position && user && (
-          <div className="mb-6 grid grid-cols-5 gap-1.5">
-            <UserStat label="Your SY" v={formatCompact(position.sy)} hint={syUsd ? `≈ ${syUsd}` : null} />
-            <UserStat label="Your PT" v={formatCompact(position.pt)} />
-            <UserStat label="Your YT" v={formatCompact(position.yt)} />
-            <UserStat label="Your LP" v={formatCompact(position.lp)} />
-            <UserStat label="Claimable yield" v={formatCompact(position.claimableYield)} accent="success" />
+        {user && (
+          <div className="mb-6">
+            <MarketPositionCard
+              detail={detail}
+              position={position}
+              usdPerShare={usdPerShare}
+              market={market}
+            />
           </div>
         )}
 
@@ -171,29 +171,6 @@ function Stat({ label, value, mono }: { label: string; value: string; mono?: boo
     <div className="bg-bgCard px-5 py-4">
       <div className="mb-1 text-[10px] uppercase tracking-[1px] text-textDim">{label}</div>
       <div className={`text-[20px] font-bold tracking-tight text-text ${mono ? "font-mono" : ""}`}>{value}</div>
-    </div>
-  );
-}
-
-function UserStat({
-  label,
-  v,
-  accent,
-  hint,
-}: {
-  label: string;
-  v: string;
-  accent?: "success";
-  /** Optional sub-line under the value (e.g. "≈ $3.79"). */
-  hint?: string | null;
-}) {
-  return (
-    <div className="rounded-lg bg-white/[0.02] px-3 py-2">
-      <div className="text-[10px] uppercase tracking-[0.5px] text-textDim">{label}</div>
-      <div className={`font-mono text-[13px] font-semibold ${accent === "success" ? "text-success" : "text-text"}`}>{v}</div>
-      {hint ? (
-        <div className="mt-0.5 font-mono text-[10px] font-medium text-textDim">{hint}</div>
-      ) : null}
     </div>
   );
 }

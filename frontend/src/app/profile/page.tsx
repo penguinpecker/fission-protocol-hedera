@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
@@ -10,8 +9,8 @@ import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { useUserProfile, type ProfilePatch } from "@/hooks/useUserProfile";
 import { useCachedMarkets } from "@/hooks/useCachedMarkets";
 import { useMarketDetail, useUserPosition } from "@/hooks/useMarket";
-import { useSyValueUsd, shareBalanceToUsd, formatUsd } from "@/hooks/useSyValueUsd";
-import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
+import { useSyValueUsd } from "@/hooks/useSyValueUsd";
+import { MarketPositionCard } from "@/components/MarketPositionCard";
 import { ArrowOutIcon } from "@/components/Icons";
 
 /**
@@ -149,119 +148,24 @@ function MarketPositionRow({
 }) {
   const { data: detail } = useMarketDetail(market);
   const { data: position } = useUserPosition(market, detail, user);
-  // SY-share-in-USD hint, only when the SY adapter is the SaucerSwap-V2-LP
-  // shape (HBARX SYs return undefined naturally because they don't expose
-  // `npm() / positionTokenId()`). `formatUsd` returns null when undefined so
-  // we hide the hint line until both reads complete.
+  // SY-share-in-USD, only meaningful when the SY adapter is the
+  // SaucerSwap-V2-LP shape. HBARX SYs return `usdPerShare: undefined` because
+  // `npm() / positionTokenId()` revert, and `MarketPositionCard` then hides
+  // all the "≈ $X.XX" lines on its own — no caller-side branching needed.
   const { usdPerShare } = useSyValueUsd(detail?.sy);
-  const syUsd = formatUsd(shareBalanceToUsd(position?.sy, usdPerShare));
 
   if (!detail) {
-    return <div className="h-24 animate-pulse rounded-2xl border border-border bg-bgCard" />;
+    return <div className="h-44 animate-pulse rounded-2xl border border-border bg-bgCard" />;
   }
 
-  const expired = Date.now() / 1000 >= Number(detail.expiry);
-  const apy = impliedApyPct(detail.lastLnImpliedRate);
-  const days = daysUntil(detail.expiry);
-
-  const empty =
-    !position ||
-    (position.sy === 0n && position.pt === 0n && position.yt === 0n && position.lp === 0n && position.claimableYield === 0n);
-
   return (
-    <div className="rounded-2xl border border-border bg-bgCard p-5 transition hover:border-borderHover">
-      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-        <div>
-          <Link
-            href={`/markets/${market}`}
-            className="text-[15px] font-semibold tracking-tight text-text transition hover:opacity-80"
-          >
-            {detail.syName}
-          </Link>
-          <div className="mt-0.5 text-[11px] text-textDim">
-            {expired ? (
-              <span className="text-error">Expired</span>
-            ) : (
-              <>
-                {days} days left · matures{" "}
-                {new Date(Number(detail.expiry) * 1000).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </>
-            )}
-          </div>
-        </div>
-        <div className="flex items-baseline gap-2 text-right">
-          <span className="text-[10px] uppercase tracking-[1px] text-textDim">Implied APY</span>
-          <span className="font-mono text-[14px] font-semibold text-text">
-            {apy !== null ? `${apy.toFixed(2)}%` : "—"}
-          </span>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-border md:grid-cols-5">
-        <PosCell label="SY" value={formatCompact(position?.sy ?? 0n)} hint={syUsd ? `≈ ${syUsd}` : null} />
-        <PosCell label="PT" value={formatCompact(position?.pt ?? 0n)} tone="success" />
-        <PosCell label="YT" value={formatCompact(position?.yt ?? 0n)} tone="warning" />
-        <PosCell label="LP" value={formatCompact(position?.lp ?? 0n)} />
-        <PosCell
-          label="Claimable yield"
-          value={formatCompact(position?.claimableYield ?? 0n)}
-          tone="success"
-          accent
-        />
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        {empty ? (
-          <span className="text-[12px] text-textDim">
-            You hold no position in this market yet.
-          </span>
-        ) : (
-          <span className="text-[12px] text-textSec">
-            Open the market to claim, swap, or LP.
-          </span>
-        )}
-        <Link
-          href={`/markets/${market}`}
-          className="rounded-lg border border-borderHover bg-white/[0.04] px-3 py-1.5 text-[12px] font-medium text-text transition hover:bg-white/[0.08]"
-        >
-          Open market →
-        </Link>
-      </div>
-    </div>
-  );
-}
-
-function PosCell({
-  label,
-  value,
-  tone,
-  accent,
-  hint,
-}: {
-  label: string;
-  value: string;
-  tone?: "success" | "warning";
-  accent?: boolean;
-  /** Optional sub-line (e.g. "≈ $3.79"). Rendered only when truthy; layout
-   *  shifts a row up otherwise — that's fine since this is purely additive. */
-  hint?: string | null;
-}) {
-  const toneClass =
-    tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-text";
-  return (
-    <div className={`bg-bgCard px-4 py-3 ${accent ? "ring-1 ring-success/20" : ""}`}>
-      <div className="text-[10px] font-semibold uppercase tracking-[1.5px] text-textDim">
-        {label}
-      </div>
-      <div className={`mt-1 font-mono text-[13px] font-semibold ${toneClass}`}>{value}</div>
-      {hint ? (
-        <div className="mt-0.5 font-mono text-[10px] font-medium text-textDim">{hint}</div>
-      ) : null}
-    </div>
+    <MarketPositionCard
+      detail={detail}
+      position={position}
+      usdPerShare={usdPerShare}
+      marketLink={`/markets/${market}`}
+      market={market}
+    />
   );
 }
 
