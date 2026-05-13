@@ -17,6 +17,7 @@
  * everywhere, FlowOfFunds visualization above each tab.
  */
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
@@ -429,6 +430,12 @@ function AddLp({
     },
   ];
 
+  // SOURCE toggle scaffold. HBAR-mode is disabled-with-explainer for now —
+  // LP-from-HBAR needs a multi-hop zap (HBAR → SY → split SY budget → buy PT
+  // → approve SY + PT → addLiquidityProportional) which is queued for
+  // Phase 8 MegaZap. For now only SY-mode is wired up.
+  const [source, setSource] = useState<"hbar" | "sy">("sy");
+
   return (
     <div className="flex flex-col gap-3">
       <FlowOfFunds title="Flow of funds · Add liquidity" steps={flowSteps} />
@@ -449,10 +456,71 @@ function AddLp({
           }
         />
 
-        {noPt ? (
+        {/* SOURCE toggle — HBAR is queued for Phase 8 MegaZap, see explainer below. */}
+        <div className="mb-3">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-textDim">
+              Source
+            </span>
+            <span className="font-mono text-[9px] uppercase tracking-[1.5px] text-textDim">
+              HBAR mode soon
+            </span>
+          </div>
+          <div className="flex items-stretch gap-1.5">
+            <button
+              type="button"
+              onClick={() => setSource("hbar")}
+              className={`flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition ${
+                source === "hbar"
+                  ? "border-warning/60 bg-warning/10 text-warning"
+                  : "border-border bg-bgInput text-textSec hover:border-borderHover hover:text-text"
+              }`}
+            >
+              HBAR
+            </button>
+            <button
+              type="button"
+              onClick={() => setSource("sy")}
+              className={`flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition ${
+                source === "sy"
+                  ? "border-text/60 bg-white/[0.08] text-text"
+                  : "border-border bg-bgInput text-textSec hover:border-borderHover hover:text-text"
+              }`}
+            >
+              SY
+            </button>
+          </div>
+        </div>
+
+        {source === "hbar" && (
+          <div className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-warning">
+            <div className="mb-1 font-semibold uppercase tracking-[1px]">
+              LP from HBAR — coming in Phase 8
+            </div>
+            <p className="mb-2">
+              Adding LP from raw HBAR needs a multi-hop zap (HBAR → SY → split
+              budget → buy PT → approve SY + PT → addLiquidity). That lands in a
+              future MegaZap contract upgrade.
+            </p>
+            <p>
+              For now, mint SY + buy PT first, then return here in SY mode.{" "}
+              <Link
+                href={`/markets/${market}/pt`}
+                className="underline underline-offset-2 hover:text-text"
+              >
+                Buy PT (auto-mints SY from HBAR) →
+              </Link>
+            </p>
+          </div>
+        )}
+
+        {source === "sy" && noPt ? (
           <div className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-warning">
             <span className="font-semibold">You need PT to add proportional liquidity.</span>{" "}
-            Buy PT first (or split SY → PT + YT and keep the PT side), then return here.
+            <Link href={`/markets/${market}/pt`} className="underline underline-offset-2 hover:text-text">
+              Buy PT first
+            </Link>{" "}
+            (or split SY → PT + YT and keep the PT side), then return here.
           </div>
         ) : null}
 
@@ -493,9 +561,28 @@ function AddLp({
             </>
           }
           feedback={
-            insufficientSy ? (
+            // Distinguish SY-side vs PT-side vs both shortfalls so the user
+            // knows exactly which token they're missing (previous build
+            // surfaced a generic "INSUFFICIENT BALANCE" with no hint at all).
+            insufficientSy && insufficientPt ? (
               <span className="block font-mono text-[10px] font-medium text-error">
-                Insufficient SY — you have {formatCompact(syBalance)}.
+                Insufficient balances — need {formatCompact(parsedSy)} SY +{" "}
+                {formatCompact(parsedPt)} PT, have {formatCompact(syBalance)} SY +{" "}
+                {formatCompact(ptBalance)} PT.
+              </span>
+            ) : insufficientSy ? (
+              <span className="block font-mono text-[10px] font-medium text-error">
+                Insufficient SY — need {formatCompact(parsedSy)}, have {formatCompact(syBalance)}.
+              </span>
+            ) : insufficientPt ? (
+              <span className="block font-mono text-[10px] font-medium text-error">
+                Insufficient PT — need {formatCompact(parsedPt)}, have {formatCompact(ptBalance)}.{" "}
+                <Link
+                  href={`/markets/${market}/pt`}
+                  className="underline underline-offset-2 hover:text-text"
+                >
+                  Buy PT first →
+                </Link>
               </span>
             ) : null
           }
@@ -578,6 +665,7 @@ function AddLp({
           type="button"
           disabled={
             !user ||
+            source === "hbar" ||
             noInput ||
             isPending ||
             isConfirmingFinal ||
@@ -591,21 +679,27 @@ function AddLp({
         >
           {!user
             ? "Connect wallet"
-            : noPt
-              ? "You need PT — buy PT first"
-              : noInput
-                ? "Enter amounts"
-                : insufficientSy || insufficientPt
-                  ? "Insufficient balance"
-                  : isPending
-                    ? "Sign in HashPack…"
-                    : isConfirmingFinal
-                      ? "Waiting for confirmation…"
-                      : needsSyApprove
-                        ? "Approve SY for Router"
-                        : needsPtApprove
-                          ? "Approve PT for Router"
-                          : "Add liquidity"}
+            : source === "hbar"
+              ? "HBAR mode coming soon"
+              : noPt
+                ? "You need PT — buy PT first"
+                : noInput
+                  ? "Enter amounts"
+                  : insufficientSy && insufficientPt
+                    ? "Insufficient SY + PT"
+                    : insufficientSy
+                      ? "Insufficient SY"
+                      : insufficientPt
+                        ? "Insufficient PT"
+                        : isPending
+                          ? "Sign in HashPack…"
+                          : isConfirmingFinal
+                            ? "Waiting for confirmation…"
+                            : needsSyApprove
+                              ? "Approve SY for Router"
+                              : needsPtApprove
+                                ? "Approve PT for Router"
+                                : "Add liquidity"}
         </button>
 
         {(needsSyApprove || needsPtApprove) && !noInput && (

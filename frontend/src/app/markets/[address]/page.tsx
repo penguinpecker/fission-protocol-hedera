@@ -7,9 +7,10 @@
  *   - Breadcrumb (Markets / <name>)
  *   - Title + maturity strip (the market's context, not a position)
  *   - StrategyOverview (the 3 cards: PT, YT, LP)
- *   - "Need SY first?" inline link → `/markets/[addr]/lp` (LP route hosts the
- *      mint helper inline; until a dedicated /mint route exists, that's the
- *      closest landing spot for users without SY)
+ *   - "Need SY first?" inline link → `/markets/[addr]/pt` (the PT and YT
+ *      sub-pages now auto-mint SY from HBAR inline via the source toggle, so
+ *      there's no standalone /mint route anymore; PT is the most common
+ *      destination so we send the "no SY yet" pointer there)
  *
  * The user's position summary, the inline mint collapsible, and post-expiry
  * redeem block all moved off this page so the 3 strategy cards stand alone as
@@ -96,11 +97,11 @@ export default function MarketDetailPage({ params }: { params: Promise<{ address
               </div>
             </div>
 
-            {/* "Need SY?" inline pointer. LP route hosts the mint helper for now;
-                a dedicated /mint sub-route can replace this href later without
-                touching the strategy cards themselves. */}
+            {/* "Need SY?" inline pointer. The PT sub-page now auto-mints SY
+                from HBAR via the source toggle, so the standalone /mint
+                concept retired in favour of an inline chained flow there. */}
             <Link
-              href={`/markets/${market}/lp`}
+              href={`/markets/${market}/pt`}
               className="rounded-xl border border-border bg-white/[0.02] px-4 py-2 text-[12px] font-medium text-textSec transition hover:border-borderHover hover:bg-white/[0.04] hover:text-text"
             >
               Need SY? <span className="ml-1 text-textDim">Mint from HBAR →</span>

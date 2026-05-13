@@ -27,10 +27,12 @@ export interface MarketDisplay {
 }
 
 const REGISTRY: Record<string, MarketDisplay> = {
-  // Market 0 — SaucerSwap V2 USDC/WHBAR LP (chain 295)
-  "0x00000000000000000000000000000000009fadcb": {
-    displayName: "USDC / WHBAR LP",
-    shortName: "USDC/WHBAR",
+  // Market 0 — SaucerSwap V3 USDC/WHBAR LP, 90-day term, expires 2026-08-03.
+  // Address sourced from deployments/295.json#markets[0].evm. Lower-cased so
+  // it matches the case-insensitive lookup below.
+  "0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d": {
+    displayName: "SaucerSwap USDC/WHBAR · 90D",
+    shortName: "SaucerSwap USDC/WHBAR",
     assets: ["USDC", "WHBAR"],
     protocol: "SaucerSwap V3",
     poolFeePct: 0.15,

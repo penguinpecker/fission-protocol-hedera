@@ -34,6 +34,9 @@ const TARGETS = [
   { name: "FissionMarketRewards",    artifact: "FissionMarketRewards.sol/FissionMarketRewards.json",
     address: DEPLOY.markets?.[0]?.evm,                         live: true,
     note: "Market 0 is the only deployed FissionMarketRewards instance." },
+  { name: "FissionZap",              artifact: "FissionZap.sol/FissionZap.json",
+    address: DEPLOY.fission_zap?.evm,                          live: true,
+    note: "Permissionless one-tx HBAR→SY zap. Redeployed 2026-05-13 (v2 msg.value-driven)." },
   // SY_HBARX entry is intentionally omitted: the live one predates 12 bug
   // fixes; it will be redeployed in Phase C and verified then.
 ];

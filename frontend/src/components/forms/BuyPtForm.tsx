@@ -2,27 +2,36 @@
 
 /**
  * BuyPtForm — extracted from the previous TradeCard "pt" branch on the
- * market detail page. Single SY input → router.swapExactSyForPt → receive
- * PT to the connected account.
+ * market detail page. Single SY (or HBAR) input → router.swapExactSyForPt →
+ * receive PT to the connected account.
  *
- * Reuses:
- *   - useWalletAdapter for the unified EVM/Hedera signing path.
- *   - useWaitForTransactionReceipt (gated to EVM mode — Hedera adapter
- *     already awaits the receipt internally and returns a tx ID, which is
- *     not a 0x hash and would confuse Hashio polling).
- *   - AssociationGate is applied at the page level around this component.
+ * 2026-05-14 (auto-mint): adds a SOURCE toggle [HBAR | SY] at the top. In HBAR
+ * mode the form chains up to 4 txs front-to-back:
  *
- * Redesigned UI (2026-05-14): USD-denominated input with a "≈ N SY"
- * equivalence line, slippage chip presets (no slider), and a FlowOfFunds
- * card above the form that visualizes where the money goes.
+ *   1. Associate (SY-share / WHBAR / PT) — single batched HashPack popup
+ *   2. Zap HBAR → SY                     — `zapHbarToSy`
+ *   3. Approve SY for Router             — only when allowance < SY-out
+ *   4. Buy PT                            — `swapExactSyForPt`
+ *
+ * Each step awaits its own receipt (the Hedera adapter does this internally;
+ * EVM mode would wait via wagmi). On any step failure the state machine pins
+ * to `failedAt` so the user can retry from that step without restarting from
+ * scratch (so a successful zap doesn't get re-run after a failed approve).
+ *
+ * Post-zap SY balance: we never trust the on-screen estimate — the V3 swap
+ * inside the zap is tick-sensitive, dust drifts. After the zap receipt we
+ * refetch the user's SY-share balance and use (post - pre) as the actual
+ * `syAcquired`, which feeds the approve + swap legs. Hashio mirror reads
+ * lag receipts by 1-2s sometimes, so we poll-refetch up to 5× at 1s
+ * intervals until we see the delta materialize.
  */
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate } from "@/components/MarketPositionCard";
-import { useSyValueUsd } from "@/hooks/useSyValueUsd";
-import { ADDRESSES, isDeployed } from "@/lib/addresses";
+import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
+import { ADDRESSES, HEDERA_TOKENS, isDeployed } from "@/lib/addresses";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
@@ -44,61 +53,136 @@ interface Props {
   syBalance: bigint;
 }
 
+/* ─────────────────────────────────────────────────────── state machine */
+
+type Source = "hbar" | "sy";
+
+/**
+ * Discriminated state for the HBAR-mode chain. SY-mode keeps the simpler
+ * pre-existing flow and ignores most of this.
+ *
+ * `stepIdx` is 1-based so it matches the human-readable "Step 1/4" labels.
+ */
+type FlowState =
+  | { kind: "idle" }
+  | { kind: "associating"; stepIdx: 1 }
+  | { kind: "zapping"; stepIdx: 2 }
+  | { kind: "zapped"; syAcquired: bigint; stepIdx: 3 }
+  | { kind: "approving"; stepIdx: 3 }
+  | { kind: "approved"; syAcquired: bigint; stepIdx: 4 }
+  | { kind: "buying"; stepIdx: 4 }
+  | { kind: "done"; finalTxHash: string }
+  | { kind: "error"; message: string; failedAt: number; syAcquired?: bigint };
+
+/* ─────────────────────────────────────────────────────── component */
+
 export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   const adapter = useWalletAdapter();
   const hedera = useHederaWallet();
   const { usdPerShare } = useSyValueUsd(detail.sy);
+  const hbarUsd = useHbarUsd();
+
+  // Source toggle. Default HBAR for the common "I only have HBAR" case.
+  const [source, setSource] = useState<Source>("hbar");
+  const zapAvailable = isDeployed(ADDRESSES.fissionZap);
+  // If the zap contract isn't deployed in this env, force SY mode silently.
+  const effectiveSource: Source = zapAvailable ? source : "sy";
+
+  // Shared input state. The interpretation of `usdStr` / `rawStr` depends on
+  // mode: SY-mode treats them as raw SY (legacy); HBAR-mode treats `usdStr`
+  // as USD and `rawStr` as raw HBAR.
   const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
   const [usdStr, setUsdStr] = useState("");
   const [rawStr, setRawStr] = useState("");
   const [slippageBps, setSlippageBps] = useState(50);
-  const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Chain state.
+  const [flowState, setFlowState] = useState<FlowState>({ kind: "idle" });
+  const [lastTxHash, setLastTxHash] = useState<string | undefined>(undefined);
   const [writeError, setWriteError] = useState<string | null>(null);
 
   const useWagmiReceipt = adapter.mode === "evm";
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
-    hash: useWagmiReceipt ? txHash : undefined,
-    query: { enabled: useWagmiReceipt },
+    hash: useWagmiReceipt ? (lastTxHash as `0x${string}` | undefined) : undefined,
+    query: { enabled: useWagmiReceipt && !!lastTxHash && lastTxHash.startsWith("0x") },
   });
-  const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!txHash;
+  const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!lastTxHash;
   const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
   const routerDeployed = isDeployed(ADDRESSES.router);
-  const isPending = isSubmitting || adapter.isWritePending;
+  const isPending =
+    adapter.isWritePending ||
+    flowState.kind === "associating" ||
+    flowState.kind === "zapping" ||
+    flowState.kind === "approving" ||
+    flowState.kind === "buying";
 
-  // Convert the user's input (USD or raw) to a raw SY-bigint. usdToRawBigInt
-  // does a ceiled float divide — we'd rather overshoot by a unit than under-
-  // pay vs the user's intended dollar number.
-  const parsedAmt = useMemo<bigint>(() => {
+  /* ─────────────────────────── parsed amounts (mode-dependent) */
+
+  // Effective HBAR amount (whole HBAR, float). Only meaningful in HBAR mode.
+  const hbarAmount = useMemo<number>(() => {
+    if (effectiveSource !== "hbar") return 0;
+    if (inputMode === "usd" && hbarUsd !== undefined) {
+      const usd = parseFloat(usdStr.replace(/,/g, ""));
+      if (!Number.isFinite(usd) || usd <= 0) return 0;
+      return usd / hbarUsd;
+    }
+    const n = parseFloat(rawStr);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }, [effectiveSource, inputMode, usdStr, rawStr, hbarUsd]);
+
+  // SY-mode raw amount (legacy path).
+  const parsedSy = useMemo<bigint>(() => {
+    if (effectiveSource !== "sy") return 0n;
     if (inputMode === "usd" && usdPerShare !== undefined) {
       return usdToRawBigInt(usdStr, usdPerShare);
     }
     return parseRawBigInt(rawStr);
-  }, [inputMode, usdStr, rawStr, usdPerShare]);
+  }, [effectiveSource, inputMode, usdStr, rawStr, usdPerShare]);
 
-  const insufficient = parsedAmt > syBalance;
-  const needsSy = syBalance === 0n;
-  // Pool-depth size cap. At small TVL a meaningful trade moves the implied
-  // yield past the user's slippage tolerance and the tx would revert; we
-  // gate at the UI layer instead.
-  const sizeLimit = computeSizeLimit(parsedAmt, detail.totalSy, detail.totalPt);
+  // Estimated SY received from a HBAR zap, used for input preview + slippage
+  // floors before the zap actually runs. Real number after zap comes from a
+  // chain refetch (see `readPostZapSyBalance` below).
+  const estimatedSyFromHbar = useMemo<bigint>(() => {
+    if (effectiveSource !== "hbar") return 0n;
+    if (hbarAmount <= 0 || usdPerShare === undefined || hbarUsd === undefined) return 0n;
+    const usdValue = hbarAmount * hbarUsd;
+    const raw = Math.floor(usdValue / Math.max(1e-12, usdPerShare));
+    return raw > 0 ? BigInt(raw) : 0n;
+  }, [effectiveSource, hbarAmount, hbarUsd, usdPerShare]);
 
-  // Output preview — PT ≈ SY-in / ptRate, before slippage. We surface this
-  // both in the input ("Buying ~16.3M PT") and on the FlowOfFunds last row.
+  // Canonical "SY in" the downstream router call will see. In HBAR mode this
+  // is the estimate until the zap has actually run, then we substitute the
+  // chain-observed `syAcquired`. In SY mode it's just `parsedSy`.
+  const syForSwap: bigint = useMemo(() => {
+    if (effectiveSource === "sy") return parsedSy;
+    if (flowState.kind === "zapped" || flowState.kind === "approving" || flowState.kind === "approved" || flowState.kind === "buying") {
+      return (flowState as { syAcquired: bigint }).syAcquired;
+    }
+    return estimatedSyFromHbar;
+  }, [effectiveSource, parsedSy, estimatedSyFromHbar, flowState]);
+
+  const insufficient = effectiveSource === "sy" && parsedSy > syBalance;
+  const needsSy = effectiveSource === "sy" && syBalance === 0n;
+  const sizeLimit = computeSizeLimit(syForSwap, detail.totalSy, detail.totalPt);
+
+  /* ─────────────────────────── PT estimate + slippage floor */
+
   const apy = impliedApyPct(detail.lastLnImpliedRate);
   const days = daysUntil(detail.expiry);
-  const ptRate = ptToSyRate(apy, days); // 1 PT costs `ptRate` SY
+  const ptRate = ptToSyRate(apy, days);
   const ptEstimateNum =
-    parsedAmt > 0n && ptRate > 0
-      ? Number(parsedAmt) / Math.max(1e-9, ptRate)
+    syForSwap > 0n && ptRate > 0
+      ? Number(syForSwap) / Math.max(1e-9, ptRate)
       : 0;
   const ptEstimate = ptEstimateNum > 0 ? BigInt(Math.floor(ptEstimateNum)) : 0n;
   const minPtOut = (ptEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
+  /* ─────────────────────────── SY allowance (SY-mode + post-zap approve) */
+
   const spender: `0x${string}` = ADDRESSES.router;
   const allowanceRead = useReadContracts({
     contracts:
-      user && parsedAmt > 0n && detail.syShare
+      user && detail.syShare
         ? [
             {
               abi: [
@@ -117,56 +201,240 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
               functionName: "allowance",
               args: [user, spender],
             } as const,
+            // User's SY share balance — read separately (vs. the syBalance
+            // prop which is the parent's snapshot) so we can refetch it
+            // inline after the zap step settles.
+            {
+              abi: [
+                {
+                  type: "function",
+                  name: "balanceOf",
+                  stateMutability: "view",
+                  inputs: [{ name: "owner", type: "address" }],
+                  outputs: [{ type: "uint256" }],
+                },
+              ] as const,
+              address: detail.syShare,
+              functionName: "balanceOf",
+              args: [user],
+            } as const,
           ]
         : [],
-    query: { enabled: !!user && parsedAmt > 0n },
+    query: { enabled: !!user },
     allowFailure: true,
   });
   const allowance =
     allowanceRead.data?.[0]?.status === "success"
       ? (allowanceRead.data[0].result as bigint)
       : 0n;
-  const needsApprove = parsedAmt > 0n && allowance < parsedAmt;
+  const onChainSyBalance =
+    allowanceRead.data?.[1]?.status === "success"
+      ? (allowanceRead.data[1].result as bigint)
+      : syBalance;
 
-  const wrap = async <T,>(fn: () => Promise<T>) => {
-    setWriteError(null);
-    setIsSubmitting(true);
-    try {
-      return await fn();
-    } catch (e) {
-      setWriteError(e instanceof Error ? e.message : String(e));
-      throw e;
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  const needsApprove = syForSwap > 0n && allowance < syForSwap;
 
-  const onApprove = async () => {
-    try {
-      const { txHash: hash } = await wrap(() =>
-        adapter.write({
+  /* ─────────────────────────── helpers */
+
+  const setStatus = useCallback((next: FlowState) => {
+    setFlowState(next);
+  }, []);
+
+  // Read post-zap SY balance: Hashio mirror lag means the immediate refetch
+  // can return the pre-zap value. Retry up to 5× at 1s intervals comparing
+  // to the snapshot we took before submitting the zap. Returns the actual
+  // delta (post - pre); falls back to the estimate if we never see movement.
+  const readPostZapSyBalance = useCallback(
+    async (preZapSy: bigint, fallback: bigint): Promise<bigint> => {
+      for (let i = 0; i < 5; i++) {
+        try {
+          const r = await allowanceRead.refetch();
+          const fresh =
+            r.data?.[1]?.status === "success"
+              ? (r.data[1].result as bigint)
+              : preZapSy;
+          if (fresh > preZapSy) return fresh - preZapSy;
+        } catch {
+          /* swallow + retry */
+        }
+        await new Promise((res) => setTimeout(res, 1000));
+      }
+      return fallback;
+    },
+    [allowanceRead],
+  );
+
+  /* ─────────────────────────── individual step runners */
+
+  // Each step runner returns true on success / false on failure, sets state,
+  // and surfaces errors via setWriteError. They never throw — the chain
+  // orchestrator (`runChainFromStep`) reads the flow state to decide whether
+  // to advance.
+
+  const stepAssociate = useCallback(
+    async (tokens: `0x${string}`[]): Promise<boolean> => {
+      if (adapter.mode !== "hedera" || !adapter.accountId) return true; // EVM mode: HIP-904 covers it
+      try {
+        const { getMissingAssociations, associateTokens, evmAddressToTokenId } =
+          await import("@/lib/hedera-wallet/associations");
+        const ids = tokens.map(evmAddressToTokenId);
+        const missing = await getMissingAssociations(adapter.accountId, ids);
+        if (missing.length === 0) return true;
+        setStatus({ kind: "associating", stepIdx: 1 });
+        await associateTokens(hedera.getConnector(), adapter.accountId, missing);
+        return true;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setWriteError(msg);
+        setStatus({ kind: "error", message: msg, failedAt: 1 });
+        return false;
+      }
+    },
+    [adapter.mode, adapter.accountId, hedera, setStatus],
+  );
+
+  const stepZap = useCallback(
+    async (hbarIn: number): Promise<{ ok: true; syAcquired: bigint } | { ok: false }> => {
+      setStatus({ kind: "zapping", stepIdx: 2 });
+      // Snapshot pre-zap SY balance so we can compute the delta after.
+      let preZapSy: bigint = onChainSyBalance;
+      try {
+        const r = await allowanceRead.refetch();
+        if (r.data?.[1]?.status === "success") preZapSy = r.data[1].result as bigint;
+      } catch {
+        /* fall back to cached value */
+      }
+      try {
+        if (!user) throw new Error("No user address");
+        const { txHash } = await adapter.write({
+          kind: "zapHbarToSy",
+          zap: ADDRESSES.fissionZap,
+          sy: detail.sy,
+          receiver: user,
+          hbarIn,
+        });
+        setLastTxHash(txHash);
+        // Read actual SY received from chain (Hashio lag-aware).
+        const acquired = await readPostZapSyBalance(preZapSy, estimatedSyFromHbar);
+        setStatus({ kind: "zapped", syAcquired: acquired, stepIdx: 3 });
+        return { ok: true, syAcquired: acquired };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setWriteError(msg);
+        setStatus({ kind: "error", message: msg, failedAt: 2 });
+        return { ok: false };
+      }
+    },
+    [adapter, allowanceRead, detail.sy, estimatedSyFromHbar, onChainSyBalance, readPostZapSyBalance, setStatus, user],
+  );
+
+  const stepApprove = useCallback(
+    async (amount: bigint, syAcquired: bigint): Promise<boolean> => {
+      setStatus({ kind: "approving", stepIdx: 3 });
+      try {
+        const { txHash } = await adapter.write({
           kind: "approveErc20",
           token: detail.syShare,
           spender,
-          amount: parsedAmt,
-        }),
-      );
-      setTxHash(hash as `0x${string}`);
-    } catch {
-      /* error already captured */
-    }
-  };
+          amount,
+        });
+        setLastTxHash(txHash);
+        await allowanceRead.refetch();
+        setStatus({ kind: "approved", syAcquired, stepIdx: 4 });
+        return true;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setWriteError(msg);
+        setStatus({ kind: "error", message: msg, failedAt: 3, syAcquired });
+        return false;
+      }
+    },
+    [adapter, allowanceRead, detail.syShare, spender, setStatus],
+  );
 
-  const onTrade = async () => {
-    if (!user || parsedAmt === 0n || !routerDeployed) return;
-    if (parsedAmt > syBalance) return;
-    if (needsApprove) return;
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
-    // SY-side min — matches the legacy behaviour: a haircut on input SY so the
-    // router's internal swap check has headroom. We additionally express the
-    // PT-out floor in the UI via `minPtOut` but the router contract uses the
-    // SY-side guardrail.
-    const minOut = (parsedAmt * BigInt(10_000 - slippageBps)) / 10_000n;
+  const stepBuyPt = useCallback(
+    async (syIn: bigint): Promise<boolean> => {
+      if (!user) return false;
+      setStatus({ kind: "buying", stepIdx: 4 });
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
+      const minSyOutBudget = (syIn * BigInt(10_000 - slippageBps)) / 10_000n;
+      try {
+        const { txHash } = await adapter.write({
+          kind: "swapExactSyForPt",
+          router: ADDRESSES.router,
+          market,
+          syIn,
+          minPtOut: minSyOutBudget,
+          receiver: user,
+          deadline,
+        });
+        setLastTxHash(txHash);
+        setStatus({ kind: "done", finalTxHash: txHash });
+        return true;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setWriteError(msg);
+        setStatus({ kind: "error", message: msg, failedAt: 4 });
+        return false;
+      }
+    },
+    [adapter, market, slippageBps, setStatus, user],
+  );
+
+  /* ─────────────────────────── chain orchestrators */
+
+  // Hedera tokens that the HBAR flow needs to receive: SY share (from zap),
+  // PT (from final swap), and WHBAR (the zap leaves dust on rare paths).
+  const hbarFlowTokens: `0x${string}`[] = useMemo(
+    () => [detail.syShare, HEDERA_TOKENS.WHBAR, detail.pt],
+    [detail.syShare, detail.pt],
+  );
+
+  const runHbarChainFromStep = useCallback(
+    async (startStep: number, carrySyAcquired?: bigint) => {
+      setWriteError(null);
+
+      let syAcquired: bigint = carrySyAcquired ?? 0n;
+
+      // Step 1: Associate.
+      if (startStep <= 1) {
+        const ok = await stepAssociate(hbarFlowTokens);
+        if (!ok) return;
+      }
+
+      // Step 2: Zap HBAR → SY.
+      if (startStep <= 2) {
+        const r = await stepZap(hbarAmount);
+        if (!r.ok) return;
+        syAcquired = r.syAcquired;
+      }
+
+      // Step 3: Approve SY (if allowance insufficient).
+      if (startStep <= 3) {
+        const r = await allowanceRead.refetch();
+        const currentAllowance =
+          r.data?.[0]?.status === "success" ? (r.data[0].result as bigint) : allowance;
+        if (currentAllowance < syAcquired) {
+          const ok = await stepApprove(syAcquired, syAcquired);
+          if (!ok) return;
+        } else {
+          setStatus({ kind: "approved", syAcquired, stepIdx: 4 });
+        }
+      }
+
+      // Step 4: Swap.
+      if (startStep <= 4) {
+        await stepBuyPt(syAcquired);
+      }
+    },
+    [allowance, allowanceRead, hbarAmount, hbarFlowTokens, setStatus, stepApprove, stepAssociate, stepBuyPt, stepZap],
+  );
+
+  // Legacy SY-mode trade flow — just associate PT then either approve or buy.
+  const runSyChain = useCallback(async () => {
+    if (!user || parsedSy === 0n || !routerDeployed) return;
+    if (parsedSy > syBalance) return;
+    setWriteError(null);
 
     // Pre-flight HTS association for PT (PT is delivered to the user).
     if (adapter.mode === "hedera" && adapter.accountId) {
@@ -176,100 +444,243 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         const ids = [detail.pt].map(evmAddressToTokenId);
         const missing = await getMissingAssociations(adapter.accountId, ids);
         if (missing.length > 0) {
-          await wrap(() => associateTokens(hedera.getConnector(), adapter.accountId!, missing));
+          setStatus({ kind: "associating", stepIdx: 1 });
+          await associateTokens(hedera.getConnector(), adapter.accountId, missing);
         }
       } catch (e) {
-        setWriteError(e instanceof Error ? e.message : String(e));
+        const msg = e instanceof Error ? e.message : String(e);
+        setWriteError(msg);
+        setStatus({ kind: "error", message: msg, failedAt: 1 });
         return;
       }
     }
 
-    try {
-      const { txHash: hash } = await wrap(() =>
-        adapter.write({
-          kind: "swapExactSyForPt",
-          router: ADDRESSES.router,
-          market,
-          syIn: parsedAmt,
-          minPtOut: minOut,
-          receiver: user,
-          deadline,
-        }),
-      );
-      setTxHash(hash as `0x${string}`);
-    } catch {
-      /* error already captured */
+    if (needsApprove) {
+      const ok = await stepApprove(parsedSy, parsedSy);
+      if (!ok) return;
     }
-  };
+    await stepBuyPt(parsedSy);
+  }, [adapter.mode, adapter.accountId, detail.pt, hedera, needsApprove, parsedSy, routerDeployed, setStatus, stepApprove, stepBuyPt, syBalance, user]);
 
-  const onPrimary = () => {
-    if (needsApprove) onApprove();
-    else onTrade();
-  };
+  /* ─────────────────────────── primary handler */
+
+  const onPrimary = useCallback(async () => {
+    if (!user) return;
+    if (flowState.kind === "error") {
+      // Retry-from-failed-step.
+      const carry = flowState.syAcquired;
+      void runHbarChainFromStep(flowState.failedAt, carry);
+      return;
+    }
+    if (effectiveSource === "hbar") {
+      if (hbarAmount <= 0 || !zapAvailable) return;
+      void runHbarChainFromStep(1);
+    } else {
+      void runSyChain();
+    }
+  }, [effectiveSource, flowState, hbarAmount, runHbarChainFromStep, runSyChain, user, zapAvailable]);
+
+  // Reset flow state when the user switches mode or clears their input — so
+  // the "Retry from step N" button doesn't linger on a different trade.
+  useEffect(() => {
+    if (flowState.kind !== "done" && flowState.kind !== "error") return;
+    if (effectiveSource === "hbar" && hbarAmount === 0) {
+      setFlowState({ kind: "idle" });
+      setLastTxHash(undefined);
+      setWriteError(null);
+    }
+    if (effectiveSource === "sy" && parsedSy === 0n) {
+      setFlowState({ kind: "idle" });
+      setLastTxHash(undefined);
+      setWriteError(null);
+    }
+  }, [effectiveSource, flowState.kind, hbarAmount, parsedSy]);
 
   const resetWrite = () => {
-    setTxHash(undefined);
+    setFlowState({ kind: "idle" });
+    setLastTxHash(undefined);
     setWriteError(null);
   };
 
-  // Build the FlowOfFunds steps from current input state. Highlights:
-  //   - "Router" pulls active during pending
-  //   - All steps go "complete" on tx success
-  const isActive = isPending || isConfirmingFinal;
-  const isDone = isConfirmedFinal;
-  const flowSteps: FlowStep[] = [
-    {
-      label: "You pay",
-      detail: "Connected wallet → Router",
-      inToken:
-        parsedAmt > 0n
-          ? {
-              sym: "SY",
-              amount: formatCompact(parsedAmt),
-              usd:
-                usdPerShare !== undefined
-                  ? `≈ $${(Number(parsedAmt) * usdPerShare).toFixed(2)}`
-                  : undefined,
-            }
-          : undefined,
-      isComplete: isDone,
-    },
-    {
-      label: "Router",
-      detail: shortAddr(ADDRESSES.router),
-      isActive: isActive && !isDone,
-      isComplete: isDone,
-    },
-    {
-      label: "Fission AMM",
-      detail: `swapExactSyForPt · ${apy.toFixed(2)}% impl APY`,
-      isActive: isActive && !isDone,
-      isComplete: isDone,
-    },
-    {
-      label: "PT delivered",
-      detail: `≤ ${(slippageBps / 100).toFixed(2)}% slippage`,
-      outToken:
-        ptEstimate > 0n
-          ? {
-              sym: "PT",
-              amount: `~${formatCompact(ptEstimate)}`,
-              usd:
-                usdPerShare !== undefined
-                  ? `min ${formatCompact(minPtOut)} PT`
-                  : undefined,
-            }
-          : undefined,
-      isComplete: isDone,
-    },
-    {
-      label: "Your wallet",
-      detail: user ? shortAddr(user) : "—",
-      isComplete: isDone,
-    },
-  ];
+  /* ─────────────────────────── FlowOfFunds steps */
 
+  const isActive = isPending || isConfirmingFinal;
+  const isDoneFinal = flowState.kind === "done";
   const poolHealthy = !sizeLimit.exceeded && sizeLimit.poolDepth > 0n;
+
+  const stepIsActive = (idx: number): boolean => {
+    switch (flowState.kind) {
+      case "associating": return idx === 1;
+      case "zapping":     return idx === 2;
+      case "approving":   return idx === 3;
+      case "buying":      return idx === 4;
+      default:            return false;
+    }
+  };
+  const stepIsComplete = (idx: number): boolean => {
+    if (flowState.kind === "done") return true;
+    if (flowState.kind === "error") return idx < flowState.failedAt;
+    switch (flowState.kind) {
+      case "zapping":    return idx < 2;
+      case "zapped":     return idx <= 2;
+      case "approving":  return idx < 3;
+      case "approved":   return idx <= 3;
+      case "buying":     return idx < 4;
+      default:           return false;
+    }
+  };
+
+  const flowSteps: FlowStep[] = effectiveSource === "hbar"
+    ? [
+        {
+          label: "Associate tokens",
+          detail: adapter.mode === "hedera" ? "HTS one-time setup (SY share, WHBAR, PT)" : "EVM mode — HIP-904 covers it",
+          isActive: stepIsActive(1),
+          isComplete: stepIsComplete(1),
+        },
+        {
+          label: "Zap HBAR → SY",
+          detail: `${shortAddr(ADDRESSES.fissionZap)} · +5 HBAR NPM fee`,
+          inToken:
+            hbarAmount > 0
+              ? {
+                  sym: "HBAR",
+                  amount: hbarAmount.toFixed(2),
+                  usd: hbarUsd !== undefined ? `≈ $${(hbarAmount * hbarUsd).toFixed(2)}` : undefined,
+                }
+              : undefined,
+          outToken:
+            syForSwap > 0n
+              ? { sym: "SY", amount: `~${formatCompact(syForSwap)}` }
+              : undefined,
+          isActive: stepIsActive(2),
+          isComplete: stepIsComplete(2),
+        },
+        {
+          label: "Approve SY for Router",
+          detail: shortAddr(ADDRESSES.router),
+          isActive: stepIsActive(3),
+          isComplete: stepIsComplete(3),
+        },
+        {
+          label: "Buy PT (swapExactSyForPt)",
+          detail: `${apy.toFixed(2)}% impl APY · ≤ ${(slippageBps / 100).toFixed(2)}% slippage`,
+          inToken:
+            syForSwap > 0n
+              ? { sym: "SY", amount: formatCompact(syForSwap) }
+              : undefined,
+          outToken:
+            ptEstimate > 0n
+              ? {
+                  sym: "PT",
+                  amount: `~${formatCompact(ptEstimate)}`,
+                  usd: `min ${formatCompact(minPtOut)} PT`,
+                }
+              : undefined,
+          isActive: stepIsActive(4),
+          isComplete: stepIsComplete(4),
+        },
+        {
+          label: "Your wallet",
+          detail: user ? shortAddr(user) : "—",
+          isComplete: isDoneFinal,
+        },
+      ]
+    : [
+        {
+          label: "You pay",
+          detail: "Connected wallet → Router",
+          inToken:
+            parsedSy > 0n
+              ? {
+                  sym: "SY",
+                  amount: formatCompact(parsedSy),
+                  usd:
+                    usdPerShare !== undefined
+                      ? `≈ $${(Number(parsedSy) * usdPerShare).toFixed(2)}`
+                      : undefined,
+                }
+              : undefined,
+          isComplete: isDoneFinal,
+        },
+        {
+          label: "Router",
+          detail: shortAddr(ADDRESSES.router),
+          isActive: isActive && !isDoneFinal,
+          isComplete: isDoneFinal,
+        },
+        {
+          label: "Fission AMM",
+          detail: `swapExactSyForPt · ${apy.toFixed(2)}% impl APY`,
+          isActive: isActive && !isDoneFinal,
+          isComplete: isDoneFinal,
+        },
+        {
+          label: "PT delivered",
+          detail: `≤ ${(slippageBps / 100).toFixed(2)}% slippage`,
+          outToken:
+            ptEstimate > 0n
+              ? {
+                  sym: "PT",
+                  amount: `~${formatCompact(ptEstimate)}`,
+                  usd:
+                    usdPerShare !== undefined
+                      ? `min ${formatCompact(minPtOut)} PT`
+                      : undefined,
+                }
+              : undefined,
+          isComplete: isDoneFinal,
+        },
+        {
+          label: "Your wallet",
+          detail: user ? shortAddr(user) : "—",
+          isComplete: isDoneFinal,
+        },
+      ];
+
+  /* ─────────────────────────── button label */
+
+  const buttonLabel = (): string => {
+    if (!user) return "Connect wallet";
+    if (effectiveSource === "hbar") {
+      if (!zapAvailable) return "Zap not deployed";
+      if (hbarAmount === 0) return "Enter amount";
+      if (flowState.kind === "error") {
+        const stepName = ["", "association", "zap", "approve", "buy"][flowState.failedAt] ?? "step";
+        return `Retry from ${stepName}`;
+      }
+      if (flowState.kind === "associating") return "Associating tokens…";
+      if (flowState.kind === "zapping") return "Minting SY from HBAR…";
+      if (flowState.kind === "approving") return "Approving SY for Router…";
+      if (flowState.kind === "buying") return "Buying PT…";
+      if (flowState.kind === "done") return "✓ Done";
+      return `Buy PT via Zap`;
+    }
+    // SY mode
+    if (parsedSy === 0n) return "Enter amount";
+    if (insufficient) return "Insufficient SY";
+    if (sizeLimit.exceeded) return "Trade too large for pool";
+    if (flowState.kind === "error") {
+      return flowState.failedAt === 1 ? "Retry association" : flowState.failedAt === 3 ? "Retry approval" : "Retry buy";
+    }
+    if (flowState.kind === "associating") return "Associating PT…";
+    if (flowState.kind === "approving") return "Approving SY for Router…";
+    if (flowState.kind === "buying") return "Buying PT…";
+    if (flowState.kind === "done") return "✓ Done";
+    if (isPending) return "Sign in HashPack…";
+    if (isConfirmingFinal) return "Waiting for confirmation…";
+    if (needsApprove) return "Approve SY for Router";
+    return "Buy PT";
+  };
+
+  const buttonDisabled =
+    !user ||
+    isPending ||
+    isConfirmingFinal ||
+    !routerDeployed ||
+    (effectiveSource === "hbar"
+      ? hbarAmount === 0 || !zapAvailable
+      : parsedSy === 0n || insufficient || sizeLimit.exceeded);
 
   return (
     <div className="flex flex-col gap-3">
@@ -280,7 +691,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
           name="Buy PT"
           right={
             <>
-              {usdPerShare === undefined && (
+              {(usdPerShare === undefined || (effectiveSource === "hbar" && hbarUsd === undefined)) && (
                 <StatusPill tone="info">Price loading</StatusPill>
               )}
               {poolHealthy ? (
@@ -293,61 +704,132 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
           }
         />
 
+        {/* SOURCE toggle — HBAR (auto-mint) or SY (legacy). */}
+        <div className="mb-3">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-textDim">
+              Source
+            </span>
+            {!zapAvailable && (
+              <span className="font-mono text-[9px] uppercase tracking-[1.5px] text-warning">
+                Zap unavailable — using SY
+              </span>
+            )}
+          </div>
+          <div className="flex items-stretch gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setSource("hbar");
+                setUsdStr("");
+                setRawStr("");
+                resetWrite();
+              }}
+              disabled={!zapAvailable}
+              className={`flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                effectiveSource === "hbar"
+                  ? "border-text/60 bg-white/[0.08] text-text"
+                  : "border-border bg-bgInput text-textSec hover:border-borderHover hover:text-text"
+              }`}
+            >
+              HBAR
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSource("sy");
+                setUsdStr("");
+                setRawStr("");
+                resetWrite();
+              }}
+              className={`flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition ${
+                effectiveSource === "sy"
+                  ? "border-text/60 bg-white/[0.08] text-text"
+                  : "border-border bg-bgInput text-textSec hover:border-borderHover hover:text-text"
+              }`}
+            >
+              SY
+            </button>
+          </div>
+          <p className="mt-1.5 font-mono text-[9px] leading-relaxed text-textDim">
+            {effectiveSource === "hbar"
+              ? "Auto-mint: HBAR → SY → PT in one chained flow (2-4 wallet popups)."
+              : "Direct: spend SY shares you already hold."}
+          </p>
+        </div>
+
         <SectionDivider label="Input" />
 
-        <MoneyInput
-          mode={inputMode}
-          setMode={setInputMode}
-          usdStr={usdStr}
-          setUsdStr={setUsdStr}
-          rawStr={rawStr}
-          setRawStr={setRawStr}
-          parsedRaw={parsedAmt}
-          balance={syBalance}
-          tokenSym="SY"
-          label="You pay"
-          usdPerUnit={usdPerShare}
-          formatRaw={formatCompact}
-          insufficient={insufficient}
-          outputHint={
-            ptEstimate > 0n ? (
-              <span>
-                Buying <span className="text-text">~{formatCompact(ptEstimate)} PT</span>
-              </span>
-            ) : undefined
-          }
-          minOutHint={
-            ptEstimate > 0n ? (
-              <span>
-                Min received <span className="text-text">{formatCompact(minPtOut)} PT</span>
-              </span>
-            ) : undefined
-          }
-          caption={
-            <>
-              Pool depth: {formatCompact(sizeLimit.poolDepth)} · max trade{" "}
-              {MAX_TRADE_PCT_OF_POOL}% = {formatCompact(sizeLimit.maxAllowed)}
-              {" · "}gas ~0.08 HBAR
-            </>
-          }
-          feedback={
-            insufficient ? (
-              <span className="block font-mono text-[10px] font-medium text-error">
-                Insufficient SY — you have {formatCompact(syBalance)}.
-              </span>
-            ) : sizeLimit.message ? (
-              <span className="block font-mono text-[10px] font-medium text-warning">
-                {sizeLimit.message}
-              </span>
-            ) : null
-          }
-        />
+        {effectiveSource === "hbar" ? (
+          <HbarInput
+            inputMode={inputMode}
+            setInputMode={setInputMode}
+            usdStr={usdStr}
+            setUsdStr={setUsdStr}
+            rawStr={rawStr}
+            setRawStr={setRawStr}
+            hbarAmount={hbarAmount}
+            hbarUsd={hbarUsd}
+            estimatedSy={estimatedSyFromHbar}
+            ptEstimate={ptEstimate}
+            minPtOut={minPtOut}
+            slippageBps={slippageBps}
+          />
+        ) : (
+          <MoneyInput
+            mode={inputMode}
+            setMode={setInputMode}
+            usdStr={usdStr}
+            setUsdStr={setUsdStr}
+            rawStr={rawStr}
+            setRawStr={setRawStr}
+            parsedRaw={parsedSy}
+            balance={syBalance}
+            tokenSym="SY"
+            label="You pay"
+            usdPerUnit={usdPerShare}
+            formatRaw={formatCompact}
+            insufficient={insufficient}
+            outputHint={
+              ptEstimate > 0n ? (
+                <span>
+                  Buying <span className="text-text">~{formatCompact(ptEstimate)} PT</span>
+                </span>
+              ) : undefined
+            }
+            minOutHint={
+              ptEstimate > 0n ? (
+                <span>
+                  Min received <span className="text-text">{formatCompact(minPtOut)} PT</span>
+                </span>
+              ) : undefined
+            }
+            caption={
+              <>
+                Pool depth: {formatCompact(sizeLimit.poolDepth)} · max trade{" "}
+                {MAX_TRADE_PCT_OF_POOL}% = {formatCompact(sizeLimit.maxAllowed)}
+                {" · "}gas ~0.08 HBAR
+              </>
+            }
+            feedback={
+              insufficient ? (
+                <span className="block font-mono text-[10px] font-medium text-error">
+                  Insufficient SY — you have {formatCompact(syBalance)}.
+                </span>
+              ) : sizeLimit.message ? (
+                <span className="block font-mono text-[10px] font-medium text-warning">
+                  {sizeLimit.message}
+                </span>
+              ) : null
+            }
+          />
+        )}
 
-        {user && needsSy && (
+        {user && needsSy && effectiveSource === "sy" && (
           <div className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-warning">
-            <span className="font-semibold">You have 0 SY shares.</span> Use
-            the &ldquo;Need SY first?&rdquo; mint flow on the market overview
-            to deposit HBAR and mint SY before buying PT.
+            <span className="font-semibold">You have 0 SY shares.</span> Switch the
+            source to <span className="font-semibold">HBAR</span> above to mint SY +
+            buy PT in one flow.
           </div>
         )}
 
@@ -363,56 +845,39 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
 
         <button
           type="button"
-          disabled={
-            !user ||
-            parsedAmt === 0n ||
-            isPending ||
-            isConfirmingFinal ||
-            insufficient ||
-            sizeLimit.exceeded ||
-            !routerDeployed
-          }
-          onClick={onPrimary}
+          disabled={buttonDisabled}
+          onClick={() => void onPrimary()}
           className="w-full rounded-[10px] bg-white px-7 py-3.5 font-mono text-sm font-semibold uppercase tracking-[1px] text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {!user
-            ? "Connect wallet"
-            : parsedAmt === 0n
-              ? "Enter amount"
-              : insufficient
-                ? "Insufficient SY"
-                : sizeLimit.exceeded
-                  ? "Trade too large for pool"
-                  : isPending
-                    ? "Sign in HashPack…"
-                    : isConfirmingFinal
-                      ? "Waiting for confirmation…"
-                      : needsApprove
-                        ? "Approve SY for Router"
-                        : "Buy PT"}
+          {buttonLabel()}
         </button>
 
-        {needsApprove && (
+        {effectiveSource === "hbar" && hbarAmount > 0 && flowState.kind === "idle" && (
           <p className="mt-2 font-mono text-[10px] leading-relaxed text-textDim">
-            One-time per allowance reset. After approval the button switches to the trade.
+            Up to 4 HashPack popups: associate tokens, zap to SY, approve, buy PT.
           </p>
         )}
 
         {writeError && (
           <div className="mt-2 rounded-lg border border-error/30 bg-error/10 px-3 py-2 font-mono text-[10px] leading-relaxed text-error">
+            {flowState.kind === "error" && (
+              <div className="mb-1 font-semibold uppercase tracking-[1.5px]">
+                Step {flowState.failedAt} failed
+              </div>
+            )}
             {writeError.slice(0, 240)}
           </div>
         )}
 
-        {isConfirmedFinal && txHash && (
+        {flowState.kind === "done" && lastTxHash && (
           <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-success">
-            <div className="font-semibold uppercase tracking-[1px]">Transaction confirmed.</div>
+            <div className="font-semibold uppercase tracking-[1px]">PT acquired.</div>
             <div className="mt-1 break-all text-[10px] text-success/80">
-              tx: {txHash.slice(0, 18)}…{txHash.slice(-8)}
+              tx: {lastTxHash.slice(0, 18)}…{lastTxHash.slice(-8)}
             </div>
             <div className="mt-1.5 flex gap-3">
               <a
-                href={`https://hashscan.io/mainnet/transaction/${txHash}`}
+                href={`https://hashscan.io/mainnet/transaction/${lastTxHash}`}
                 target="_blank"
                 rel="noreferrer"
                 className="underline underline-offset-2 hover:text-text"
@@ -439,6 +904,162 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         )}
       </div>
     </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────── HBAR-mode input */
+
+/**
+ * HBAR-mode input — USD/HBAR toggle, with a 3-stage preview:
+ *
+ *   You pay        [USD] [HBAR]
+ *   $ 5.00
+ *   ≈ 52.84 HBAR → ~52.8M SY → ~53.8M PT
+ *   Min received 53.5M PT · Slippage ≤ 0.50%
+ *
+ * Mirrors the MoneyInput styling so the form layout stays identical between
+ * source modes. Doesn't enforce an "insufficient HBAR" check — wallet rejects
+ * are clearer + reading HBAR balance is a separate call we'd rather not add
+ * to every form render.
+ */
+function HbarInput({
+  inputMode,
+  setInputMode,
+  usdStr,
+  setUsdStr,
+  rawStr,
+  setRawStr,
+  hbarAmount,
+  hbarUsd,
+  estimatedSy,
+  ptEstimate,
+  minPtOut,
+  slippageBps,
+}: {
+  inputMode: "usd" | "raw";
+  setInputMode: (m: "usd" | "raw") => void;
+  usdStr: string;
+  setUsdStr: (v: string) => void;
+  rawStr: string;
+  setRawStr: (v: string) => void;
+  hbarAmount: number;
+  hbarUsd: number | undefined;
+  estimatedSy: bigint;
+  ptEstimate: bigint;
+  minPtOut: bigint;
+  slippageBps: number;
+}) {
+  // Force raw (HBAR) mode if no price feed.
+  const effective = hbarUsd === undefined ? "raw" : inputMode;
+  const tooSmall = hbarAmount > 0 && hbarAmount < 1;
+
+  return (
+    <label className="mb-3 block">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-textDim">
+          You pay
+        </span>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setInputMode("usd")}
+            disabled={hbarUsd === undefined}
+            className={`rounded-[4px] border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[1px] transition disabled:opacity-30 ${
+              effective === "usd"
+                ? "border-text/60 bg-white/[0.08] text-text"
+                : "border-border bg-bgInput text-textDim hover:text-text"
+            }`}
+          >
+            USD
+          </button>
+          <button
+            type="button"
+            onClick={() => setInputMode("raw")}
+            className={`rounded-[4px] border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[1px] transition ${
+              effective === "raw"
+                ? "border-text/60 bg-white/[0.08] text-text"
+                : "border-border bg-bgInput text-textDim hover:text-text"
+            }`}
+          >
+            HBAR
+          </button>
+        </div>
+      </div>
+
+      <div
+        className={`flex items-stretch rounded-[10px] border bg-bgInput transition ${
+          tooSmall
+            ? "border-warning/60 focus-within:border-warning"
+            : "border-border focus-within:border-borderHover"
+        }`}
+      >
+        {effective === "usd" && (
+          <span className="flex items-center pl-3 font-mono text-base text-textDim">
+            $
+          </span>
+        )}
+        <input
+          type="number"
+          inputMode="decimal"
+          value={effective === "usd" ? usdStr : rawStr}
+          onChange={(e) =>
+            effective === "usd" ? setUsdStr(e.target.value) : setRawStr(e.target.value)
+          }
+          placeholder="0.00"
+          className="w-full bg-transparent px-3 py-3.5 font-mono text-base text-text outline-none"
+          style={{ fontVariantNumeric: "tabular-nums" }}
+        />
+        {effective === "raw" && (
+          <span className="flex items-center pr-3 font-mono text-[12px] text-textDim">
+            HBAR
+          </span>
+        )}
+      </div>
+
+      <div className="mt-1.5 flex items-center justify-between font-mono text-[10px] text-textDim">
+        <span style={{ fontVariantNumeric: "tabular-nums" }}>
+          {hbarAmount > 0 && effective === "usd" ? (
+            <>≈ {hbarAmount.toFixed(2)} HBAR</>
+          ) : hbarAmount > 0 && hbarUsd !== undefined ? (
+            <>≈ ${(hbarAmount * hbarUsd).toFixed(2)}</>
+          ) : hbarUsd === undefined ? (
+            <span>price loading…</span>
+          ) : (
+            <>&nbsp;</>
+          )}
+        </span>
+        <span>+5 HBAR NPM fee · gas ~0.30 HBAR</span>
+      </div>
+
+      {/* Three-stage preview line: HBAR → SY → PT */}
+      {hbarAmount > 0 && estimatedSy > 0n && (
+        <div className="mt-1 font-mono text-[10px] text-textSec">
+          <span>
+            {hbarAmount.toFixed(2)} HBAR
+          </span>
+          <span className="text-textDim"> → </span>
+          <span className="text-text">~{formatCompact(estimatedSy)} SY</span>
+          {ptEstimate > 0n && (
+            <>
+              <span className="text-textDim"> → </span>
+              <span className="text-text">~{formatCompact(ptEstimate)} PT</span>
+            </>
+          )}
+        </div>
+      )}
+      {ptEstimate > 0n && (
+        <div className="mt-0.5 font-mono text-[10px] text-textDim">
+          Min received <span className="text-text">{formatCompact(minPtOut)} PT</span> ·{" "}
+          Slippage ≤ {(slippageBps / 100).toFixed(2)}%
+        </div>
+      )}
+
+      {tooSmall && (
+        <span className="mt-1 block font-mono text-[10px] font-medium text-warning">
+          Tiny amounts get eaten by the 5 HBAR NPM fee — commit ≥1 HBAR.
+        </span>
+      )}
+    </label>
   );
 }
 
