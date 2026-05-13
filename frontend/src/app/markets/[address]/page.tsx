@@ -312,7 +312,19 @@ function TradeCard({
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
-  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
+  // In Hedera-native mode the adapter awaits receipt internally and
+  // returns a Hedera tx ID (`0.0.X@SECS.NANOS`) which isn't a 0x hash —
+  // wagmi's hook would poll Hashio with garbage and spin forever, so we
+  // disable it. EVM mode keeps the wagmi-driven confirmation flow.
+  const useWagmiReceipt = adapter.mode === "evm";
+  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+    hash: useWagmiReceipt ? txHash : undefined,
+    query: { enabled: useWagmiReceipt },
+  });
+  // Hedera-mode "isConfirmed" mirrors txHash presence — the adapter only
+  // resolves after getReceiptWithSigner succeeded.
+  const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!txHash;
+  const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
   const routerDeployed = isDeployed(ADDRESSES.router);
   const isPending = isSubmitting || adapter.isWritePending;
   const resetWrite = () => {
@@ -586,7 +598,7 @@ function TradeCard({
             !user ||
             !amount ||
             isPending ||
-            isConfirming ||
+            isConfirmingFinal ||
             insufficient ||
             (strategy !== "split" && !routerDeployed)
           }
@@ -601,7 +613,7 @@ function TradeCard({
                 ? "Insufficient SY"
                 : isPending
                   ? "Sign in HashPack…"
-                  : isConfirming
+                  : isConfirmingFinal
                     ? "Waiting for confirmation…"
                     : needsApprove
                       ? `Approve SY for ${strategy === "split" ? "Market" : "Router"}`
@@ -624,7 +636,7 @@ function TradeCard({
           </div>
         )}
 
-        {isConfirmed && txHash && (
+        {isConfirmedFinal && txHash && (
           <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 text-[12px] leading-relaxed text-success">
             <div className="font-semibold">Transaction confirmed.</div>
             <div className="mt-1 break-all font-mono text-[10px] text-success/80">
@@ -704,7 +716,16 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
   const adapter = useWalletAdapter();
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
+  // EVM mode: wait via wagmi/Hashio. Hedera mode: adapter already awaited
+  // receipt internally; treat tx as confirmed the instant we have a hash
+  // (avoids Hashio 400s for non-0x Hedera tx IDs).
+  const useWagmiReceipt = adapter.mode === "evm";
+  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+    hash: useWagmiReceipt ? txHash : undefined,
+    query: { enabled: useWagmiReceipt },
+  });
+  const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!txHash;
+  const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
   const [hbar, setHbar] = useState("");
   const [hbarError, setHbarError] = useState<string | null>(null);
 
@@ -790,7 +811,7 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
 
       <button
         type="button"
-        disabled={!user || userHbarN === 0 || isPending || isConfirming}
+        disabled={!user || userHbarN === 0 || isPending || isConfirmingFinal}
         onClick={onZap}
         className="w-full rounded-[10px] bg-white px-7 py-3.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
       >
@@ -800,12 +821,12 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
             ? "Enter HBAR amount"
             : isPending
               ? "Sign in HashPack…"
-              : isConfirming
+              : isConfirmingFinal
                 ? "Waiting for confirmation…"
                 : `Mint SY with ${hbar} HBAR`}
       </button>
 
-      {isConfirmed && txHash && (
+      {isConfirmedFinal && txHash && (
         <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 text-[12px] leading-relaxed text-success">
           <div className="font-semibold">Mint confirmed.</div>
           <div className="mt-1 break-all font-mono text-[10px] text-success/80">
