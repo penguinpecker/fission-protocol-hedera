@@ -503,3 +503,30 @@ export function formatUsd(n: number | undefined): string | null {
   if (n > 0 && n < 0.01) return `$${n.toFixed(4)}`;
   return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+
+/**
+ * Standalone HBAR/USD price hook. Reuses the module-scope CoinGecko cache so
+ * the BuyPt/BuyYt/MintSy forms don't each hit the rate-limited free endpoint —
+ * `useSyValueUsd` and this hook share a single 60 s TTL cache and a single
+ * inflight promise.
+ *
+ * Returns `undefined` while loading or on fetch failure. Callers should fall
+ * back to a raw-amount input UI in that case rather than silently rendering $0.
+ */
+export function useHbarUsd(): number | undefined {
+  const [hbarUsd, setHbarUsd] = useState<number | undefined>(
+    hbarCache && Date.now() - hbarCache.ts < HBAR_CACHE_TTL_MS ? hbarCache.price : undefined,
+  );
+  useEffect(() => {
+    if (hbarUsd !== undefined) return;
+    let cancelled = false;
+    void fetchHbarUsd().then((p) => {
+      if (cancelled) return;
+      if (p !== null) setHbarUsd(p);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [hbarUsd]);
+  return hbarUsd;
+}

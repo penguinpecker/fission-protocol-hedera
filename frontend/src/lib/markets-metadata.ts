@@ -42,3 +42,31 @@ const REGISTRY: Record<string, MarketDisplay> = {
 export function getMarketDisplay(address: string): MarketDisplay | null {
   return REGISTRY[address.toLowerCase()] ?? null;
 }
+
+/**
+ * Tailwind-class color hints for asset chips on the markets list. Subtle tones
+ * tuned against the dark background — they read as "tinted" rather than loud
+ * brand colors, so multiple assets in one row don't fight each other.
+ */
+export interface AssetColor {
+  /** Background + ring + text tailwind utility classes for a small chip. */
+  chip: string;
+  /** Hex value for SVG accents (sparklines, bars) that can't take classes. */
+  hex: string;
+}
+
+const ASSET_COLORS: Record<string, AssetColor> = {
+  USDC:  { chip: "border-sky-400/30 bg-sky-400/[0.08] text-sky-200",     hex: "#7dd3fc" },
+  WHBAR: { chip: "border-violet-400/30 bg-violet-400/[0.08] text-violet-200", hex: "#c4b5fd" },
+  HBAR:  { chip: "border-violet-400/30 bg-violet-400/[0.08] text-violet-200", hex: "#c4b5fd" },
+  HBARX: { chip: "border-emerald-400/30 bg-emerald-400/[0.08] text-emerald-200", hex: "#86efac" },
+};
+
+export function getAssetColor(asset: string): AssetColor {
+  return (
+    ASSET_COLORS[asset.toUpperCase()] ?? {
+      chip: "border-border bg-white/[0.04] text-textSec",
+      hex: "#a1a1aa",
+    }
+  );
+}

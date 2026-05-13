@@ -12,18 +12,30 @@
  *   Remove → LP input, single step:
  *           1. removeLiquidity(market, lpIn, minSyOut, minPtOut, receiver, deadline)
  *
- * The user receives LP HTS shares on Add (or SY + PT on Remove), so the
- * AssociationGate must wrap this component upstream with the appropriate
- * token list per tab. The page-level component picks the right list.
+ * Redesigned UI (2026-05-14): USD-denominated input on the Add side (split
+ * into the SY-half and PT-half by current pool ratio), slippage chips
+ * everywhere, FlowOfFunds visualization above each tab.
  */
 import { useMemo, useState } from "react";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
-import { formatCompact } from "@/hooks/useMarkets";
+import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
+import { ptToSyRate } from "@/components/MarketPositionCard";
+import { useSyValueUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, isDeployed } from "@/lib/addresses";
 import { erc20Abi } from "@/lib/abis";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
+import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
+import {
+  FormHeaderStrip,
+  MoneyInput,
+  parseRawBigInt,
+  SectionDivider,
+  SlippageChips,
+  StatusPill,
+  usdToRawBigInt,
+} from "./_primitives";
 
 interface Props {
   market: `0x${string}`;
@@ -39,9 +51,6 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
   const hedera = useHederaWallet();
   const [tab, setTab] = useState<Tab>("add");
 
-  // Balances we need that aren't already in `syBalance`: the user's PT and
-  // LP balances. Read them directly here rather than threading useUserPosition
-  // down — this component is self-contained.
   const balRead = useReadContracts({
     contracts: user
       ? [
@@ -96,12 +105,12 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="rounded-2xl border border-border bg-bgCard p-3">
+      <div className="rounded-2xl border border-border bg-bgCard p-2.5">
         <div className="flex gap-1">
           <button
             type="button"
             onClick={() => setTab("add")}
-            className={`flex-1 rounded-lg border px-2 py-2 text-[13px] font-medium transition ${
+            className={`flex-1 rounded-lg border px-2 py-2 font-mono text-[11px] uppercase tracking-[1.5px] transition ${
               tab === "add"
                 ? "border-borderHover bg-white/[0.06] text-text"
                 : "border-border text-textDim hover:bg-white/[0.04]"
@@ -113,7 +122,7 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
             type="button"
             onClick={() => setTab("remove")}
             disabled={lpBalance === 0n}
-            className={`flex-1 rounded-lg border px-2 py-2 text-[13px] font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
+            className={`flex-1 rounded-lg border px-2 py-2 font-mono text-[11px] uppercase tracking-[1.5px] transition disabled:cursor-not-allowed disabled:opacity-40 ${
               tab === "remove"
                 ? "border-borderHover bg-white/[0.06] text-text"
                 : "border-border text-textDim hover:bg-white/[0.04]"
@@ -123,7 +132,7 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
           </button>
         </div>
         {lpBalance === 0n && tab === "remove" && (
-          <p className="mt-2 text-[11px] text-textDim">You have 0 LP — nothing to remove yet.</p>
+          <p className="mt-2 font-mono text-[10px] text-textDim">You have 0 LP — nothing to remove yet.</p>
         )}
       </div>
 
@@ -177,8 +186,14 @@ function AddLp({
   adapter,
   hedera,
 }: AddProps) {
-  const [syIn, setSyIn] = useState("");
-  const [ptIn, setPtIn] = useState("");
+  const { usdPerShare } = useSyValueUsd(detail.sy);
+  // Single USD input represents the total deposit value. The split is driven
+  // by the current pool ratio: pool-half goes to SY-half, the rest to PT.
+  // PT's $-value uses ptToSyRate (PT trades at a discount).
+  const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
+  const [usdStr, setUsdStr] = useState("");
+  const [syRawStr, setSyRawStr] = useState("");
+  const [ptOverrideStr, setPtOverrideStr] = useState("");
   const [slippageBps, setSlippageBps] = useState(50);
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -196,35 +211,48 @@ function AddLp({
 
   // Pool composition. addLiquidityProportional needs (syIn, ptIn) at the
   // current AMM ratio — if they don't match the router reverts. We auto-fill
-  // the PT input from SY input (one-way binding, user can override after).
+  // the PT input from the SY-half (one-way binding; user can still override
+  // PT manually via the dedicated field).
   const totalSy = detail.totalSy;
   const totalPt = detail.totalPt;
   const hasPool = totalSy > 0n && totalPt > 0n;
+  const apy = impliedApyPct(detail.lastLnImpliedRate);
+  const days = daysUntil(detail.expiry);
+  const ptRate = ptToSyRate(apy, days); // PT trades at `ptRate` SY/PT
 
-  const parsedSy = parseRawBigInt(syIn);
-  const parsedPt = parseRawBigInt(ptIn);
+  // Derive raw SY-in from input. In USD mode we split the dollar amount into
+  // an SY-half whose $-value equals (totalSy / poolValue) × usd. Pool value
+  // is approximated using ptRate (1 PT ≈ ptRate SY worth).
+  //
+  // poolSy_$ = totalSy × usdPerShare
+  // poolPt_$ = totalPt × ptRate × usdPerShare
+  // syIn_$ = usd × poolSy_$ / (poolSy_$ + poolPt_$)
+  //        = usd × totalSy / (totalSy + totalPt × ptRate)
+  // Then syIn_raw = syIn_$ / usdPerShare = usd / usdPerShare × syRatio.
+  const syRatio = useMemo<number>(() => {
+    if (!hasPool) return 1;
+    const denom = Number(totalSy) + Number(totalPt) * ptRate;
+    if (denom <= 0) return 1;
+    return Number(totalSy) / denom;
+  }, [hasPool, totalSy, totalPt, ptRate]);
 
-  // Suggested PT for a given SY input. Avoids per-keystroke reflow by using
-  // useMemo on the current pool ratio. If pool isn't seeded we can't suggest.
-  const suggestedPt = useMemo(() => {
+  const parsedSy = useMemo<bigint>(() => {
+    if (inputMode === "usd" && usdPerShare !== undefined) {
+      const usd = parseFloat(usdStr.replace(/,/g, ""));
+      if (!Number.isFinite(usd) || usd <= 0) return 0n;
+      const syUsd = usd * syRatio;
+      return usdToRawBigInt(syUsd.toFixed(6), usdPerShare);
+    }
+    return parseRawBigInt(syRawStr);
+  }, [inputMode, usdStr, syRawStr, usdPerShare, syRatio]);
+
+  // PT side: derived from SY at pool ratio. User can override via the PT
+  // override field (advanced — most users should leave it auto-balanced).
+  const suggestedPt = useMemo<bigint>(() => {
     if (!hasPool || parsedSy === 0n) return 0n;
     return (parsedSy * totalPt) / totalSy;
   }, [hasPool, parsedSy, totalSy, totalPt]);
-
-  const onSyChange = (v: string) => {
-    setSyIn(v);
-    // Auto-fill PT on SY change. The user can still type a different value
-    // in the PT field; we only push when the user types in the SY field.
-    if (hasPool) {
-      const next = parseRawBigInt(v);
-      if (next > 0n) {
-        const suggest = (next * totalPt) / totalSy;
-        setPtIn(suggest.toString());
-      } else {
-        setPtIn("");
-      }
-    }
-  };
+  const parsedPt = ptOverrideStr ? parseRawBigInt(ptOverrideStr) : suggestedPt;
 
   const insufficientSy = parsedSy > syBalance;
   const insufficientPt = parsedPt > ptBalance;
@@ -285,7 +313,6 @@ function AddLp({
     if (!user || noInput || !routerDeployed) return;
     if (insufficientSy || insufficientPt) return;
 
-    // Pre-flight HTS association for LP token (the user receives LP shares).
     if (adapter.mode === "hedera" && adapter.accountId) {
       try {
         const { getMissingAssociations, associateTokens, evmAddressToTokenId } =
@@ -301,9 +328,6 @@ function AddLp({
       }
     }
 
-    // Rough LP-out estimate: pro-rata against existing lpSupply / totalSy.
-    // We minOut down by slippage; the router enforces a more precise check
-    // internally using its own math.
     const lpEstimate =
       detail.lpSupply > 0n && totalSy > 0n
         ? (parsedSy * detail.lpSupply) / totalSy
@@ -341,192 +365,302 @@ function AddLp({
       ? `1 SY : ${(Number(totalPt) / Number(totalSy)).toFixed(4)} PT`
       : "—";
 
+  const lpEstimate =
+    detail.lpSupply > 0n && totalSy > 0n
+      ? (parsedSy * detail.lpSupply) / totalSy
+      : 0n;
+  const minLpOut = (lpEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
+
+  const isActive = isPending || isConfirmingFinal;
+  const isDone = isConfirmedFinal;
+  const flowSteps: FlowStep[] = [
+    {
+      label: "You deposit",
+      detail: "SY + PT pair (proportional)",
+      inToken:
+        parsedSy > 0n
+          ? {
+              sym: "SY",
+              amount: formatCompact(parsedSy),
+              usd:
+                usdPerShare !== undefined
+                  ? `≈ $${(Number(parsedSy) * usdPerShare).toFixed(2)}`
+                  : undefined,
+            }
+          : undefined,
+      outToken:
+        parsedPt > 0n
+          ? {
+              sym: "PT",
+              amount: formatCompact(parsedPt),
+            }
+          : undefined,
+      isComplete: isDone,
+    },
+    {
+      label: "Router",
+      detail: shortAddr(ADDRESSES.router),
+      isActive: isActive && !isDone,
+      isComplete: isDone,
+    },
+    {
+      label: "addLiquidityProportional",
+      detail: `current ratio ${ratioLabel}`,
+      isActive: isActive && !isDone,
+      isComplete: isDone,
+    },
+    {
+      label: "Market LP mint",
+      detail: `≤ ${(slippageBps / 100).toFixed(2)}% slippage`,
+      outToken:
+        lpEstimate > 0n
+          ? {
+              sym: "LP",
+              amount: `~${formatCompact(lpEstimate)}`,
+              usd: `min ${formatCompact(minLpOut)} LP`,
+            }
+          : undefined,
+      isComplete: isDone,
+    },
+    {
+      label: "Your wallet",
+      detail: user ? shortAddr(user) : "—",
+      isComplete: isDone,
+    },
+  ];
+
   return (
-    <div className="rounded-2xl border border-border bg-bgCard p-4">
-      <div className="mb-3 flex items-baseline justify-between">
-        <div className="text-[10px] font-semibold uppercase tracking-[2px] text-textDim">
-          Add liquidity
-        </div>
-        <span className="font-mono text-[10px] text-textDim">Ratio: {ratioLabel}</span>
+    <div className="flex flex-col gap-3">
+      <FlowOfFunds title="Flow of funds · Add liquidity" steps={flowSteps} />
+
+      <div className="rounded-2xl border border-border bg-bgCard p-4">
+        <FormHeaderStrip
+          name="Add liquidity"
+          right={
+            <>
+              {usdPerShare === undefined && (
+                <StatusPill tone="info">Price loading</StatusPill>
+              )}
+              <StatusPill tone="neutral">{ratioLabel}</StatusPill>
+              {(needsSyApprove || needsPtApprove) && (
+                <StatusPill tone="warning">Needs approval</StatusPill>
+              )}
+            </>
+          }
+        />
+
+        {noPt ? (
+          <div className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-warning">
+            <span className="font-semibold">You need PT to add proportional liquidity.</span>{" "}
+            Buy PT first (or split SY → PT + YT and keep the PT side), then return here.
+          </div>
+        ) : null}
+
+        <SectionDivider label="Input" />
+
+        <MoneyInput
+          mode={inputMode}
+          setMode={setInputMode}
+          usdStr={usdStr}
+          setUsdStr={setUsdStr}
+          rawStr={syRawStr}
+          setRawStr={setSyRawStr}
+          parsedRaw={parsedSy}
+          balance={syBalance}
+          tokenSym="SY"
+          label="Total deposit (SY side)"
+          usdPerUnit={usdPerShare}
+          formatRaw={formatCompact}
+          insufficient={insufficientSy}
+          outputHint={
+            parsedPt > 0n ? (
+              <span>
+                Paired with <span className="text-text">{formatCompact(parsedPt)} PT</span>
+                {" · "}LP est <span className="text-text">~{formatCompact(lpEstimate)}</span>
+              </span>
+            ) : undefined
+          }
+          minOutHint={
+            lpEstimate > 0n ? (
+              <span>
+                Min received <span className="text-text">{formatCompact(minLpOut)} LP</span>
+              </span>
+            ) : undefined
+          }
+          caption={
+            <>
+              Pool ratio {ratioLabel} · gas ~0.12 HBAR
+            </>
+          }
+          feedback={
+            insufficientSy ? (
+              <span className="block font-mono text-[10px] font-medium text-error">
+                Insufficient SY — you have {formatCompact(syBalance)}.
+              </span>
+            ) : null
+          }
+        />
+
+        {/* PT override — advanced. Hidden unless the user wants to deviate
+            from the auto-balanced split. We show it inline as a smaller
+            secondary input so it doesn't clutter the default flow. */}
+        <details className="mb-3 rounded-lg border border-border bg-white/[0.02] px-3 py-2">
+          <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[1.5px] text-textDim">
+            Override PT amount
+            {ptOverrideStr && (
+              <span className="ml-2 text-warning">[custom]</span>
+            )}
+          </summary>
+          <div className="mt-2">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-textDim">
+                PT (raw)
+              </span>
+              <span className="font-mono text-[10px] text-textDim">
+                Bal: {formatCompact(ptBalance)}
+                {ptBalance > 0n && (
+                  <button
+                    type="button"
+                    onClick={() => setPtOverrideStr(ptBalance.toString())}
+                    className="ml-2 rounded border border-borderHover bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[1px] text-text transition hover:bg-white/[0.08]"
+                  >
+                    Max
+                  </button>
+                )}
+              </span>
+            </div>
+            <input
+              type="number"
+              value={ptOverrideStr}
+              onChange={(e) => setPtOverrideStr(e.target.value)}
+              placeholder={suggestedPt > 0n ? suggestedPt.toString() : "auto-balanced"}
+              inputMode="decimal"
+              className={`w-full rounded-[8px] border bg-bgInput px-3 py-2 font-mono text-[12px] text-text outline-none transition ${
+                insufficientPt ? "border-error/60 focus:border-error" : "border-border focus:border-borderHover"
+              }`}
+              style={{ fontVariantNumeric: "tabular-nums" }}
+            />
+            <div className="mt-1 flex items-center justify-between">
+              <span className="font-mono text-[10px] text-textDim">
+                {suggestedPt > 0n
+                  ? `Auto-balanced: ${formatCompact(suggestedPt)} PT`
+                  : "Enter SY-side first"}
+              </span>
+              {ptOverrideStr && (
+                <button
+                  type="button"
+                  onClick={() => setPtOverrideStr("")}
+                  className="font-mono text-[10px] text-textDim underline underline-offset-2 hover:text-text"
+                >
+                  reset
+                </button>
+              )}
+            </div>
+            {insufficientPt && (
+              <span className="mt-1 block font-mono text-[10px] font-medium text-error">
+                Insufficient PT.
+              </span>
+            )}
+          </div>
+        </details>
+
+        <SectionDivider label="Routing" />
+
+        <SlippageChips
+          slippageBps={slippageBps}
+          setSlippageBps={setSlippageBps}
+          maxBps={500}
+        />
+
+        <SectionDivider label="Settlement" />
+
+        <button
+          type="button"
+          disabled={
+            !user ||
+            noInput ||
+            isPending ||
+            isConfirmingFinal ||
+            insufficientSy ||
+            insufficientPt ||
+            !routerDeployed ||
+            noPt
+          }
+          onClick={onPrimary}
+          className="w-full rounded-[10px] bg-white px-7 py-3.5 font-mono text-sm font-semibold uppercase tracking-[1px] text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {!user
+            ? "Connect wallet"
+            : noPt
+              ? "You need PT — buy PT first"
+              : noInput
+                ? "Enter amounts"
+                : insufficientSy || insufficientPt
+                  ? "Insufficient balance"
+                  : isPending
+                    ? "Sign in HashPack…"
+                    : isConfirmingFinal
+                      ? "Waiting for confirmation…"
+                      : needsSyApprove
+                        ? "Approve SY for Router"
+                        : needsPtApprove
+                          ? "Approve PT for Router"
+                          : "Add liquidity"}
+        </button>
+
+        {(needsSyApprove || needsPtApprove) && !noInput && (
+          <p className="mt-2 font-mono text-[10px] leading-relaxed text-textDim">
+            Two approvals (SY + PT), then the add-liquidity tx. One HashPack popup each.
+          </p>
+        )}
+
+        {writeError && (
+          <div className="mt-2 rounded-lg border border-error/30 bg-error/10 px-3 py-2 font-mono text-[10px] leading-relaxed text-error">
+            {writeError.slice(0, 240)}
+          </div>
+        )}
+
+        {isConfirmedFinal && txHash && (
+          <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-success">
+            <div className="font-semibold uppercase tracking-[1px]">Transaction confirmed.</div>
+            <div className="mt-1 break-all text-[10px] text-success/80">
+              tx: {txHash.slice(0, 18)}…{txHash.slice(-8)}
+            </div>
+            <div className="mt-1.5 flex gap-3">
+              <a
+                href={`https://hashscan.io/mainnet/transaction/${txHash}`}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 hover:text-text"
+              >
+                View on HashScan
+              </a>
+              <button
+                type="button"
+                onClick={() => {
+                  setTxHash(undefined);
+                  setWriteError(null);
+                  setUsdStr("");
+                  setSyRawStr("");
+                  setPtOverrideStr("");
+                }}
+                className="underline underline-offset-2 hover:text-text"
+              >
+                New deposit
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!routerDeployed && (
+          <p className="mt-2 font-mono text-[11px] text-error">Router not deployed yet.</p>
+        )}
       </div>
-
-      {noPt ? (
-        <div className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-[12px] leading-relaxed text-warning">
-          <span className="font-semibold">You need PT to add proportional liquidity.</span>{" "}
-          Buy PT first (or split SY → PT + YT and keep the PT side), then return here.
-        </div>
-      ) : null}
-
-      <label className="mb-3 block">
-        <span className="mb-1.5 flex items-center justify-between text-xs text-textSec">
-          <span>SY amount</span>
-          <span className="font-mono text-[11px] text-textDim">
-            Balance: {formatCompact(syBalance)}
-            {syBalance > 0n && (
-              <button
-                type="button"
-                onClick={() => onSyChange(syBalance.toString())}
-                className="ml-2 rounded border border-borderHover bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[1px] text-text transition hover:bg-white/[0.08]"
-              >
-                Max
-              </button>
-            )}
-          </span>
-        </span>
-        <input
-          type="number"
-          value={syIn}
-          onChange={(e) => onSyChange(e.target.value)}
-          placeholder="0.00"
-          inputMode="decimal"
-          className={`w-full rounded-[10px] border bg-bgInput px-4 py-3 font-mono text-sm text-text outline-none transition ${
-            insufficientSy ? "border-error/60 focus:border-error" : "border-border focus:border-borderHover"
-          }`}
-        />
-        {insufficientSy && (
-          <span className="mt-1 block text-[11px] font-medium text-error">
-            Insufficient SY.
-          </span>
-        )}
-      </label>
-
-      <label className="mb-3 block">
-        <span className="mb-1.5 flex items-center justify-between text-xs text-textSec">
-          <span>PT amount</span>
-          <span className="font-mono text-[11px] text-textDim">
-            Balance: {formatCompact(ptBalance)}
-            {ptBalance > 0n && (
-              <button
-                type="button"
-                onClick={() => setPtIn(ptBalance.toString())}
-                className="ml-2 rounded border border-borderHover bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[1px] text-text transition hover:bg-white/[0.08]"
-              >
-                Max
-              </button>
-            )}
-          </span>
-        </span>
-        <input
-          type="number"
-          value={ptIn}
-          onChange={(e) => setPtIn(e.target.value)}
-          placeholder="0.00"
-          inputMode="decimal"
-          className={`w-full rounded-[10px] border bg-bgInput px-4 py-3 font-mono text-sm text-text outline-none transition ${
-            insufficientPt ? "border-error/60 focus:border-error" : "border-border focus:border-borderHover"
-          }`}
-        />
-        {suggestedPt > 0n && parsedPt !== suggestedPt && (
-          <span className="mt-1 block text-[10px] text-textDim">
-            Suggested at current ratio: {formatCompact(suggestedPt)} PT
-          </span>
-        )}
-        {insufficientPt && (
-          <span className="mt-1 block text-[11px] font-medium text-error">
-            Insufficient PT.
-          </span>
-        )}
-      </label>
-
-      <label className="mb-3 block">
-        <span className="mb-1.5 block text-xs text-textSec">
-          Slippage tolerance: {(slippageBps / 100).toFixed(2)}%
-        </span>
-        <input
-          type="range"
-          min={5}
-          max={500}
-          value={slippageBps}
-          onChange={(e) => setSlippageBps(Number(e.target.value))}
-          className="w-full"
-        />
-      </label>
-
-      <button
-        type="button"
-        disabled={
-          !user ||
-          noInput ||
-          isPending ||
-          isConfirmingFinal ||
-          insufficientSy ||
-          insufficientPt ||
-          !routerDeployed ||
-          noPt
-        }
-        onClick={onPrimary}
-        className="w-full rounded-[10px] bg-white px-7 py-3.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        {!user
-          ? "Connect wallet"
-          : noPt
-            ? "You need PT — buy PT first"
-            : noInput
-              ? "Enter amounts"
-              : insufficientSy || insufficientPt
-                ? "Insufficient balance"
-                : isPending
-                  ? "Sign in HashPack…"
-                  : isConfirmingFinal
-                    ? "Waiting for confirmation…"
-                    : needsSyApprove
-                      ? "Approve SY for Router"
-                      : needsPtApprove
-                        ? "Approve PT for Router"
-                        : "Add liquidity"}
-      </button>
-
-      {(needsSyApprove || needsPtApprove) && !noInput && (
-        <p className="mt-2 text-[10px] leading-relaxed text-textDim">
-          Two approvals (SY + PT), then the add-liquidity tx. One HashPack popup each.
-        </p>
-      )}
-
-      {writeError && (
-        <div className="mt-2 rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-[11px] leading-relaxed text-error">
-          <span className="font-mono">{writeError.slice(0, 240)}</span>
-        </div>
-      )}
-
-      {isConfirmedFinal && txHash && (
-        <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 text-[12px] leading-relaxed text-success">
-          <div className="font-semibold">Transaction confirmed.</div>
-          <div className="mt-1 break-all font-mono text-[10px] text-success/80">
-            tx: {txHash.slice(0, 18)}…{txHash.slice(-8)}
-          </div>
-          <div className="mt-1.5 flex gap-3">
-            <a
-              href={`https://hashscan.io/mainnet/transaction/${txHash}`}
-              target="_blank"
-              rel="noreferrer"
-              className="underline underline-offset-2 hover:text-text"
-            >
-              View on HashScan
-            </a>
-            <button
-              type="button"
-              onClick={() => {
-                setTxHash(undefined);
-                setWriteError(null);
-                setSyIn("");
-                setPtIn("");
-              }}
-              className="underline underline-offset-2 hover:text-text"
-            >
-              New deposit
-            </button>
-          </div>
-        </div>
-      )}
-
-      {!routerDeployed && (
-        <p className="mt-2 text-[11px] text-error">Router not deployed yet.</p>
-      )}
     </div>
   );
 }
 
-/* ─────────────────────────────────────────────────────────── Remove */
+/* ─────────────────────────────────────────────────────── Remove */
 
 interface RemoveProps {
   market: `0x${string}`;
@@ -537,7 +671,10 @@ interface RemoveProps {
 }
 
 function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
-  const [lpIn, setLpIn] = useState("");
+  const { usdPerShare } = useSyValueUsd(detail.sy);
+  const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
+  const [usdStr, setUsdStr] = useState("");
+  const [rawStr, setRawStr] = useState("");
   const [slippageBps, setSlippageBps] = useState(50);
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -553,7 +690,21 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
   const isPending = isSubmitting || adapter.isWritePending;
   const routerDeployed = isDeployed(ADDRESSES.router);
 
-  // LP-Router allowance: the router pulls the user's LP via transferFrom.
+  const apy = impliedApyPct(detail.lastLnImpliedRate);
+  const days = daysUntil(detail.expiry);
+  const ptRate = ptToSyRate(apy, days);
+
+  // LP-side $-per-unit: LP token represents pro-rata pool share. Value per LP =
+  // (SY-share-of-LP × usdPerShare) + (PT-share-of-LP × ptRate × usdPerShare).
+  // Returns undefined when no LP supply or no price feed.
+  const usdPerLp = useMemo<number | undefined>(() => {
+    if (usdPerShare === undefined) return undefined;
+    if (detail.lpSupply === 0n) return undefined;
+    const syPerLp = Number(detail.totalSy) / Number(detail.lpSupply);
+    const ptPerLp = Number(detail.totalPt) / Number(detail.lpSupply);
+    return (syPerLp + ptPerLp * ptRate) * usdPerShare;
+  }, [usdPerShare, detail.totalSy, detail.totalPt, detail.lpSupply, ptRate]);
+
   const allowanceRead = useReadContracts({
     contracts: user
       ? [
@@ -584,11 +735,16 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
       ? (allowanceRead.data[0].result as bigint)
       : 0n;
 
-  const parsedLp = parseRawBigInt(lpIn);
+  const parsedLp = useMemo<bigint>(() => {
+    if (inputMode === "usd" && usdPerLp !== undefined) {
+      return usdToRawBigInt(usdStr, usdPerLp);
+    }
+    return parseRawBigInt(rawStr);
+  }, [inputMode, usdStr, rawStr, usdPerLp]);
+
   const insufficientLp = parsedLp > lpBalance;
   const needsLpApprove = parsedLp > 0n && lpAllowance < parsedLp;
 
-  // Expected SY + PT out at current pool composition (informational only).
   const expectedSy =
     detail.lpSupply > 0n
       ? (parsedLp * detail.totalSy) / detail.lpSupply
@@ -597,6 +753,8 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
     detail.lpSupply > 0n
       ? (parsedLp * detail.totalPt) / detail.lpSupply
       : 0n;
+  const minSyOut = (expectedSy * BigInt(10_000 - slippageBps)) / 10_000n;
+  const minPtOut = (expectedPt * BigInt(10_000 - slippageBps)) / 10_000n;
 
   const wrap = async <T,>(fn: () => Promise<T>) => {
     setWriteError(null);
@@ -629,8 +787,6 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
 
   const onRemove = async () => {
     if (!user || parsedLp === 0n || !routerDeployed || insufficientLp) return;
-    const minSyOut = (expectedSy * BigInt(10_000 - slippageBps)) / 10_000n;
-    const minPtOut = (expectedPt * BigInt(10_000 - slippageBps)) / 10_000n;
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     try {
       const { txHash: hash } = await wrap(() =>
@@ -656,134 +812,192 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
     else onRemove();
   };
 
-  return (
-    <div className="rounded-2xl border border-border bg-bgCard p-4">
-      <div className="mb-3 text-[10px] font-semibold uppercase tracking-[2px] text-textDim">
-        Remove liquidity
-      </div>
+  const isActive = isPending || isConfirmingFinal;
+  const isDone = isConfirmedFinal;
+  const flowSteps: FlowStep[] = [
+    {
+      label: "You burn",
+      detail: "LP shares → Router",
+      inToken:
+        parsedLp > 0n
+          ? {
+              sym: "LP",
+              amount: formatCompact(parsedLp),
+              usd:
+                usdPerLp !== undefined
+                  ? `≈ $${(Number(parsedLp) * usdPerLp).toFixed(2)}`
+                  : undefined,
+            }
+          : undefined,
+      isComplete: isDone,
+    },
+    {
+      label: "Router",
+      detail: shortAddr(ADDRESSES.router),
+      isActive: isActive && !isDone,
+      isComplete: isDone,
+    },
+    {
+      label: "removeLiquidityProportional",
+      detail: `≤ ${(slippageBps / 100).toFixed(2)}% slippage`,
+      isActive: isActive && !isDone,
+      isComplete: isDone,
+    },
+    {
+      label: "SY + PT returned",
+      detail: `min ${formatCompact(minSyOut)} SY, ${formatCompact(minPtOut)} PT`,
+      outToken:
+        expectedSy > 0n
+          ? {
+              sym: "SY",
+              amount: `~${formatCompact(expectedSy)}`,
+            }
+          : undefined,
+      isComplete: isDone,
+    },
+    {
+      label: "Your wallet",
+      detail: user ? shortAddr(user) : "—",
+      isComplete: isDone,
+    },
+  ];
 
-      <label className="mb-3 block">
-        <span className="mb-1.5 flex items-center justify-between text-xs text-textSec">
-          <span>LP to withdraw</span>
-          <span className="font-mono text-[11px] text-textDim">
-            Balance: {formatCompact(lpBalance)}
-            {lpBalance > 0n && (
+  return (
+    <div className="flex flex-col gap-3">
+      <FlowOfFunds title="Flow of funds · Remove liquidity" steps={flowSteps} />
+
+      <div className="rounded-2xl border border-border bg-bgCard p-4">
+        <FormHeaderStrip
+          name="Remove liquidity"
+          right={
+            <>
+              {usdPerLp === undefined && (
+                <StatusPill tone="info">Price loading</StatusPill>
+              )}
+              {needsLpApprove && (
+                <StatusPill tone="warning">Needs approval</StatusPill>
+              )}
+            </>
+          }
+        />
+
+        <SectionDivider label="Input" />
+
+        <MoneyInput
+          mode={inputMode}
+          setMode={setInputMode}
+          usdStr={usdStr}
+          setUsdStr={setUsdStr}
+          rawStr={rawStr}
+          setRawStr={setRawStr}
+          parsedRaw={parsedLp}
+          balance={lpBalance}
+          tokenSym="LP"
+          label="LP to withdraw"
+          usdPerUnit={usdPerLp}
+          formatRaw={formatCompact}
+          insufficient={insufficientLp}
+          outputHint={
+            parsedLp > 0n ? (
+              <span>
+                Receive <span className="text-text">~{formatCompact(expectedSy)} SY</span> +{" "}
+                <span className="text-text">{formatCompact(expectedPt)} PT</span>
+              </span>
+            ) : undefined
+          }
+          minOutHint={
+            parsedLp > 0n ? (
+              <span>
+                Min: <span className="text-text">{formatCompact(minSyOut)} SY</span> +{" "}
+                <span className="text-text">{formatCompact(minPtOut)} PT</span>
+              </span>
+            ) : undefined
+          }
+          caption={<>gas ~0.10 HBAR</>}
+          feedback={
+            insufficientLp ? (
+              <span className="block font-mono text-[10px] font-medium text-error">
+                Insufficient LP — you have {formatCompact(lpBalance)}.
+              </span>
+            ) : null
+          }
+        />
+
+        <SectionDivider label="Routing" />
+
+        <SlippageChips
+          slippageBps={slippageBps}
+          setSlippageBps={setSlippageBps}
+          maxBps={500}
+        />
+
+        <SectionDivider label="Settlement" />
+
+        <button
+          type="button"
+          disabled={!user || parsedLp === 0n || isPending || isConfirmingFinal || insufficientLp || !routerDeployed}
+          onClick={onPrimary}
+          className="w-full rounded-[10px] bg-white px-7 py-3.5 font-mono text-sm font-semibold uppercase tracking-[1px] text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {!user
+            ? "Connect wallet"
+            : parsedLp === 0n
+              ? "Enter LP amount"
+              : insufficientLp
+                ? "Insufficient LP"
+                : isPending
+                  ? "Sign in HashPack…"
+                  : isConfirmingFinal
+                    ? "Waiting for confirmation…"
+                    : needsLpApprove
+                      ? "Approve LP for Router"
+                      : "Remove liquidity"}
+        </button>
+
+        {writeError && (
+          <div className="mt-2 rounded-lg border border-error/30 bg-error/10 px-3 py-2 font-mono text-[10px] leading-relaxed text-error">
+            {writeError.slice(0, 240)}
+          </div>
+        )}
+
+        {isConfirmedFinal && txHash && (
+          <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-success">
+            <div className="font-semibold uppercase tracking-[1px]">Transaction confirmed.</div>
+            <div className="mt-1 break-all text-[10px] text-success/80">
+              tx: {txHash.slice(0, 18)}…{txHash.slice(-8)}
+            </div>
+            <div className="mt-1.5 flex gap-3">
+              <a
+                href={`https://hashscan.io/mainnet/transaction/${txHash}`}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 hover:text-text"
+              >
+                View on HashScan
+              </a>
               <button
                 type="button"
-                onClick={() => setLpIn(lpBalance.toString())}
-                className="ml-2 rounded border border-borderHover bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[1px] text-text transition hover:bg-white/[0.08]"
+                onClick={() => {
+                  setTxHash(undefined);
+                  setWriteError(null);
+                  setUsdStr("");
+                  setRawStr("");
+                }}
+                className="underline underline-offset-2 hover:text-text"
               >
-                Max
+                New withdrawal
               </button>
-            )}
-          </span>
-        </span>
-        <input
-          type="number"
-          value={lpIn}
-          onChange={(e) => setLpIn(e.target.value)}
-          placeholder="0.00"
-          inputMode="decimal"
-          className={`w-full rounded-[10px] border bg-bgInput px-4 py-3 font-mono text-sm text-text outline-none transition ${
-            insufficientLp ? "border-error/60 focus:border-error" : "border-border focus:border-borderHover"
-          }`}
-        />
-      </label>
-
-      {parsedLp > 0n && (
-        <div className="mb-3 rounded-lg border border-border bg-white/[0.02] px-3 py-2 text-[11px] leading-relaxed text-textSec">
-          You will receive approximately{" "}
-          <span className="font-mono text-text">{formatCompact(expectedSy)} SY</span>{" "}
-          and{" "}
-          <span className="font-mono text-text">{formatCompact(expectedPt)} PT</span>.
-        </div>
-      )}
-
-      <label className="mb-3 block">
-        <span className="mb-1.5 block text-xs text-textSec">
-          Slippage tolerance: {(slippageBps / 100).toFixed(2)}%
-        </span>
-        <input
-          type="range"
-          min={5}
-          max={500}
-          value={slippageBps}
-          onChange={(e) => setSlippageBps(Number(e.target.value))}
-          className="w-full"
-        />
-      </label>
-
-      <button
-        type="button"
-        disabled={!user || parsedLp === 0n || isPending || isConfirmingFinal || insufficientLp || !routerDeployed}
-        onClick={onPrimary}
-        className="w-full rounded-[10px] bg-white px-7 py-3.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        {!user
-          ? "Connect wallet"
-          : parsedLp === 0n
-            ? "Enter LP amount"
-            : insufficientLp
-              ? "Insufficient LP"
-              : isPending
-                ? "Sign in HashPack…"
-                : isConfirmingFinal
-                  ? "Waiting for confirmation…"
-                  : needsLpApprove
-                    ? "Approve LP for Router"
-                    : "Remove liquidity"}
-      </button>
-
-      {writeError && (
-        <div className="mt-2 rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-[11px] leading-relaxed text-error">
-          <span className="font-mono">{writeError.slice(0, 240)}</span>
-        </div>
-      )}
-
-      {isConfirmedFinal && txHash && (
-        <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 text-[12px] leading-relaxed text-success">
-          <div className="font-semibold">Transaction confirmed.</div>
-          <div className="mt-1 break-all font-mono text-[10px] text-success/80">
-            tx: {txHash.slice(0, 18)}…{txHash.slice(-8)}
+            </div>
           </div>
-          <div className="mt-1.5 flex gap-3">
-            <a
-              href={`https://hashscan.io/mainnet/transaction/${txHash}`}
-              target="_blank"
-              rel="noreferrer"
-              className="underline underline-offset-2 hover:text-text"
-            >
-              View on HashScan
-            </a>
-            <button
-              type="button"
-              onClick={() => {
-                setTxHash(undefined);
-                setWriteError(null);
-                setLpIn("");
-              }}
-              className="underline underline-offset-2 hover:text-text"
-            >
-              New withdrawal
-            </button>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
 /* ─────────────────────────────────────────────────────── helpers */
 
-function parseRawBigInt(s: string): bigint {
-  try {
-    if (!s) return 0n;
-    const cleaned = s.trim().replace(/,/g, "");
-    if (/^[0-9]+(\.0+)?$/.test(cleaned)) {
-      return BigInt(cleaned.split(".")[0] ?? "0");
-    }
-    return 0n;
-  } catch {
-    return 0n;
-  }
+function shortAddr(addr: string): string {
+  if (addr.length <= 12) return addr;
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }

@@ -1,23 +1,35 @@
 "use client";
 
 /**
- * Pendle-style stacked position card. Used by both:
- *   • /profile           (one card per market the user has any position in)
- *   • /markets/[address] (one card at the top showing the user's position)
+ * Live trading-platform position panel for a Pendle-style market.
  *
- * The card renders four sub-rows (PT, YT, LP, SY) plus a header with the
- * market name + total $-value. Each sub-row shows the raw count, an
- * approximate USD value, a one-liner contextual hint, and 1-2 action buttons
- * that deep-link back into the market detail page with a strategy/action
- * preselected.
+ * Visual language: Hyperliquid / Aevo / GMX position rows. Dense vertical
+ * rhythm, monospaced numerics with tabular-nums so digits stack column-style,
+ * right-aligned amounts, status pills inline with the trading-pair label.
+ *
+ * Two big additions over the previous "stacked cards" version:
+ *
+ *   1. Live yield accrual ticker on the YT row. We don't have a per-block fee
+ *      oracle for the underlying V3 LP yet, so v1 derives $/s from the implied
+ *      APY (see `useYieldAccrual`). The counter increments every second and
+ *      a pulse dot reassures the user "yes, this is alive". On unmount the
+ *      session-earned total resets — explicitly vibes-grade, not persisted.
+ *
+ *   2. Mark vs. Projected columns. Mark is the AMM-liquidation value right
+ *      now (what you'd get if you sold today via the AMM at the current
+ *      implied rate). Projected is the at-maturity payout (PT redeems 1:1 to
+ *      SY at maturity, so projected PT = userPt × usdPerShare). We deliberately
+ *      do not surface a P&L number because we have no entry-price oracle —
+ *      showing a "$0.00 (+0.00%) P&L" line would be misleading. When we add
+ *      position-open events later we can swap the placeholder for real P&L.
  *
  * Math
  * ----
  * Pendle math: 1 SY = 1 PT + 1 YT at maturity, and the AMM prices them so
  * that ptPrice + ytPrice == 1 SY. We compute PT→SY purely from implied APY
- * and time-to-maturity (continuous compounding feels overkill for a UI hint;
- * simple interest matches the spec). USD values come from `usdPerShare`
- * which is already computed by `useSyValueUsd` against the underlying V3 LP.
+ * and time-to-maturity (simple interest matches the rest of the codebase).
+ * USD values come from `usdPerShare`, already computed by `useSyValueUsd`
+ * against the underlying V3 LP.
  *
  * For LP value we compute the user's pro-rata share of `totalPt` and
  * `totalSy` in the AMM, value the PT side at its discounted SY rate, and
@@ -32,6 +44,11 @@ import Link from "next/link";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { formatUsd } from "@/hooks/useSyValueUsd";
+import {
+  formatEarnedTotal,
+  formatRatePerSecond,
+  useYieldAccrual,
+} from "@/hooks/useYieldAccrual";
 
 export interface UserPosition {
   sy: bigint;
@@ -84,6 +101,19 @@ export function ytToSyRate(apyPct: number | null, days: number): number {
   return 1 - ptToSyRate(apyPct, days);
 }
 
+/* ─────────────────────────────────────────────────────── trading-pair label */
+
+/**
+ * Derive a "USDC/WHBAR" style pair from the SY name. Our SYs are named
+ * "SY-SaucerSwap V2 USDC/WHBAR 0.30%" or similar. We greedily grab the first
+ * `A/B` token on the line; if it can't be found we fall back to the full
+ * SY name so the header is never blank.
+ */
+function extractPair(syName: string): string {
+  const m = syName.match(/([A-Z0-9]{2,10})\s*\/\s*([A-Z0-9]{2,10})/);
+  return m ? `${m[1]}/${m[2]}` : syName;
+}
+
 /* ─────────────────────────────────────────────────────── component */
 
 export function MarketPositionCard({
@@ -114,14 +144,15 @@ export function MarketPositionCard({
     ? (Number(p.lp) / Number(lpSupply)) * 100
     : null;
 
-  // USD breakdown. Only meaningful when usdPerShare is defined; otherwise
-  // all the hints are null and we skip the header total.
-  const usdSy = usdPerShare !== undefined ? Number(p.sy) * usdPerShare : undefined;
-  const usdPt =
+  // ─── MARK values (what the position liquidates for *right now*). For PT and
+  // YT this routes through the AMM's implied rate; for SY it's the underlying
+  // V3-LP basket valuation; for LP it's the decomposed PT+SY.
+  const markSy = usdPerShare !== undefined ? Number(p.sy) * usdPerShare : undefined;
+  const markPt =
     usdPerShare !== undefined ? Number(p.pt) * ptRate * usdPerShare : undefined;
-  const usdYt =
+  const markYt =
     usdPerShare !== undefined ? Number(p.yt) * ytRate * usdPerShare : undefined;
-  const usdLp =
+  const markLp =
     usdPerShare !== undefined && hasLp
       ? (Number(userPtInLp) * ptRate + Number(userSyInLp)) * usdPerShare
       : usdPerShare !== undefined
@@ -131,16 +162,53 @@ export function MarketPositionCard({
     usdPerShare !== undefined
       ? Number(p.claimableYield) * usdPerShare
       : undefined;
-  const positionUsd =
-    usdSy !== undefined &&
-    usdPt !== undefined &&
-    usdYt !== undefined &&
-    usdLp !== undefined &&
+
+  // ─── PROJECTED at-maturity payout. Only PT has a deterministic at-maturity
+  // value (1 PT → 1 SY). YT decays to 0 at maturity. LP and SY don't have a
+  // single "maturity payout" — LP unwinds to its PT+SY composition which is
+  // path-dependent on the AMM trajectory.
+  const projectedPt = usdPerShare !== undefined ? Number(p.pt) * usdPerShare : undefined;
+  const projectedPtGain =
+    projectedPt !== undefined && markPt !== undefined ? projectedPt - markPt : undefined;
+
+  const positionMark =
+    markSy !== undefined &&
+    markPt !== undefined &&
+    markYt !== undefined &&
+    markLp !== undefined &&
     usdClaim !== undefined
-      ? usdSy + usdPt + usdYt + usdLp + usdClaim
+      ? markSy + markPt + markYt + markLp + usdClaim
       : undefined;
 
-  const fmtUsd = (n: number | undefined) => formatUsd(n);
+  // Sum the at-maturity payout the same way we do mark: PT redeems 1:1, YT → 0,
+  // SY stays at mark, LP keeps its SY leg but its PT leg pulls to par. The
+  // "+claim" amount is realized whenever the user claims; we treat it as
+  // payout-equivalent.
+  const projectedSy = markSy;
+  const projectedLp =
+    usdPerShare !== undefined && hasLp
+      ? (Number(userPtInLp) + Number(userSyInLp)) * usdPerShare
+      : usdPerShare !== undefined
+        ? 0
+        : undefined;
+  const positionProjected =
+    projectedSy !== undefined &&
+    projectedPt !== undefined &&
+    projectedLp !== undefined &&
+    usdClaim !== undefined
+      ? projectedSy + projectedPt + 0 /* YT → 0 */ + projectedLp + usdClaim
+      : undefined;
+
+  // ─── Live YT yield accrual. Gated to YT-positive positions where we know the
+  // dollar value — otherwise we'd be computing the integral of nothing per
+  // second and burning a 1Hz timer for no benefit.
+  const accrual = useYieldAccrual({
+    enabled: !expired && p.yt > 0n && markYt !== undefined && markYt > 0,
+    ytValueUsd: markYt,
+    apyPct: apy,
+  });
+
+  const pair = extractPair(detail.syName);
   const apyLabel = apy !== null ? `${apy.toFixed(2)}%` : "—";
   const matures = new Date(Number(detail.expiry) * 1000).toLocaleDateString(
     "en-US",
@@ -153,144 +221,282 @@ export function MarketPositionCard({
   const sub = (segment: "pt" | "yt" | "lp" | "") =>
     segment ? `/markets/${market}/${segment}` : `/markets/${market}`;
 
-  const Header = () => (
-    <div className="flex flex-wrap items-baseline justify-between gap-3 px-5 py-4">
-      <div>
+  // Overall status pill. EXPIRED dominates; ACCRUING wins over OPEN when the
+  // user has a live YT position; otherwise OPEN.
+  const status = expired
+    ? { label: "EXPIRED", tone: "error" as const }
+    : accrual.pulsing
+      ? { label: "ACCRUING", tone: "warning" as const }
+      : positionMark !== undefined && positionMark > 0
+        ? { label: "OPEN", tone: "success" as const }
+        : { label: "EMPTY", tone: "neutral" as const };
+
+  return (
+    <div
+      className="overflow-hidden rounded-2xl border border-border bg-bgCard transition hover:border-borderHover"
+      style={{ fontVariantNumeric: "tabular-nums" }}
+    >
+      {/* ─── TOP STRIP: trading-pair · PT/YT · 81d · 8.33% ─────────────── */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-white/[0.015] px-4 py-2.5 text-[11px] font-medium">
         {marketLink ? (
           <Link
             href={marketLink}
-            className="text-[15px] font-semibold tracking-tight text-text transition hover:opacity-80"
+            className="font-mono text-[12px] font-semibold tracking-tight text-text transition hover:opacity-80"
           >
-            {detail.syName}
+            {pair}
           </Link>
         ) : (
-          <span className="text-[15px] font-semibold tracking-tight text-text">
-            {detail.syName}
+          <span className="font-mono text-[12px] font-semibold tracking-tight text-text">
+            {pair}
           </span>
         )}
-        <div className="mt-0.5 text-[11px] text-textDim">
-          {expired ? (
-            <span className="text-error">Expired</span>
-          ) : (
-            <>
-              {days} days · matures {matures}
-            </>
-          )}
-        </div>
+        <Sep />
+        <span className="font-mono text-textSec">PT/YT</span>
+        <Sep />
+        <span className="font-mono text-textSec">
+          {expired ? "matured" : `${days}d`}
+        </span>
+        <Sep />
+        <span className="font-mono text-accent">{apyLabel}</span>
+        <span className="ml-auto inline-flex items-center gap-2">
+          <span className="hidden font-mono text-[10px] text-textDim sm:inline">
+            {matures}
+          </span>
+          <StatusPill tone={status.tone}>{status.label}</StatusPill>
+        </span>
       </div>
-      <div className="text-right">
-        {positionUsd !== undefined && (
-          <>
-            <div className="text-[10px] uppercase tracking-[1px] text-textDim">
-              Position value
-            </div>
-            <div className="mt-0.5 font-mono text-[16px] font-semibold text-text">
-              {fmtUsd(positionUsd)}
-            </div>
-          </>
-        )}
-        <div className={`${positionUsd !== undefined ? "mt-1.5" : ""} text-[10px] uppercase tracking-[1px] text-textDim`}>
-          Implied APY {apyLabel}
-        </div>
+
+      {/* ─── HEADER ROW: position value | mark | projected ─────────────── */}
+      <div className="grid grid-cols-3 gap-x-3 border-b border-border bg-white/[0.025] px-4 py-3">
+        <Stat
+          label="Position value"
+          value={formatUsd(positionMark) ?? "—"}
+          tone="text"
+        />
+        <Stat
+          label="Mark"
+          value={formatUsd(positionMark) ?? "—"}
+          tone="textSec"
+        />
+        <Stat
+          label={expired ? "Payout (matured)" : `Payout @ ${days}d`}
+          value={formatUsd(positionProjected) ?? "—"}
+          tone={
+            positionProjected !== undefined &&
+            positionMark !== undefined &&
+            positionProjected > positionMark
+              ? "success"
+              : "textSec"
+          }
+        />
       </div>
-    </div>
-  );
 
-  return (
-    <div className="overflow-hidden rounded-2xl border border-border bg-bgCard transition hover:border-borderHover">
-      <Header />
+      {/* ─── PER-TOKEN ROWS ────────────────────────────────────────────── */}
+      <RowGroup>
+        <PositionRow
+          label="PT"
+          tone="success"
+          rawCount={p.pt}
+          markUsd={markPt}
+          rightSlot={
+            expired ? (
+              <span className="text-textSec">Redeems 1:1 to SY</span>
+            ) : projectedPt !== undefined ? (
+              <span className="text-textSec">
+                Payout @{days}d{" "}
+                <span className="font-mono text-text">
+                  {formatUsd(projectedPt)}
+                </span>
+                {projectedPtGain !== undefined && projectedPtGain > 0.0001 && (
+                  <span className="ml-1 font-mono text-success">
+                    +{formatUsd(projectedPtGain)}
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span className="text-textSec">Fixed APY {apyLabel}</span>
+            )
+          }
+          actions={
+            expired
+              ? [{ label: "Redeem PT", href: sub("") }]
+              : [{ label: "Sell PT", href: sub("pt") }]
+          }
+          dim={p.pt === 0n}
+        />
 
-      <PositionRow
-        label="PT"
-        tone="success"
-        rawCount={p.pt}
-        usd={usdPt}
-        meta={
-          <>
-            <span className="text-textSec">Fixed APY {apyLabel}</span>
-            <span className="text-textDim"> · Redeems 1:1 SY at maturity</span>
-          </>
-        }
-        actions={
-          expired
-            ? [{ label: "Redeem PT", href: sub("") }]
-            : [{ label: "Sell PT", href: sub("pt") }]
-        }
-        dim={p.pt === 0n}
-      />
+        <PositionRow
+          label="YT"
+          tone="warning"
+          pulse={accrual.pulsing}
+          rawCount={p.yt}
+          markUsd={markYt}
+          rightSlot={
+            accrual.pulsing ? (
+              <span className="text-textSec">
+                Earning{" "}
+                <span className="font-mono text-warning">
+                  {formatRatePerSecond(accrual.ratePerSecond)}
+                </span>
+              </span>
+            ) : (
+              <span className="text-textSec">
+                Implied APY {apyLabel}
+                {p.claimableYield > 0n && (
+                  <>
+                    {" "}
+                    <span className="text-textDim">·</span>{" "}
+                    Claimable{" "}
+                    <span className="font-mono text-text">
+                      {formatCompact(p.claimableYield)}
+                    </span>
+                    {formatUsd(usdClaim) && (
+                      <span className="ml-1 font-mono text-textDim">
+                        ({formatUsd(usdClaim)})
+                      </span>
+                    )}
+                  </>
+                )}
+              </span>
+            )
+          }
+          actions={[
+            { label: "Sell YT", href: sub("yt") },
+            ...(p.claimableYield > 0n
+              ? [{ label: "Claim yield", href: sub("") }]
+              : []),
+          ]}
+          dim={p.yt === 0n && p.claimableYield === 0n}
+        />
 
-      <PositionRow
-        label="YT"
-        tone="warning"
-        rawCount={p.yt}
-        usd={usdYt}
-        meta={
-          <>
-            <span className="text-textSec">Implied APY {apyLabel}</span>
-            <span className="text-textDim">
-              {" "}
-              · Claimable {formatCompact(p.claimableYield)}
-              {fmtUsd(usdClaim) ? ` (≈ ${fmtUsd(usdClaim)})` : ""}
-            </span>
-          </>
-        }
-        actions={[
-          { label: "Sell YT", href: sub("yt") },
-          ...(p.claimableYield > 0n
-            ? [{ label: "Claim yield", href: sub("") }]
-            : []),
-        ]}
-        dim={p.yt === 0n && p.claimableYield === 0n}
-      />
-
-      <PositionRow
-        label="LP"
-        tone="neutral"
-        rawCount={p.lp}
-        usd={usdLp}
-        meta={
-          <>
+        <PositionRow
+          label="LP"
+          tone="neutral"
+          rawCount={p.lp}
+          markUsd={markLp}
+          rightSlot={
             <span className="text-textSec">
-              Composition:{" "}
-              {hasLp ? formatCompact(userPtInLp) : "—"} PT /{" "}
-              {hasLp ? formatCompact(userSyInLp) : "—"} SY
+              Pool share{" "}
+              <span className="font-mono text-text">
+                {poolSharePct !== null
+                  ? `${poolSharePct < 0.01 ? "<0.01" : poolSharePct.toFixed(2)}%`
+                  : "—"}
+              </span>
+              {hasLp && (
+                <span className="ml-1 text-textDim">
+                  ({formatCompact(userPtInLp)} PT / {formatCompact(userSyInLp)}{" "}
+                  SY)
+                </span>
+              )}
             </span>
-            <span className="text-textDim">
-              {" "}
-              · Pool share{" "}
-              {poolSharePct !== null
-                ? `${poolSharePct < 0.01 ? "<0.01" : poolSharePct.toFixed(2)}%`
-                : "—"}
+          }
+          actions={[{ label: "Add liquidity", href: sub("lp") }]}
+          dim={p.lp === 0n}
+        />
+
+        <PositionRow
+          label="SY"
+          tone="neutral"
+          rawCount={p.sy}
+          markUsd={markSy}
+          rightSlot={
+            <span className="text-textDim">unwrap → USDC + WHBAR</span>
+          }
+          actions={[
+            { label: "Mint more", href: sub("") },
+            { label: "Buy PT", href: sub("pt") },
+          ]}
+          dim={p.sy === 0n}
+        />
+      </RowGroup>
+
+      {/* ─── FOOTER: session earned + open market ─────────────────────── */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border bg-white/[0.02] px-4 py-2.5 text-[11px]">
+        {accrual.pulsing ? (
+          <span className="inline-flex items-center gap-1.5 text-textSec">
+            <span className="font-mono text-[10px] uppercase tracking-[1px] text-textDim">
+              Session earned
             </span>
-          </>
-        }
-        actions={[{ label: "Add liquidity", href: sub("lp") }]}
-        dim={p.lp === 0n}
-      />
-
-      <PositionRow
-        label="SY"
-        tone="neutral"
-        rawCount={p.sy}
-        usd={usdSy}
-        meta={null}
-        actions={[
-          { label: "Mint more", href: sub("") },
-          { label: "Buy PT", href: sub("pt") },
-        ]}
-        dim={p.sy === 0n}
-      />
-
-      <div className="border-t border-border bg-white/[0.02] px-5 py-3">
+            <span className="font-mono text-warning">
+              {formatEarnedTotal(accrual.earnedThisSession)}
+            </span>
+            <span className="font-mono text-success">↗</span>
+          </span>
+        ) : (
+          <span className="font-mono text-[10px] uppercase tracking-[1px] text-textDim">
+            {expired ? "Market expired" : "Awaiting YT position"}
+          </span>
+        )}
         <Link
           href={`/markets/${market}`}
-          className="inline-flex items-center gap-1 text-[12px] font-medium text-textSec transition hover:text-text"
+          className="inline-flex items-center gap-1 font-medium text-textSec transition hover:text-text"
         >
           Open market →
         </Link>
       </div>
     </div>
   );
+}
+
+/* ─────────────────────────────────────────────────────── pieces */
+
+function Sep() {
+  return <span className="text-textDim/60">·</span>;
+}
+
+function StatusPill({
+  tone,
+  children,
+}: {
+  tone: "success" | "warning" | "error" | "neutral";
+  children: React.ReactNode;
+}) {
+  const palette =
+    tone === "success"
+      ? "border-success/30 bg-success/10 text-success"
+      : tone === "warning"
+        ? "border-warning/30 bg-warning/10 text-warning"
+        : tone === "error"
+          ? "border-error/30 bg-error/10 text-error"
+          : "border-border bg-white/[0.04] text-textDim";
+  return (
+    <span
+      className={`inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[1.5px] ${palette}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "text" | "textSec" | "success";
+}) {
+  const colour =
+    tone === "success"
+      ? "text-success"
+      : tone === "textSec"
+        ? "text-textSec"
+        : "text-text";
+  return (
+    <div className="min-w-0">
+      <div className="text-[9px] font-semibold uppercase tracking-[1.5px] text-textDim">
+        {label}
+      </div>
+      <div className={`mt-0.5 truncate font-mono text-[15px] font-semibold ${colour}`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function RowGroup({ children }: { children: React.ReactNode }) {
+  return <div className="divide-y divide-border">{children}</div>;
 }
 
 /* ─────────────────────────────────────────────────────── row */
@@ -304,59 +510,89 @@ interface RowProps {
   label: string;
   tone: "success" | "warning" | "neutral";
   rawCount: bigint;
-  usd: number | undefined;
-  /** Sub-line under the value (e.g. "Fixed APY 8.33%"). Pass `null` to omit. */
-  meta: React.ReactNode | null;
+  markUsd: number | undefined;
+  /** Right-hand column: contextual hint (e.g. "Earning $0.000…123 /s"). */
+  rightSlot: React.ReactNode;
   actions: RowAction[];
   /** Dim the whole row when the user holds 0 of this position. */
   dim?: boolean;
+  /** When true, show a pulsing dot next to the label. YT-only. */
+  pulse?: boolean;
 }
 
-function PositionRow({ label, tone, rawCount, usd, meta, actions, dim }: RowProps) {
+function PositionRow({
+  label,
+  tone,
+  rawCount,
+  markUsd,
+  rightSlot,
+  actions,
+  dim,
+  pulse,
+}: RowProps) {
   const toneClass =
     tone === "success"
       ? "text-success"
       : tone === "warning"
         ? "text-warning"
         : "text-text";
-  const usdLabel = formatUsd(usd);
+  const pulseDot =
+    tone === "success"
+      ? "bg-success"
+      : tone === "warning"
+        ? "bg-warning"
+        : "bg-accent";
+  const usdLabel = formatUsd(markUsd);
+
   return (
     <div
-      className={`border-t border-border bg-white/[0.02] px-5 py-4 ${dim ? "opacity-60" : ""}`}
+      className={`group flex flex-wrap items-center gap-x-3 gap-y-1.5 bg-white/[0.015] px-4 py-2 text-[12px] transition hover:bg-white/[0.035] ${dim ? "opacity-50" : ""}`}
     >
-      <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
-        <div className="w-10 flex-shrink-0 text-[10px] font-semibold uppercase tracking-[1.5px] text-textDim">
-          {label}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <div className={`font-mono text-[16px] font-semibold ${toneClass}`}>
-              {formatCompact(rawCount)}
-            </div>
-            {usdLabel && (
-              <div className="font-mono text-[12px] font-medium text-textDim">
-                ≈ {usdLabel}
-              </div>
-            )}
-          </div>
-          {meta && (
-            <div className="mt-1 text-[11px] leading-relaxed">{meta}</div>
-          )}
-        </div>
-        {actions.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {actions.map((a) => (
-              <Link
-                key={a.label}
-                href={a.href}
-                className="rounded-lg border border-border bg-white/[0.03] px-2.5 py-1 text-[11px] font-medium text-textSec transition hover:border-borderHover hover:bg-white/[0.06] hover:text-text"
-              >
-                {a.label}
-              </Link>
-            ))}
-          </div>
+      {/* Label + optional pulse */}
+      <div className="flex w-12 flex-shrink-0 items-center gap-1.5">
+        {pulse && (
+          <span
+            className={`inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full ${pulseDot} animate-pulse`}
+            aria-hidden
+          />
         )}
+        <span className="font-mono text-[10px] font-semibold uppercase tracking-[1.5px] text-textDim">
+          {label}
+        </span>
       </div>
+
+      {/* Raw count — tabular-aligned */}
+      <div className={`w-20 flex-shrink-0 text-right font-mono text-[13px] font-semibold ${toneClass}`}>
+        {formatCompact(rawCount)}
+      </div>
+
+      {/* Mark USD column — fixed-width so columns stack across all 4 rows */}
+      <div className="w-24 flex-shrink-0 text-right">
+        <span className="font-mono text-[9px] uppercase tracking-[1px] text-textDim">
+          Mark{" "}
+        </span>
+        <span className="font-mono text-[12px] font-medium text-text">
+          {usdLabel ?? "—"}
+        </span>
+      </div>
+
+      {/* Right slot: payout / earning rate / pool composition */}
+      <div className="min-w-0 flex-1 text-[11px] leading-snug">{rightSlot}</div>
+
+      {/* Actions */}
+      {actions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          {actions.map((a) => (
+            <Link
+              key={a.label}
+              href={a.href}
+              className="rounded border border-border bg-white/[0.04] px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[1px] text-textSec transition hover:border-borderHover hover:bg-white/[0.08] hover:text-text"
+            >
+              {a.label}
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

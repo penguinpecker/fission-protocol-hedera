@@ -38,7 +38,7 @@ export function StrategyOverview({ detail, market }: OverviewProps) {
 
 function CardShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex flex-col rounded-2xl border border-border bg-bgCard p-5 transition hover:border-borderHover hover:bg-white/[0.02]">
+    <div className="flex flex-col rounded-2xl border border-border bg-bgCard p-6 transition hover:border-borderHover hover:bg-white/[0.02]">
       {children}
     </div>
   );
