@@ -34,6 +34,8 @@ const NAV = [
       { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fb0b3", label: "Factory", external: true },
       { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fdf89", label: "Router (v3)", external: true },
       { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fd984", label: "Zap", external: true },
+      // MegaZap link intentionally omitted — contract is disabled in prod
+      // (see README "Future work / MegaZap v2"). Restore when v2 redeploys.
       { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fdf8c", label: "MegaZap", external: true },
       { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fb089", label: "SY adapter", external: true },
     ],

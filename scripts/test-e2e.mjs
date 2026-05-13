@@ -196,8 +196,8 @@ console.log(`PT/YT/LP:     ${PT} / ${YT} / ${LP}`);
   console.log("\n═══ 5/6: Add LP (router.addLiquidityProportional, 1M SY + matching PT) ═══");
   // Read current pool ratio to compute proportional PT side
   // totalSy and totalPt on the market
-  const ts = await ethCall(MARKET, "0xfb7b29ff"); // totalSy() — let me verify
-  const tp = await ethCall(MARKET, "0xc6fc8c2a"); // totalPt() — let me verify
+  const ts = await ethCall(MARKET, "0xc7bfb21e"); // totalSy() canonical
+  const tp = await ethCall(MARKET, "0xb4b9106d"); // totalPt() canonical
   const totalSy = BigInt(ts || "0x0");
   const totalPt = BigInt(tp || "0x0");
   const syBefore = await balanceOf(shareTok, evmAddr);

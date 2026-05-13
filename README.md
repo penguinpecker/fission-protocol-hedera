@@ -28,7 +28,7 @@ flowchart TB
         Factory["FissionFactory<br/>0x...009fb0b3"]
         Market["FissionMarketRewards<br/>(Market 0)<br/>0xfa90...8a6d"]
         Router["ActionRouter v3<br/>0x...009fdf89"]
-        Mega["FissionMegaZap<br/>0x...009fdf8c"]
+        Zap["FissionZap (HBAR→SY)<br/>0x...009fd984"]
     end
 
     subgraph Tokens["HTS-native tokens (in user wallets)"]
@@ -146,29 +146,27 @@ Each strategy page bundles its underlying contract calls behind a single user in
 
 ### HBAR-source (the default on `/pt`, `/yt`, `/lp`)
 
-When a user types `$5` on the Buy PT page, the dApp submits **one** transaction — the MegaZap. The contract orchestrates HBAR → SY → PT/YT/LP atomically:
+When a user types `$5` on the Buy PT page, the dApp chains 2-4 wallet popups (Phase 7 design): HTS associate → zap HBAR→SY → approve SY → swap SY→PT. The frontend submits these sequentially, polling the chain between steps so the *actual* SY received feeds the next call (Hashio is briefly stale post-receipt; we retry up to 5×).
 
 ```
 User HBAR
   │
-  ├─[0] HTS associate SY share + PT / YT / LP (optional, one batched popup)
-  │
-  └─[1] FissionMegaZap.zapHbarToPt{value: 15 HBAR}(market, sy, minPtOut, user, deadline)
-          │
-          ├─ FissionZap.zapHbarToSy{value: 15 HBAR}(..., receiver = MegaZap)
-          │     └─ wraps half to WHBAR, swaps half to USDC on SaucerSwap V3,
-          │        deposits both into SY adapter, mints SY shares to MegaZap
-          │
-          ├─ ActionRouter v3.swapExactSyForPt(market, syReceived, minPtOut, user, deadline)
-          │     └─ MegaZap approves SY-share to router, router swaps, AMM mints
-          │        PT directly to user
-          │
-          └─ MegaZap sweeps any leftover SY back to user
+  ├─[1] HTS associate SY share + PT (optional, only when max_auto_assoc=0)
+  ├─[2] FissionZap.zapHbarToSy{value: 15 HBAR}(sy, ..., receiver=user)
+  │       └─ wraps half→WHBAR, swaps half→USDC, deposits to V3 LP, mints SY
+  ├─[3] SY-share.approve(router, syReceived)            (skip if already)
+  └─[4] ActionRouter v3.swapExactSyForPt(market, syIn, minPtOut, user, deadline)
+          └─ AMM mints PT to user
 ```
 
-`zapHbarToYt` and `zapHbarToLp` follow the same pattern (HBAR → SY → router.buyYT / addLiquidityProportional). LP is the most complex: MegaZap mints SY, splits the budget per `ptShareBps` (current pool ratio), swaps half to PT via the router, then deposits both as proportional liquidity.
+#### What about the atomic MegaZap?
 
-The legacy 2-4-tx chain still ships as a fallback for environments where `NEXT_PUBLIC_MEGA_ZAP_ADDRESS` isn't set; both the EVM and Hedera wallet adapters dispatch to either path transparently.
+A `FissionMegaZap` contract is deployed at `0x...009fdf8c` (`0.0.10477452`) and was wired into the dApp briefly, but on-chain QA (`scripts/qa-wave-a.mjs`) caught two blockers:
+
+- **`zapHbarToYt` hits `MAX_CHILD_RECORDS_EXCEEDED`** — Hedera's 50-records-per-consensus-tx cap. The internal chain `zapHbarToSy → splitTo → swapExactPtForSy` produces too many HTS child records. No fix on contract logic alone; needs a split-into-multiple-txs design (which is what the Phase 7 chain already does).
+- **`zapHbarToPt` and `zapHbarToLp` revert `InsufficientOutput()`** at both small (6 HBAR) and larger (50 HBAR) inputs with identical gas (~7.85M), suggesting the post-zap `syReceived` is being read as 0 by the MegaZap. Likely a contract-side bug in how FissionZap delivers shares to a non-EOA receiver — under investigation.
+
+The MegaZap is therefore **disabled in production** (env var unset). A v2 design will either fix the receiver-handling in FissionZap (so MegaZap can chain at the contract level) or formalise the multi-tx flow with a dedicated session-key pattern.
 
 ### SY-source (existing-SY-holders)
 
@@ -314,7 +312,7 @@ All deployments tracked in [`deployments/295.json`](deployments/295.json).
 | `ActionRouter v3` | `0x00000000000000000000000000000000009fdf89` | `0.0.10477449` | Stateless user-facing router. **v3 fixes the SY-share typing bug from v2**: `addLiquidityProportional` now pulls `sy.shareToken()` correctly, so Add LP routes through the router again. `maxAutomaticTokenAssociations = -1`, operator-admin. |
 | `~ActionRouter v2 (abandoned)~` | `~0x00000000000000000000000000000000009fd993~` | `~0.0.10475923~` | `addLiquidityProportional` cast the SY *contract* address as `IERC20` instead of using `sy.shareToken()` — every Add LP through the router reverted. Replaced by v3. PT/YT/SY entries worked correctly so the dApp routed around the bug. Do not interact. |
 | `~ActionRouter v1 (abandoned)~` | `~0x00000000000000000000000000000000009fad96~` | `~0.0.10464662~` | Pre-HIP-904 deploy — `max_auto_assoc = 0` blocked HTS transferFrom into the router. Replaced. Do not interact. |
-| `FissionMegaZap` | `0x00000000000000000000000000000000009fdf8c` | `0.0.10477452` | **NEW.** Atomic HBAR → PT / YT / LP zap. Wraps the FissionZap + ActionRouter v3 internally; one signature instead of 2-4. Permissionless, no admin. `maxAutomaticTokenAssociations = -1`. |
+| `~FissionMegaZap (disabled in prod)~` | `~0x00000000000000000000000000000000009fdf8c~` | `~0.0.10477452~` | **Disabled** after on-chain QA. `zapHbarToYt` hits Hedera's `MAX_CHILD_RECORDS_EXCEEDED` (50-records-per-tx cap); `zapHbarToPt` / `zapHbarToLp` revert `InsufficientOutput()` likely from a FissionZap receiver-handling bug. v2 redesign pending. Env var unset so the dApp falls back to the working Phase 7 chained flow. |
 | `FissionZap` | `0x00000000000000000000000000000000009fd984` | `0.0.10475908` | One-tx HBAR → SY mint. Wraps half to WHBAR, swaps half to USDC on SaucerSwap V3, deposits into the SY adapter. Permissionless, no admin. Still used directly by `MintSyForm`; HBAR-source PT/YT/LP flows now route through the MegaZap. |
 | `~FissionZap v1 (abandoned)~` | `~0x00000000000000000000000000000000009fd97e~` | `~0.0.10475902~` | First deploy treated `wrapAmount` as wei but Hedera msg.value is in tinybars — reverted with `InsufficientValue`. Replaced. |
 | `StandardMarketDeployer` | `0x00000000000000000000000000000000009fb0af` | `0.0.10465455` | Deploys FissionMarket instances (bytecode-isolation; gas-cap workaround) |
@@ -483,13 +481,13 @@ CRON_SECRET=<32-byte hex>
 
 Filed for the next contract release wave:
 
-- **Indexer for activity feed** — `recent_activity` on `/profile` decodes function selectors via a static map; a real indexer (mirror events → Supabase) would surface amounts, P&L, and per-tx outcomes per row.
-- **Permit-style approvals** — collapse the two `approve` legs of Add LP (SY-share + PT toward the router) into a single signed permit so SY-source LP becomes a single tx too. Pendle V2 ships this; the HTS HIP for EIP-2612-style permits is still pending.
+- **MegaZap v2** — the deployed v1 (`0x...009fdf8c`) is currently disabled in production. `zapHbarToYt` is fundamentally limited by Hedera's 50-records-per-consensus-tx cap and needs to split into two on-chain calls (or accept the existing client-side chain). `zapHbarToPt` and `zapHbarToLp` both revert `InsufficientOutput()` regardless of size, suggesting a bug in how `FissionZap.zapHbarToSy` delivers shares when `receiver` is a contract (the megaZap reads 0 back via `balanceOf` after the inner call). v2 needs either: a fix in the FissionZap receiver-handling path; or a redesign that splits the work and lets the user's wallet act as the intermediate receiver.
+- **Indexer for activity feed** — `/api/activity` decodes function selectors via a viem-driven ABI registry on every request. A real indexer (mirror events → Supabase) would also surface event-derived state (`Swap`/`AddLiquidity`/`RemoveLiquidity`) for per-tx amounts that aren't in the calldata.
+- **Permit-style approvals** — collapse the two `approve` legs of Add LP (SY-share + PT toward the router) into a single signed permit. Pendle V2 ships this; the HTS HIP for EIP-2612-style permits is still pending.
 
 Shipped in the 2026-05-14 contract release:
 
-- ~~**MegaZap contract**~~ — `0x...009fdf8c` (`0.0.10477452`). Atomic `zapHbarToPt` / `zapHbarToYt` / `zapHbarToLp` collapses the HBAR-source chain to one signature.
-- ~~**ActionRouter v3**~~ — `0x...009fdf89` (`0.0.10477449`). Fixes the v2 `addLiquidityProportional` typing bug; Add LP routes through the router again.
+- ~~**ActionRouter v3**~~ — `0x...009fdf89` (`0.0.10477449`). Fixes the v2 `addLiquidityProportional` typing bug; Add LP routes through the router again. 11/11 e2e tests pass.
 
 ---
 

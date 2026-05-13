@@ -134,15 +134,17 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // SY USD per share is needed at most once per request; fire and forget if
-  // we have stale or no cache, then use whatever is current when we render. We
-  // don't await the refresh — entries that already have a fresh price get one,
-  // and the refresh populates the cache for the NEXT request. This keeps the
-  // route's worst-case latency bounded by Mirror Node + CPU.
-  const syUsdPerShare = freshlyCached(syUsdPerShareCache);
+  // SY USD per share — read the warm cache if fresh, otherwise refresh INLINE.
+  // The previous "fire-and-forget" pattern was wrong for serverless: each
+  // function invocation may get a fresh container with no module-scope cache,
+  // so without awaiting the refresh `usd` was always `null` on first hit. We
+  // now block the response on a single refresh (~500ms including CoinGecko +
+  // 8 Hashio reads — all parallel via Promise.all), capped by Vercel's
+  // function timeout. If it fails, entries still ship without USD.
+  let syUsdPerShare = freshlyCached(syUsdPerShareCache);
   if (syUsdPerShare === undefined) {
-    // Trigger refresh but don't block.
-    void refreshSyUsdPerShare();
+    await refreshSyUsdPerShare();
+    syUsdPerShare = freshlyCached(syUsdPerShareCache);
   }
 
   const entries: ActivityEntry[] = mirror.results
