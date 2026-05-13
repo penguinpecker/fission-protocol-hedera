@@ -32,6 +32,8 @@ const NAV = [
     links: [
       { href: "https://hashscan.io/mainnet/contract/0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d", label: "Market 0", external: true },
       { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fb0b3", label: "Factory", external: true },
+      { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fd993", label: "Router", external: true },
+      { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fd984", label: "Zap", external: true },
       { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fb089", label: "SY adapter", external: true },
     ],
   },
