@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
-import { ytToSyRate } from "@/components/MarketPositionCard";
+import { ptToSyRate, ytToSyRate } from "@/components/MarketPositionCard";
 import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, HEDERA_TOKENS, isDeployed } from "@/lib/addresses";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
@@ -310,7 +310,14 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
       if (!user) return false;
       setStatus({ kind: "buying", stepIdx: 4 });
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
-      const minSyOut = (syIn * BigInt(10_000 - slippageBps)) / 10_000n;
+      // buyYT splits `syIn` SY → `syIn` PT + `syIn` YT, then sells the PT for
+      // SY at the current pool rate. Expected SY back ≈ syIn · ptRate where
+      // ptRate < 1 pre-expiry. Apply slippage to that **expected** value, NOT
+      // to syIn directly — applying to syIn made `minSyOut` mathematically
+      // unreachable (>99% of syIn while the PT sale only returns ~98%).
+      const ptRate = ptToSyRate(apy, days);
+      const expectedSyOut = BigInt(Math.floor(Number(syIn) * ptRate));
+      const minSyOut = (expectedSyOut * BigInt(10_000 - slippageBps)) / 10_000n;
       try {
         const { txHash } = await adapter.write({
           kind: "buyYT",
@@ -331,7 +338,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         return false;
       }
     },
-    [adapter, market, slippageBps, setStatus, user],
+    [adapter, apy, days, market, slippageBps, setStatus, user],
   );
 
   const hbarFlowTokens: `0x${string}`[] = useMemo(
@@ -351,8 +358,10 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
 
       setStatus({ kind: "megaZapping", stepIdx: 0 });
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
-      // Internal PT sale slippage cap matches the existing chain's logic.
-      const minSyOut = (estimatedSyFromHbar * BigInt(10_000 - slippageBps)) / 10_000n;
+      // Same PT-sale-aware floor as the router-path: expected SY ≈ syIn · ptRate.
+      const ptRate = ptToSyRate(apy, days);
+      const expectedSyOut = BigInt(Math.floor(Number(estimatedSyFromHbar) * ptRate));
+      const minSyOut = (expectedSyOut * BigInt(10_000 - slippageBps)) / 10_000n;
       try {
         const { txHash } = await adapter.write({
           kind: "zapHbarToYtMega",
@@ -372,7 +381,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         setStatus({ kind: "error", message: msg, failedAt: 0 });
       }
     },
-    [adapter, detail.sy, detail.syShare, detail.yt, estimatedSyFromHbar, market, setStatus, slippageBps, stepAssociate, user],
+    [adapter, apy, days, detail.sy, detail.syShare, detail.yt, estimatedSyFromHbar, market, setStatus, slippageBps, stepAssociate, user],
   );
 
   const runHbarChainFromStep = useCallback(
