@@ -152,14 +152,12 @@ function Hero() {
           >
             Open the markets
           </Link>
-          <a
-            href="https://github.com/penguinpecker/fission-protocol-hedera/blob/main/docs/ECONOMICS.md"
-            target="_blank"
-            rel="noreferrer"
+          <Link
+            href="/whitepaper"
             className="rounded-xl border border-borderHover px-6 py-[13px] text-[14px] font-medium text-text transition hover:bg-white/[0.05] sm:px-7 sm:py-[15px] sm:text-[15px]"
           >
-            How it works
-          </a>
+            Whitepaper
+          </Link>
         </div>
 
         <ul className="mt-12 grid w-full max-w-[840px] grid-cols-2 gap-px overflow-hidden rounded-2xl border border-border bg-border sm:mt-16 md:grid-cols-4">

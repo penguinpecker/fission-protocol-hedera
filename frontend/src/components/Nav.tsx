@@ -126,15 +126,7 @@ export function Nav() {
             <NavLink href="/" active={isActive("/")}>Home</NavLink>
             <NavLink href="/markets" active={isActive("/markets")}>Markets</NavLink>
             <NavLink href="/profile" active={isActive("/profile")}>Profile</NavLink>
-            <NavLink href="https://github.com/penguinpecker/fission-protocol-hedera" external>
-              Docs
-            </NavLink>
-            <NavLink
-              href="https://github.com/penguinpecker/fission-protocol-hedera/tree/main/audits/internal"
-              external
-            >
-              Audits
-            </NavLink>
+            <NavLink href="/whitepaper" active={isActive("/whitepaper")}>Whitepaper</NavLink>
           </div>
 
           {/* Right cluster: chain-pill + connect / account */}
