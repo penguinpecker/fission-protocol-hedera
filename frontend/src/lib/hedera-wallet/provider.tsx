@@ -181,28 +181,38 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
   const getConnector = useCallback(() => connectorRef.current, []);
 
   // On mount, if a Hedera session already exists in storage, restore it.
+  // Set status to "connecting" while the SDK + WC client load asynchronously
+  // (1-3 s on a cold page) so the gate / nav can show a skeleton instead of
+  // a "connect wallet" prompt that misleadingly suggests the user got
+  // signed out.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Only attempt restore if Reown-stored sessions exist — avoids loading
-      // the big SDK on a cold page when nobody's used Hedera-native.
       if (typeof window === "undefined") return;
       const hasStoredSession =
         window.localStorage.getItem("wc@2:client:0.3//session") &&
         window.localStorage.getItem("wc@2:client:0.3//session") !== "[]";
       if (!hasStoredSession) return;
 
+      setState((s) => ({ ...s, status: "connecting" }));
       try {
         const connector = await getOrInit();
         const signers = connector.signers ?? [];
-        if (cancelled || signers.length === 0) return;
+        if (cancelled) return;
+        if (signers.length === 0) {
+          // Persisted store said we had a session, but the connector found no
+          // signers (session expired / wallet-side disconnect). Drop back to
+          // idle so the connect button works.
+          setState(INITIAL);
+          return;
+        }
         const signer = signers[0] as { getAccountId(): { toString(): string } };
         const accountId = signer.getAccountId().toString();
         const num = Number(accountId.split(".")[2]);
         const evmAddress = ("0x" + num.toString(16).padStart(40, "0")) as `0x${string}`;
         setState({ status: "connected", accountId, evmAddress, error: null });
       } catch {
-        /* swallow — user can manually reconnect */
+        if (!cancelled) setState(INITIAL);
       }
     })();
     return () => {
