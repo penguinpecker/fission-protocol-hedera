@@ -50,9 +50,19 @@ export function Nav() {
   // user click, both signatures back-to-back. The ref distinguishes a
   // user-initiated connect (auto-sign) from a session-restore on page load
   // (don't auto-sign — that'd surprise users).
+  // Two refs gate the auto-sign / redirect flow so they ONLY fire when the
+  // user clicks our Connect button — never on session restore or on a
+  // /api/auth/me probe that flips state to "authenticated" silently.
+  //   - autoSignAfterConnectRef: trigger SIWE right after a click-initiated
+  //     `hedera.connect()` succeeds.
+  //   - redirectAfterAuthRef: redirect to /markets after the resulting SIWE
+  //     verify lands. Cleared after one use so navigating to /profile later
+  //     (with a still-valid cookie) doesn't bounce the user back to /markets.
   const autoSignAfterConnectRef = useRef(false);
+  const redirectAfterAuthRef = useRef(false);
   const handleConnect = async () => {
     autoSignAfterConnectRef.current = true;
+    redirectAfterAuthRef.current = true;
     await hedera.connect();
   };
   const handleDisconnect = async () => {
@@ -74,17 +84,13 @@ export function Nav() {
     }
   }, [adapter.isConnected, adapter.address, auth.status, signIn]);
 
-  // After SIWE flips to authenticated (from the auto-signin chain above OR
-  // a manual Sign-In click), send the user to /markets. Watch the transition
-  // so we don't redirect on every render — only on the "loading → authenticated"
-  // edge. Stays put if the user is already inside the app on /markets/*.
-  const lastAuthStatusRef = useRef(auth.status);
+  // Redirect to /markets ONCE, only after a click-initiated Connect & Sign
+  // chain finishes. Probes that flip state to "authenticated" (eg. /api/auth/me
+  // on a refresh, or visiting /profile while a cookie is live) do NOT trigger
+  // this — the ref isn't set in those paths.
   useEffect(() => {
-    const prev = lastAuthStatusRef.current;
-    lastAuthStatusRef.current = auth.status;
-    if (prev !== "authenticated" && auth.status === "authenticated") {
-      // Skip the redirect if the user is already at /markets or deeper — it'd
-      // just collapse their scroll position with no UX win.
+    if (auth.status === "authenticated" && redirectAfterAuthRef.current) {
+      redirectAfterAuthRef.current = false;
       if (!pathname.startsWith("/markets")) {
         router.push("/markets");
       }
