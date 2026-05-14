@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAccount, useChainId, useSwitchChain } from "wagmi";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { HEDERA_MAINNET_CHAIN_ID } from "@/lib/wagmi";
@@ -105,6 +105,14 @@ export function Nav() {
     return pathname === href || pathname.startsWith(`${href}/`);
   };
 
+  // Mobile hamburger menu — links are hidden below md: so phone users had
+  // no way to reach /whitepaper or /profile from the header. Toggle closes
+  // automatically when the route changes.
+  const [mobileOpen, setMobileOpen] = useState(false);
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
   return (
     <>
       <nav className="sticky top-0 z-50 border-b border-border bg-black/65 backdrop-blur-[14px]">
@@ -129,7 +137,7 @@ export function Nav() {
             <NavLink href="/whitepaper" active={isActive("/whitepaper")}>Whitepaper</NavLink>
           </div>
 
-          {/* Right cluster: chain-pill + connect / account */}
+          {/* Right cluster: chain-pill + connect / account + mobile menu btn */}
           <div className="flex flex-shrink-0 items-center gap-1.5 sm:gap-2.5">
             <span className="hidden items-center gap-2 rounded-[2px] border border-border px-2.5 py-1.5 font-mono text-[11px] text-textSec sm:inline-flex">
               <span className="term-pulse-dot inline-block size-[6px] rounded-full bg-white" />
@@ -192,8 +200,42 @@ export function Nav() {
                     : "Connect & Sign"}
               </button>
             )}
+
+            <button
+              type="button"
+              aria-label="Toggle menu"
+              aria-expanded={mobileOpen}
+              onClick={() => setMobileOpen((v) => !v)}
+              className="inline-flex size-9 items-center justify-center rounded-[2px] border border-border text-text transition hover:bg-white/[0.04] md:hidden"
+            >
+              <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                {mobileOpen ? (
+                  <>
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                  </>
+                ) : (
+                  <>
+                    <line x1="4" y1="7" x2="20" y2="7" />
+                    <line x1="4" y1="12" x2="20" y2="12" />
+                    <line x1="4" y1="17" x2="20" y2="17" />
+                  </>
+                )}
+              </svg>
+            </button>
           </div>
         </div>
+
+        {mobileOpen && (
+          <div className="border-t border-border bg-black/80 backdrop-blur-[14px] md:hidden">
+            <div className="mx-auto flex max-w-[1440px] flex-col gap-1 px-4 py-3 sm:px-6">
+              <MobileNavLink href="/" active={isActive("/")}>Home</MobileNavLink>
+              <MobileNavLink href="/markets" active={isActive("/markets")}>Markets</MobileNavLink>
+              <MobileNavLink href="/profile" active={isActive("/profile")}>Profile</MobileNavLink>
+              <MobileNavLink href="/whitepaper" active={isActive("/whitepaper")}>Whitepaper</MobileNavLink>
+            </div>
+          </div>
+        )}
       </nav>
 
       {onWrongChain && (
@@ -241,6 +283,27 @@ function NavLink({
       </a>
     );
   }
+  return (
+    <Link href={href} className={cls}>
+      {children}
+    </Link>
+  );
+}
+
+function MobileNavLink({
+  href,
+  active,
+  children,
+}: {
+  href: string;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  const base =
+    "rounded-[2px] border px-3 py-2.5 text-[14px] transition";
+  const idle = "border-transparent text-textSec hover:bg-white/[0.04] hover:text-white";
+  const on = "border-borderHover bg-white/[0.06] text-white";
+  const cls = `${base} ${active ? on : idle}`;
   return (
     <Link href={href} className={cls}>
       {children}

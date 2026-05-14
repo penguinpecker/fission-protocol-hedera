@@ -189,9 +189,25 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     (async () => {
       if (typeof window === "undefined") return;
-      const hasStoredSession =
-        window.localStorage.getItem("wc@2:client:0.3//session") &&
-        window.localStorage.getItem("wc@2:client:0.3//session") !== "[]";
+      // Scan ALL wc@2 session-shaped keys, not a single hardcoded
+      // `wc@2:client:0.3//session`. Different WC client builds store the
+      // session under different version segments (e.g. `wc@2:client:0.4`),
+      // and HashPack-side updates can rotate that path without notice. A
+      // narrow check skips a perfectly-good session, leaving the user
+      // staring at a "Sign In" button despite having an active wallet
+      // connection and valid SIWE cookie.
+      let hasStoredSession = false;
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (!k) continue;
+        if (k.startsWith("wc@2:") && k.includes("session")) {
+          const v = window.localStorage.getItem(k);
+          if (v && v !== "[]" && v !== "{}" && v !== "null") {
+            hasStoredSession = true;
+            break;
+          }
+        }
+      }
       if (!hasStoredSession) return;
 
       setState((s) => ({ ...s, status: "connecting" }));

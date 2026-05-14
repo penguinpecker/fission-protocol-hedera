@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useChainId } from "wagmi";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
-import { WalletGate } from "@/components/WalletGate";
 import { ADDRESSES, isDeployed } from "@/lib/addresses";
 import {
   useMarketCount,
@@ -36,12 +35,13 @@ const factoryDeployed = isDeployed(ADDRESSES.factory);
  * Hedera Mirror Node; HBAR price from CoinGecko via `useHbarUsd`.
  */
 export default function MarketsPage() {
+  // Markets list is public — TVL, APY, expiry are on-chain reads usable
+  // without a wallet. The per-market trade pages keep their own gates where
+  // signing is required.
   return (
     <main className="min-h-screen text-text">
       <Nav />
-      <WalletGate>
-        <MarketsBody />
-      </WalletGate>
+      <MarketsBody />
       <Footer />
     </main>
   );
