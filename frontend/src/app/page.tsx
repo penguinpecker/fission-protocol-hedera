@@ -37,7 +37,7 @@ const STRATEGIES = [
       ["Worst", "V3 under-performs → −67%"],
       ["After expiry", "YT keeps earning"],
     ],
-    pickIf: "You think SaucerSwap V3 trading volume will exceed expectations.",
+    pickIf: "You think SaucerSwap V2 trading volume will exceed expectations.",
   },
   {
     id: "split",
@@ -61,7 +61,7 @@ const STRATEGIES = [
 const STREAMS = [
   {
     id: "v3",
-    title: "Stream B — SaucerSwap V3 swap fees",
+    title: "Stream B — SaucerSwap V2 swap fees",
     subtitle: "100% to YT holders",
     rate: "0.3% per V3 trade",
     description:

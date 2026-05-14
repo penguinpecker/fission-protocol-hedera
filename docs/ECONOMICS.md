@@ -13,7 +13,7 @@ Three roles, three different yield streams, all sourced from real on-chain econo
 | Role | What you hold | Yield comes from | Risk profile |
 |---|---|---|---|
 | **PT** (fixed yield) | Principal Token | A discount at buy time → 1:1 SY at maturity | Low — fixed at buy time, protected by SY held in market |
-| **YT** (variable yield) | Yield Token | SaucerSwap V3 swap fees harvested by the SY's NFT | Variable — leveraged exposure to V3 trading volume |
+| **YT** (variable yield) | Yield Token | SaucerSwap V2 swap fees harvested by the SY's NFT | Variable — leveraged exposure to V3 trading volume |
 | **LP** (market maker) | LP Token | Fission AMM swap fees (99% to LPs, 1% to treasury) | AMM exposure to PT/SY divergence + post-expiry auto-redeem |
 
 **The protocol is delta-neutral** — it has zero P&L exposure. All gains and losses are between user roles.
@@ -134,7 +134,7 @@ The math:
 
 So if V3 yield comes in 1% above implied, YT gains ~67%. If it comes in 1% below, YT loses ~67%.
 
-YT is for traders who think SaucerSwap V3 volume will exceed expectations. It's NOT a savings product.
+YT is for traders who think SaucerSwap V2 volume will exceed expectations. It's NOT a savings product.
 
 ### YT does not go to 0 at expiry
 
@@ -145,7 +145,7 @@ This is the key difference from standard Pendle. In our Kyber-pattern design:
 
 The contract literally rejects burning YT in `redeemAfterExpiry` (audit fix M-2) — burning your YT would forfeit a perpetual income stream you may not realize you have.
 
-The only way YT goes to ~0: if SaucerSwap V3 stops trading WHBAR↔USDC entirely. Realistically: low.
+The only way YT goes to ~0: if SaucerSwap V2 stops trading WHBAR↔USDC entirely. Realistically: low.
 
 YT downside risks (you should know):
 - Realized fees < entry price → mark-to-market loss
@@ -185,7 +185,7 @@ LPs are bull-on-protocol-volume players. If you think Fission will see lots of P
 
 ## The two fee streams (don't confuse them)
 
-| | Stream A: Fission AMM fees | Stream B: SaucerSwap V3 fees |
+| | Stream A: Fission AMM fees | Stream B: SaucerSwap V2 fees |
 |---|---|---|
 | **Where it's charged** | Our protocol's PT/SY swap | SaucerSwap's WHBAR/USDC swap |
 | **Who pays** | Anyone trading PT or YT | Anyone using SaucerSwap to swap WHBAR↔USDC |
@@ -195,7 +195,7 @@ LPs are bull-on-protocol-volume players. If you think Fission will see lots of P
 | **YT receives** | Nothing | Everything |
 | **LP receives** | Almost everything | Nothing |
 
-The two streams are completely independent. PT/YT trading volume on Fission has no effect on YT yield. SaucerSwap V3 volume has no effect on LP yield.
+The two streams are completely independent. PT/YT trading volume on Fission has no effect on YT yield. SaucerSwap V2 volume has no effect on LP yield.
 
 ---
 
@@ -246,7 +246,7 @@ This protocol launches with small TVL. Two things to communicate clearly:
 
 ## Risks the protocol does NOT cover
 
-- **SaucerSwap V3 protocol risk**: the underlying NFT depends on SaucerSwap. If SaucerSwap is exploited, our SY is at risk.
+- **SaucerSwap V2 protocol risk**: the underlying NFT depends on SaucerSwap. If SaucerSwap is exploited, our SY is at risk.
 - **Hedera platform risk**: HTS quirks, network outages, HIP changes.
 - **Smart contract risk**: bugs in our own code. Mitigated by 269 tests, internal audits, mainnet fork tests, and (eventually) external audit.
 - **Governance risk**: until multisig handoff completes, the deployer EOA can pause and update fees. After handoff, all admin actions go through 2-of-2 ThresholdKey + 48h Timelock.

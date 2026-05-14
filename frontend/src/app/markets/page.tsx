@@ -113,7 +113,7 @@ function MarketsBody() {
               Yield <span className="font-serif italic">markets</span>
             </h1>
             <p className="mt-1.5 max-w-[640px] font-mono text-[13px] text-textSec sm:text-[13.5px]">
-              Each market splits a SaucerSwap V3 position into PT, YT, and LP tokens with a fixed maturity.
+              Each market splits a SaucerSwap V2 position into PT, YT, and LP tokens with a fixed maturity.
             </p>
           </div>
 

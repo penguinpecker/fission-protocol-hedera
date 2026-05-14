@@ -103,7 +103,7 @@ function PtEconomics({ detail }: { detail: MarketDetail }) {
         <ul className="space-y-1.5 text-[12px] leading-relaxed text-textSec">
           <li>Smart contract risk — Fission, Router, SY adapter, HTS tokens.</li>
           <li>
-            SY value can drift — backed by an SaucerSwap V3 LP; USDC/WHBAR pool moves
+            SY value can drift — backed by a SaucerSwap V2 LP; USDC/WHBAR pool moves
             cause impermanent-loss-style $ swing in the SY itself.
           </li>
           <li>AMM liquidity may be thin if you try to sell PT early.</li>

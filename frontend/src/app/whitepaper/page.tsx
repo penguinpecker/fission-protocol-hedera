@@ -62,7 +62,7 @@ export default function WhitepaperPage() {
 
         <Section title="What's the underlying yield?">
           <p>
-            Fission&apos;s v1 yield source is a <span className="text-text">SaucerSwap V3 liquidity position</span>. Specifically: WHBAR ↔ USDC, 0.15% fee tier.
+            Fission&apos;s v1 yield source is a <span className="text-text">SaucerSwap V2 liquidity position</span>. Specifically: WHBAR ↔ USDC, 0.15% fee tier.
           </p>
           <p className="mt-3">
             When traders swap WHBAR for USDC (or vice versa) on SaucerSwap, they pay a 0.15% fee. That fee flows to whoever provides liquidity to the pool. Fission&apos;s smart contract owns one liquidity position inside that pool — so every swap, a tiny slice of the fees lands in the protocol&apos;s account.
@@ -142,7 +142,7 @@ export default function WhitepaperPage() {
           </p>
         </Section>
 
-        <Section title="How Fission plugs into SaucerSwap V3">
+        <Section title="How Fission plugs into SaucerSwap V2">
           <p>
             Hedera&apos;s biggest DEX is SaucerSwap. Their V3 (concentrated-liquidity, Uniswap V3-style) USDC/WHBAR pool has the deepest liquidity on the chain. We use that pool as our yield source.
           </p>
@@ -154,13 +154,13 @@ export default function WhitepaperPage() {
               <span className="text-text">User</span> holds SY shares (or PT / YT / LP, depending on strategy).
             </li>
             <li>
-              <span className="text-text">SY adapter</span> wraps a single SaucerSwap V3 LP NFT. Mints SY shares 1:1 with liquidity added to the NFT.
+              <span className="text-text">SY adapter</span> wraps a single SaucerSwap V2 LP NFT. Mints SY shares 1:1 with liquidity added to the NFT.
             </li>
             <li>
-              <span className="text-text">SaucerSwap V3 Position NFT</span> sits inside the USDC/WHBAR 0.15% pool. Earns fees on every swap.
+              <span className="text-text">SaucerSwap V2 Position NFT</span> sits inside the USDC/WHBAR 0.15% pool. Earns fees on every swap.
             </li>
             <li>
-              <span className="text-text">SaucerSwap V3 USDC/WHBAR pool</span> — the actual order book where Hedera traders swap WHBAR for USDC.
+              <span className="text-text">SaucerSwap V2 USDC/WHBAR pool</span> — the actual order book where Hedera traders swap WHBAR for USDC.
             </li>
           </ol>
           <p className="mt-3">

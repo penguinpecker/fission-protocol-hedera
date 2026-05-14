@@ -5,7 +5,7 @@ pragma solidity ^0.8.27;
 /// @notice Single-transaction zap to mint SY shares from native HBAR.
 ///
 ///         Without this contract, the user has to: (1) wrap HBAR → WHBAR,
-///         (2) swap part of the WHBAR for USDC on SaucerSwap V3, (3) approve
+///         (2) swap part of the WHBAR for USDC on SaucerSwap V2, (3) approve
 ///         USDC to SY, (4) approve WHBAR to SY, (5) call SY.depositLiquidity —
 ///         five separate transactions. This zap collapses all five into one.
 ///
@@ -14,7 +14,7 @@ pragma solidity ^0.8.27;
 ///
 ///         Internally:
 ///           1. Wrap (wrapAmount) HBAR → WHBAR via the WHBAR contract's deposit().
-///           2. Approve WHBAR to the SaucerSwap V3 router; call exactInputSingle
+///           2. Approve WHBAR to the SaucerSwap V2 router; call exactInputSingle
 ///              to swap (swapAmount) WHBAR → USDC.
 ///           3. Approve the resulting USDC + remaining WHBAR to the SY adapter.
 ///           4. Call SY.depositLiquidity() forwarding (msg.value - wrapAmount)
@@ -34,7 +34,7 @@ interface IWHBAR {
     function deposit() external payable;
 }
 
-interface ISaucerSwapV3Router {
+interface ISaucerSwapV2Router {
     struct ExactInputSingleParams {
         address tokenIn;
         address tokenOut;
@@ -77,7 +77,7 @@ contract FissionZap {
     address public immutable WHBAR_CONTRACT;   // wraps HBAR → WHBAR
     address public immutable WHBAR;            // HTS token address
     address public immutable USDC;             // HTS token address
-    address public immutable SAUCER_V3_ROUTER; // SwapRouter01 form selector 0x414bf389
+    address public immutable SAUCER_V2_ROUTER; // SwapRouter01 form selector 0x414bf389
 
     uint24 public constant POOL_FEE = 1500; // 0.15% (WHBAR-USDC tier we use elsewhere)
 
@@ -93,7 +93,7 @@ contract FissionZap {
     );
 
     /// @dev Reserved for the V3 NPM fee that SY.depositLiquidity forwards
-    ///      internally (~5 HBAR is what SaucerSwap V3 NPM charges for
+    ///      internally (~5 HBAR is what SaucerSwap V2 NPM charges for
     ///      increaseLiquidity in USD-cents-denominated form). On Hedera EVM
     ///      msg.value is in TINYBARS (1 HBAR = 1e8 tinybars), NOT wei like
     ///      Ethereum. So 5 HBAR = 5e8 tinybars here.
@@ -108,7 +108,7 @@ contract FissionZap {
         WHBAR_CONTRACT = whbarContract;
         WHBAR = whbarToken;
         USDC = usdcToken;
-        SAUCER_V3_ROUTER = swapRouter;
+        SAUCER_V2_ROUTER = swapRouter;
     }
 
     /// @notice Zap HBAR → SY shares in one transaction.
@@ -143,11 +143,11 @@ contract FissionZap {
         uint256 wrapAmount = msg.value - NPM_FEE_TINYBARS;
         IWHBAR(WHBAR_CONTRACT).deposit{value: wrapAmount}();
 
-        // Swap half the wrapped WHBAR to USDC via SaucerSwap V3 (0.15% pool).
+        // Swap half the wrapped WHBAR to USDC via SaucerSwap V2 (0.15% pool).
         uint256 whbarBal = IHTSERC20(WHBAR).balanceOf(address(this));
         uint256 swapAmount = whbarBal / 2;
-        IHTSERC20(WHBAR).approve(SAUCER_V3_ROUTER, swapAmount);
-        ISaucerSwapV3Router.ExactInputSingleParams memory params = ISaucerSwapV3Router.ExactInputSingleParams({
+        IHTSERC20(WHBAR).approve(SAUCER_V2_ROUTER, swapAmount);
+        ISaucerSwapV2Router.ExactInputSingleParams memory params = ISaucerSwapV2Router.ExactInputSingleParams({
             tokenIn: WHBAR,
             tokenOut: USDC,
             fee: POOL_FEE,
@@ -157,7 +157,7 @@ contract FissionZap {
             amountOutMinimum: usdcMinOut,
             sqrtPriceLimitX96: 0
         });
-        ISaucerSwapV3Router(SAUCER_V3_ROUTER).exactInputSingle(params);
+        ISaucerSwapV2Router(SAUCER_V2_ROUTER).exactInputSingle(params);
 
         // Deposit USDC + remaining WHBAR into the SY. Forward all remaining
         // contract HBAR — SY pulls what NPM needs and the rest gets swept later.

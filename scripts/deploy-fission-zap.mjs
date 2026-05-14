@@ -3,7 +3,7 @@
 //
 // Constructor: (address whbarContract, address whbarToken, address usdcToken, address swapRouter)
 //
-// All four addresses are well-known SaucerSwap V3 / WHBAR mainnet contracts;
+// All four addresses are well-known SaucerSwap V2 / WHBAR mainnet contracts;
 // hardcoded below. No env override — this contract is a one-shot deploy.
 //
 // Usage:

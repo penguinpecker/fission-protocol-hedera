@@ -11,7 +11,7 @@
  *
  * Redesigned UI (2026-05-14): USD-denominated input (converted to HBAR via
  * a CoinGecko price), FlowOfFunds visualization of the zap path (HBAR →
- * wrap half / swap half on SaucerSwap V3 → V3 LP NFT → SY mint).
+ * wrap half / swap half on SaucerSwap V2 → V3 LP NFT → SY mint).
  */
 import { useMemo, useState } from "react";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
@@ -123,7 +123,7 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
   const isActive = isPending || isConfirmingFinal;
   const isDone = isConfirmedFinal;
 
-  // FlowOfFunds: HBAR → Zap → Wrap half / Swap half on SaucerSwap V3 →
+  // FlowOfFunds: HBAR → Zap → Wrap half / Swap half on SaucerSwap V2 →
   // V3 LP NFT mint → SY mint → user wallet. Amounts are rough estimates;
   // the zap routes the swap-half through V3 so the WHBAR/USDC split isn't
   // exactly 50/50 by value (tick-dependent), but the UI rounds for clarity.
@@ -167,7 +167,7 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
     },
     {
       label: "Swap half",
-      detail: "SaucerSwap V3 · WHBAR → USDC",
+      detail: "SaucerSwap V2 · WHBAR → USDC",
       inToken:
         halfHbar > 0
           ? { sym: "WHBAR", amount: halfHbar.toFixed(2) }
@@ -219,7 +219,7 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
 
         <p className="mb-3 font-mono text-[11px] leading-relaxed text-textSec">
           Pay HBAR. The zap wraps half to WHBAR, swaps the other half to USDC on
-          SaucerSwap V3, and deposits both into the SY. Net cost: your HBAR +
+          SaucerSwap V2, and deposits both into the SY. Net cost: your HBAR +
           ~5 HBAR for the V3 NPM fee.
         </p>
 

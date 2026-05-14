@@ -1,6 +1,6 @@
 # Fission Protocol — Hedera
 
-**Yield tokenization on Hedera mainnet.** Take a yield-bearing SaucerSwap V3 LP position, split it into a fixed-rate **Principal Token (PT)** and a variable-yield **Yield Token (YT)**, and let users trade either half on a Pendle V2-faithful AMM.
+**Yield tokenization on Hedera mainnet.** Take a yield-bearing SaucerSwap V2 LP position, split it into a fixed-rate **Principal Token (PT)** and a variable-yield **Yield Token (YT)**, and let users trade either half on a Pendle V2-faithful AMM.
 
 > **Live** on Hedera mainnet (chain 295) · HTS-native PT / YT / LP tokens · Pendle V2 logit-curve AMM · Pendle-Kyber pattern adapter for V3 NFTs · governed by a 2-of-2 Hedera ThresholdKey behind a 48-hour OZ Timelock.
 
@@ -10,7 +10,7 @@ App: <https://www.fissionp.com> · Source: this repo.
 
 ## TL;DR — what the protocol does in one paragraph
 
-The protocol owns one SaucerSwap V3 LP NFT (currently a full-range WHBAR–USDC position). Users deposit USDC + WHBAR → the SY adapter adds that liquidity to its NFT and mints **SY shares**. 1 SY can then be **split** into 1 PT + 1 YT, both HTS-native fungibles visible in HashPack. PT redeems 1:1 for SY at maturity (fixed-rate); YT continuously accrues the V3 swap fees the SY's NFT earns (variable-rate, **perpetual** — YT never expires in our design). PT and SY trade on a Pendle V2 logit-curve AMM; LPs in that AMM earn 99% of the AMM swap fees.
+The protocol owns one SaucerSwap V2 LP NFT (currently a full-range WHBAR–USDC position). Users deposit USDC + WHBAR → the SY adapter adds that liquidity to its NFT and mints **SY shares**. 1 SY can then be **split** into 1 PT + 1 YT, both HTS-native fungibles visible in HashPack. PT redeems 1:1 for SY at maturity (fixed-rate); YT continuously accrues the V3 swap fees the SY's NFT earns (variable-rate, **perpetual** — YT never expires in our design). PT and SY trade on a Pendle V2 logit-curve AMM; LPs in that AMM earn 99% of the AMM swap fees.
 
 ---
 
@@ -18,7 +18,7 @@ The protocol owns one SaucerSwap V3 LP NFT (currently a full-range WHBAR–USDC 
 
 ```mermaid
 flowchart TB
-    subgraph Outside["SaucerSwap V3 (external)"]
+    subgraph Outside["SaucerSwap V2 (external)"]
         Pool["WHBAR-USDC V3 Pool<br/>0.15% fee tier"]
         NPM["NonFungiblePositionManager<br/>0x...003DDbb9"]
     end
@@ -70,7 +70,7 @@ Two completely independent fee streams. Don't confuse them.
 
 ```mermaid
 flowchart LR
-    Trader["SaucerSwap V3<br/>Trader swaps<br/>WHBAR ↔ USDC"]
+    Trader["SaucerSwap V2<br/>Trader swaps<br/>WHBAR ↔ USDC"]
     Trader -- "0.3% trader fee" --> V3Pool["WHBAR-USDC Pool<br/>(SaucerSwap)"]
     V3Pool -- "fee growth<br/>(pro-rata to NFT)" --> SYNFT["SY's V3 NFT"]
     SYNFT -- "harvest() → claim()" --> SYBalance["SY contract<br/>USDC + WHBAR balances"]
@@ -85,7 +85,7 @@ flowchart LR
 | Stream | Source | Rate | Splits to |
 |---|---|---|---|
 | **A: Fission AMM fees** | PT ↔ SY trades on our market | ~0.03% per trade | **99%** to LPs (via pool growth), **1%** to treasury |
-| **B: SaucerSwap V3 fees** | WHBAR ↔ USDC trades on SaucerSwap | 0.3% per trade | **100%** to YT holders, proportional to YT balance |
+| **B: SaucerSwap V2 fees** | WHBAR ↔ USDC trades on SaucerSwap | 0.3% per trade | **100%** to YT holders, proportional to YT balance |
 
 PT receives nothing on-chain during the term — its yield is the **buy-time discount** that becomes the redemption surplus at maturity (see math below).
 
@@ -119,7 +119,7 @@ sequenceDiagram
     participant U as You
     participant M as Market
     participant SY as SY contract
-    participant Pool as SaucerSwap V3
+    participant Pool as SaucerSwap V2
     U->>M: Buy 1 YT for 0.019 SY (router.buyYT — flash-mint)
     M-->>U: 1 YT delivered (HTS, frozen except for AMM)
     loop For every WHBAR↔USDC swap on SaucerSwap
@@ -313,11 +313,11 @@ All deployments tracked in [`deployments/295.json`](deployments/295.json).
 | `~ActionRouter v2 (abandoned)~` | `~0x00000000000000000000000000000000009fd993~` | `~0.0.10475923~` | `addLiquidityProportional` cast the SY *contract* address as `IERC20` instead of using `sy.shareToken()` — every Add LP through the router reverted. Replaced by v3. PT/YT/SY entries worked correctly so the dApp routed around the bug. Do not interact. |
 | `~ActionRouter v1 (abandoned)~` | `~0x00000000000000000000000000000000009fad96~` | `~0.0.10464662~` | Pre-HIP-904 deploy — `max_auto_assoc = 0` blocked HTS transferFrom into the router. Replaced. Do not interact. |
 | `~FissionMegaZap (disabled in prod)~` | `~0x00000000000000000000000000000000009fdf8c~` | `~0.0.10477452~` | **Disabled** after on-chain QA. `zapHbarToYt` hits Hedera's `MAX_CHILD_RECORDS_EXCEEDED` (50-records-per-tx cap); `zapHbarToPt` / `zapHbarToLp` revert `InsufficientOutput()` likely from a FissionZap receiver-handling bug. v2 redesign pending. Env var unset so the dApp falls back to the working Phase 7 chained flow. |
-| `FissionZap` | `0x00000000000000000000000000000000009fd984` | `0.0.10475908` | One-tx HBAR → SY mint. Wraps half to WHBAR, swaps half to USDC on SaucerSwap V3, deposits into the SY adapter. Permissionless, no admin. Still used directly by `MintSyForm`; HBAR-source PT/YT/LP flows now route through the MegaZap. |
+| `FissionZap` | `0x00000000000000000000000000000000009fd984` | `0.0.10475908` | One-tx HBAR → SY mint. Wraps half to WHBAR, swaps half to USDC on SaucerSwap V2, deposits into the SY adapter. Permissionless, no admin. Still used directly by `MintSyForm`; HBAR-source PT/YT/LP flows now route through the MegaZap. |
 | `~FissionZap v1 (abandoned)~` | `~0x00000000000000000000000000000000009fd97e~` | `~0.0.10475902~` | First deploy treated `wrapAmount` as wei but Hedera msg.value is in tinybars — reverted with `InsufficientValue`. Replaced. |
 | `StandardMarketDeployer` | `0x00000000000000000000000000000000009fb0af` | `0.0.10465455` | Deploys FissionMarket instances (bytecode-isolation; gas-cap workaround) |
 | `RewardsMarketDeployer` | `0x00000000000000000000000000000000009fb0b1` | `0.0.10465457` | Deploys FissionMarketRewards instances |
-| `SY_SaucerSwapV2LP` | `0x00000000000000000000000000000000009fb089` | `0.0.10465417` | ERC-5115 adapter over one SaucerSwap V3 NFT |
+| `SY_SaucerSwapV2LP` | `0x00000000000000000000000000000000009fb089` | `0.0.10465417` | ERC-5115 adapter over one SaucerSwap V2 NFT |
 | `SY_HBARX` (out-of-scope v1) | `0x80728fbad79974e428c50dc548853ff858d9430c` | `0.0.10464740` | Pre-existing HBARX adapter; not in v1 lineup |
 | **Market 0 — `SS-V2-90D`** | `0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d` | `0.0.10465460` | First (and currently only) live market — rewards type, 90d maturity |
 | `Timelock` | `0x00000000000000000000000000000000009fc1c0` | `0.0.10469824` | OZ TimelockController, 48h delay |

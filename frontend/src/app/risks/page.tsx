@@ -24,7 +24,7 @@ export default function RisksPage() {
 
         <H2>Variable-yield risk (YT)</H2>
         <UL>
-          <li>YT is a leveraged claim on SaucerSwap V3 swap fees. If V3 trading volume is lower than the implied rate priced into the market, YT buyers realize losses up to (but not exceeding) their entry capital.</li>
+          <li>YT is a leveraged claim on SaucerSwap V2 swap fees. If V3 trading volume is lower than the implied rate priced into the market, YT buyers realize losses up to (but not exceeding) their entry capital.</li>
           <li>YT remains a perpetual fee claim post-expiry — it does not become worthless — but it is not guaranteed to recover entry cost.</li>
           <li>Effective leverage on V3 yield ≈ 1 / implied-rate. At 1.5% implied, a 1% miss on realized fees translates to a ~67% mark-to-market move.</li>
         </UL>
@@ -45,7 +45,7 @@ export default function RisksPage() {
         <H2>Platform risks</H2>
         <UL>
           <li><strong>Hedera network</strong>: HTS quirks (token-association requirements, throttling), HIP changes, network outages.</li>
-          <li><strong>SaucerSwap V3</strong>: the SY's underlying NFT depends on SaucerSwap. An exploit, deprecation, or pool migration in SaucerSwap impacts our SY.</li>
+          <li><strong>SaucerSwap V2</strong>: the SY's underlying NFT depends on SaucerSwap. An exploit, deprecation, or pool migration in SaucerSwap impacts our SY.</li>
           <li><strong>Hashio / RPC</strong>: the public RPC endpoint is not under our control. Production RPC for write operations may degrade independently of the protocol.</li>
         </UL>
 

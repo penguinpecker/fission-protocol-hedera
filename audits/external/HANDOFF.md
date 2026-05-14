@@ -20,7 +20,7 @@ threat model) is linked.
 
 Fission Protocol is a **Pendle V2-faithful** principal/yield split AMM
 deployed on Hedera. Users deposit a yield-bearing asset (HBARX, or a
-SaucerSwap V3 LP NFT) into a "Standardized Yield" (SY) wrapper, then
+SaucerSwap V2 LP NFT) into a "Standardized Yield" (SY) wrapper, then
 split SY into:
 
 - **PT** (principal token) — redeems 1 unit of underlying yield-bearing
