@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef } from "react";
 import { useAccount, useChainId, useSwitchChain } from "wagmi";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { HEDERA_MAINNET_CHAIN_ID } from "@/lib/wagmi";
@@ -24,6 +24,7 @@ function shortAddr(addr: string): string {
  */
 export function Nav() {
   const pathname = usePathname() ?? "/";
+  const router = useRouter();
   const adapter = useWalletAdapter();
   const wagmiAcct = useAccount();
   const chainId = useChainId();
@@ -41,13 +42,54 @@ export function Nav() {
 
   const hederaAvailable = Boolean(process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID);
 
+  // One-click Connect → Sign-In flow.
+  //
+  // Without this, the user clicks Connect (1st popup) → connects → then clicks
+  // Sign In (2nd popup) → signs. Now: click Connect → 1st popup → after the
+  // wallet returns, we auto-trigger SIWE → 2nd popup fires immediately. One
+  // user click, both signatures back-to-back. The ref distinguishes a
+  // user-initiated connect (auto-sign) from a session-restore on page load
+  // (don't auto-sign — that'd surprise users).
+  const autoSignAfterConnectRef = useRef(false);
   const handleConnect = async () => {
+    autoSignAfterConnectRef.current = true;
     await hedera.connect();
   };
   const handleDisconnect = async () => {
     if (auth.status === "authenticated") await signOut();
     await adapter.disconnect();
   };
+
+  // When the wallet has just connected AND the user clicked our Connect button
+  // (not a session restore), fire SIWE automatically.
+  useEffect(() => {
+    if (
+      autoSignAfterConnectRef.current &&
+      adapter.isConnected &&
+      adapter.address &&
+      auth.status === "idle"
+    ) {
+      autoSignAfterConnectRef.current = false;
+      void signIn();
+    }
+  }, [adapter.isConnected, adapter.address, auth.status, signIn]);
+
+  // After SIWE flips to authenticated (from the auto-signin chain above OR
+  // a manual Sign-In click), send the user to /markets. Watch the transition
+  // so we don't redirect on every render — only on the "loading → authenticated"
+  // edge. Stays put if the user is already inside the app on /markets/*.
+  const lastAuthStatusRef = useRef(auth.status);
+  useEffect(() => {
+    const prev = lastAuthStatusRef.current;
+    lastAuthStatusRef.current = auth.status;
+    if (prev !== "authenticated" && auth.status === "authenticated") {
+      // Skip the redirect if the user is already at /markets or deeper — it'd
+      // just collapse their scroll position with no UX win.
+      if (!pathname.startsWith("/markets")) {
+        router.push("/markets");
+      }
+    }
+  }, [auth.status, pathname, router]);
 
   const isConnecting = hedera.status === "connecting";
   const connectErrorMsg = hedera.error;
@@ -140,11 +182,15 @@ export function Nav() {
                 title={
                   !hederaAvailable
                     ? "WalletConnect not configured (NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID missing)"
-                    : "Opens WalletConnect modal — pick any Hedera wallet"
+                    : "Two HashPack popups, back-to-back: 1) connect, 2) sign in. Then we land you on /markets."
                 }
                 className="rounded-[2px] border border-white bg-white px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {isConnecting ? "Opening…" : "Connect Wallet"}
+                {isConnecting
+                  ? "Opening…"
+                  : autoSignAfterConnectRef.current && auth.status === "loading"
+                    ? "Signing…"
+                    : "Connect & Sign"}
               </button>
             )}
           </div>
