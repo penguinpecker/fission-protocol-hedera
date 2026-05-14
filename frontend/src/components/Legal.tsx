@@ -3,15 +3,15 @@
 
 export function LegalShell({ children }: { children: React.ReactNode }) {
   return (
-    <section className="mx-auto max-w-[760px] px-6 py-20">
-      <article className="space-y-5 text-[15px] leading-[1.7] text-textSec">{children}</article>
+    <section className="mx-auto max-w-[760px] px-4 py-14 sm:px-6 sm:py-20">
+      <article className="space-y-5 text-[14.5px] leading-[1.7] text-textSec sm:text-[15px]">{children}</article>
     </section>
   );
 }
 
 export function H1({ children }: { children: React.ReactNode }) {
   return (
-    <h1 className="mb-2 text-[44px] font-light leading-[1.05] tracking-[-1.5px] text-text">
+    <h1 className="mb-2 text-[32px] font-light leading-[1.05] tracking-[-1px] text-text sm:text-[44px] sm:tracking-[-1.5px]">
       {children}
     </h1>
   );

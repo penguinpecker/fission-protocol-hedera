@@ -101,25 +101,25 @@ function MarketsBody() {
   const activeCount = allMarkets.filter((m) => !m.expired).length;
 
   return (
-    <div className="mx-auto grid max-w-[1440px] gap-8 px-7 py-12 lg:grid-cols-[1fr_320px]">
+    <div className="mx-auto grid max-w-[1440px] gap-8 px-4 py-8 sm:px-6 sm:py-12 md:px-7 lg:grid-cols-[1fr_320px]">
       {/* ─── Left column ───────────────────────────────────────────── */}
-      <div>
-        <header className="mb-7 flex flex-wrap items-end justify-between gap-6">
+      <div className="min-w-0">
+        <header className="mb-7 flex flex-wrap items-end justify-between gap-4 sm:gap-6">
           <div className="term-fade">
             <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-textDim">
               // MARKETS
             </div>
-            <h1 className="mt-2 text-[38px] font-semibold leading-[1.05] tracking-[-0.02em] text-white">
+            <h1 className="mt-2 text-[28px] font-semibold leading-[1.05] tracking-[-0.02em] text-white sm:text-[38px]">
               Yield <span className="font-serif italic">markets</span>
             </h1>
-            <p className="mt-1.5 max-w-[640px] font-mono text-[13.5px] text-textSec">
+            <p className="mt-1.5 max-w-[640px] font-mono text-[13px] text-textSec sm:text-[13.5px]">
               Each market splits a SaucerSwap V3 position into PT, YT, and LP tokens with a fixed maturity.
             </p>
           </div>
 
-          <div className="term-fade term-fade-d1 flex flex-wrap items-center gap-2">
+          <div className="term-fade term-fade-d1 flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <SearchInput value={query} onChange={setQuery} />
-            <div className="flex gap-1">
+            <div className="flex flex-wrap gap-1">
               {(["all", "active", "expired", "rewards"] as const).map((f) => (
                 <Chip key={f} active={filter === f} onClick={() => setFilter(f)}>
                   {f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}
@@ -136,8 +136,8 @@ function MarketsBody() {
         {factoryDeployed && (cachedLoading || (useChainFallback && detailsLoading)) && <Loading />}
 
         {filtered.length > 0 && (
-          <div className="term-fade term-fade-d2 overflow-hidden border border-border bg-white/[0.015]">
-            <table className="w-full border-collapse">
+          <div className="term-fade term-fade-d2 overflow-x-auto border border-border bg-white/[0.015]">
+            <table className="w-full min-w-[760px] border-collapse">
               <thead className="bg-white/[0.04]">
                 <tr>
                   <Th>Market</Th>
@@ -471,7 +471,7 @@ function SideRow({ k, v }: { k: string; v: string }) {
 function Th({ children, align }: { children: React.ReactNode; align?: "right" }) {
   return (
     <th
-      className={`border-b border-border px-[18px] py-3.5 font-mono text-[10px] font-medium uppercase tracking-[0.2em] text-textDim ${
+      className={`whitespace-nowrap border-b border-border px-3 py-3.5 font-mono text-[10px] font-medium uppercase tracking-[0.2em] text-textDim sm:px-[18px] ${
         align === "right" ? "text-right" : "text-left"
       }`}
     >
@@ -482,7 +482,7 @@ function Th({ children, align }: { children: React.ReactNode; align?: "right" })
 
 function Td({ children }: { children: React.ReactNode }) {
   return (
-    <td className="border-b border-border px-[18px] py-[18px] font-mono text-[13.5px] text-text last:border-b-0">
+    <td className="border-b border-border px-3 py-[14px] font-mono text-[13px] text-text last:border-b-0 sm:px-[18px] sm:py-[18px] sm:text-[13.5px]">
       {children}
     </td>
   );
@@ -499,7 +499,7 @@ function NumTd({
 }) {
   return (
     <td
-      className={`border-b border-border px-[18px] py-[18px] text-right font-mono text-[13.5px] tabular-nums last:border-b-0 ${
+      className={`whitespace-nowrap border-b border-border px-3 py-[14px] text-right font-mono text-[13px] tabular-nums last:border-b-0 sm:px-[18px] sm:py-[18px] sm:text-[13.5px] ${
         dim ? "text-textDim" : accent ? "font-medium text-white" : "text-white"
       }`}
     >
@@ -516,7 +516,7 @@ function SearchInput({
   onChange: (v: string) => void;
 }) {
   return (
-    <label className="flex w-[260px] items-center gap-2 border border-borderHover bg-white/[0.015] px-3 py-2">
+    <label className="flex w-full items-center gap-2 border border-borderHover bg-white/[0.015] px-3 py-2 sm:w-[260px]">
       <svg
         width="14"
         height="14"

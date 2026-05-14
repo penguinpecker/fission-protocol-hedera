@@ -52,7 +52,7 @@ export default function MarketDetailPage({ params }: { params: Promise<{ address
       <main className="min-h-screen">
         <Nav />
         <WalletGate>
-          <div className="mx-auto max-w-[1100px] px-6 py-10">
+          <div className="mx-auto max-w-[1100px] px-4 py-8 sm:px-6 sm:py-10">
             <div className="h-32 animate-pulse rounded-2xl border border-border bg-bgCard" />
           </div>
         </WalletGate>
@@ -69,18 +69,18 @@ export default function MarketDetailPage({ params }: { params: Promise<{ address
       <Nav />
 
       <WalletGate>
-        <div className="mx-auto max-w-[1100px] px-6 py-7">
-          <div className="mb-7 flex items-center gap-2 text-[13px] text-textSec">
+        <div className="mx-auto max-w-[1100px] px-4 py-6 sm:px-6 sm:py-7">
+          <div className="mb-6 flex flex-wrap items-center gap-2 text-[13px] text-textSec sm:mb-7">
             <Link href="/markets" className="hover:text-text">
               Markets
             </Link>
             <span className="text-textDim">/</span>
-            <span className="text-text">{detail.syName}</span>
+            <span className="break-all text-text">{detail.syName}</span>
           </div>
 
-          <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
-            <div>
-              <h1 className="text-[28px] font-semibold tracking-tight">{detail.syName}</h1>
+          <div className="mb-7 flex flex-wrap items-end justify-between gap-4 sm:mb-8">
+            <div className="min-w-0">
+              <h1 className="text-[22px] font-semibold tracking-tight sm:text-[28px]">{detail.syName}</h1>
               <div className="mt-1 text-sm text-textDim">
                 Matures{" "}
                 {new Date(Number(detail.expiry) * 1000).toLocaleDateString("en-US", {

@@ -126,29 +126,29 @@ function Hero() {
   return (
     <section className="relative overflow-hidden border-b border-border">
       <BgGradient />
-      <div className="relative mx-auto flex max-w-[1180px] flex-col items-center px-6 pb-24 pt-20 text-center">
-        <div className="mb-12 animate-[fadeUp_0.6s_ease-out_both]">
+      <div className="relative mx-auto flex max-w-[1180px] flex-col items-center px-4 pb-20 pt-14 text-center sm:px-6 sm:pb-24 sm:pt-20">
+        <div className="mb-10 animate-[fadeUp_0.6s_ease-out_both] sm:mb-12">
           <AtomVisual />
         </div>
 
-        <h1 className="animate-[fadeUp_0.6s_ease-out_0.2s_both] text-[68px] font-light leading-[1.02] tracking-[-2.5px] md:text-[88px]">
+        <h1 className="animate-[fadeUp_0.6s_ease-out_0.2s_both] text-[44px] font-light leading-[1.05] tracking-[-1.5px] sm:text-[68px] sm:tracking-[-2.5px] md:text-[88px]">
           Split yield.{" "}
           <span className="bg-gradient-to-br from-white to-silverDark bg-clip-text font-serif italic text-transparent">
             Trade time.
           </span>
         </h1>
 
-        <p className="mt-7 max-w-[620px] animate-[fadeUp_0.6s_ease-out_0.3s_both] text-[18px] font-light leading-[1.55] text-textSec">
+        <p className="mt-6 max-w-[620px] animate-[fadeUp_0.6s_ease-out_0.3s_both] text-[15px] font-light leading-[1.55] text-textSec sm:mt-7 sm:text-[18px]">
           Tokenize the future yield from a SaucerSwap V2 LP into a fixed-rate
           principal token and a perpetual yield token. Pendle V2-faithful,
           HTS-native, governed by a 2-of-2 Hedera Threshold key behind a 48-hour
           Timelock.
         </p>
 
-        <div className="mt-10 flex animate-[fadeUp_0.6s_ease-out_0.4s_both] flex-wrap justify-center gap-3">
+        <div className="mt-8 flex animate-[fadeUp_0.6s_ease-out_0.4s_both] flex-wrap justify-center gap-3 sm:mt-10">
           <Link
             href="/markets"
-            className="rounded-xl bg-white px-9 py-[15px] text-[15px] font-semibold text-bg transition hover:opacity-90"
+            className="rounded-xl bg-white px-7 py-[13px] text-[14px] font-semibold text-bg transition hover:opacity-90 sm:px-9 sm:py-[15px] sm:text-[15px]"
           >
             Open the markets
           </Link>
@@ -156,13 +156,13 @@ function Hero() {
             href="https://github.com/penguinpecker/fission-protocol-hedera/blob/main/docs/ECONOMICS.md"
             target="_blank"
             rel="noreferrer"
-            className="rounded-xl border border-borderHover px-7 py-[15px] text-[15px] font-medium text-text transition hover:bg-white/[0.05]"
+            className="rounded-xl border border-borderHover px-6 py-[13px] text-[14px] font-medium text-text transition hover:bg-white/[0.05] sm:px-7 sm:py-[15px] sm:text-[15px]"
           >
             How it works
           </a>
         </div>
 
-        <ul className="mt-16 grid w-full max-w-[840px] grid-cols-2 gap-px overflow-hidden rounded-2xl border border-border bg-border md:grid-cols-4">
+        <ul className="mt-12 grid w-full max-w-[840px] grid-cols-2 gap-px overflow-hidden rounded-2xl border border-border bg-border sm:mt-16 md:grid-cols-4">
           {[
             ["Pendle V2-faithful", "math"],
             ["HTS-native", "PT / YT / LP"],
@@ -213,9 +213,9 @@ function AtomVisual() {
 function MechanicsSection() {
   return (
     <section className="border-b border-border">
-      <div className="mx-auto max-w-[1180px] px-6 py-24">
+      <div className="mx-auto max-w-[1180px] px-4 py-16 sm:px-6 sm:py-24">
         <SectionLabel>The mechanic</SectionLabel>
-        <h2 className="mx-auto mb-12 max-w-[760px] text-center text-[40px] font-light leading-[1.1] tracking-[-1px]">
+        <h2 className="mx-auto mb-12 max-w-[760px] text-center text-[28px] font-light leading-[1.1] tracking-[-0.5px] sm:text-[40px] sm:tracking-[-1px]">
           One yield-bearing asset becomes two{" "}
           <span className="font-serif italic">independent products</span>.
         </h2>
@@ -320,9 +320,9 @@ function StepNumber({ n }: { n: number }) {
 function StrategiesSection() {
   return (
     <section className="border-b border-border">
-      <div className="mx-auto max-w-[1180px] px-6 py-24">
+      <div className="mx-auto max-w-[1180px] px-4 py-16 sm:px-6 sm:py-24">
         <SectionLabel>Three paths</SectionLabel>
-        <h2 className="mx-auto mb-12 max-w-[760px] text-center text-[40px] font-light leading-[1.1] tracking-[-1px]">
+        <h2 className="mx-auto mb-12 max-w-[760px] text-center text-[28px] font-light leading-[1.1] tracking-[-0.5px] sm:text-[40px] sm:tracking-[-1px]">
           Three roles, three different yield shapes.
         </h2>
 
@@ -384,9 +384,9 @@ function StrategiesSection() {
 function StreamsSection() {
   return (
     <section className="border-b border-border">
-      <div className="mx-auto max-w-[1180px] px-6 py-24">
+      <div className="mx-auto max-w-[1180px] px-4 py-16 sm:px-6 sm:py-24">
         <SectionLabel>Where the yield comes from</SectionLabel>
-        <h2 className="mx-auto mb-3 max-w-[760px] text-center text-[40px] font-light leading-[1.1] tracking-[-1px]">
+        <h2 className="mx-auto mb-3 max-w-[760px] text-center text-[28px] font-light leading-[1.1] tracking-[-0.5px] sm:text-[40px] sm:tracking-[-1px]">
           Two independent fee streams.
         </h2>
         <p className="mx-auto mb-12 max-w-[640px] text-center text-[14px] text-textSec">
@@ -433,9 +433,9 @@ function YieldRow({ role, earnsFrom, exposed }: { role: string; earnsFrom: strin
 function SecuritySection() {
   return (
     <section className="border-b border-border">
-      <div className="mx-auto max-w-[1180px] px-6 py-24">
+      <div className="mx-auto max-w-[1180px] px-4 py-16 sm:px-6 sm:py-24">
         <SectionLabel>Governance &amp; security</SectionLabel>
-        <h2 className="mx-auto mb-12 max-w-[760px] text-center text-[40px] font-light leading-[1.1] tracking-[-1px]">
+        <h2 className="mx-auto mb-12 max-w-[760px] text-center text-[28px] font-light leading-[1.1] tracking-[-0.5px] sm:text-[40px] sm:tracking-[-1px]">
           Native to the chain, not bolted on.
         </h2>
 
@@ -487,9 +487,9 @@ function SecurityCard({ Icon, title, body }: { Icon: typeof ShieldIcon; title: s
 function FaqSection() {
   return (
     <section className="border-b border-border">
-      <div className="mx-auto max-w-[860px] px-6 py-24">
+      <div className="mx-auto max-w-[860px] px-4 py-16 sm:px-6 sm:py-24">
         <SectionLabel>FAQ</SectionLabel>
-        <h2 className="mb-12 text-center text-[40px] font-light leading-[1.1] tracking-[-1px]">
+        <h2 className="mb-10 text-center text-[28px] font-light leading-[1.1] tracking-[-0.5px] sm:mb-12 sm:text-[40px] sm:tracking-[-1px]">
           Common questions.
         </h2>
 

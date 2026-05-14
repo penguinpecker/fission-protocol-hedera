@@ -102,13 +102,14 @@ export function Nav() {
   return (
     <>
       <nav className="sticky top-0 z-50 border-b border-border bg-black/65 backdrop-blur-[14px]">
-        <div className="mx-auto flex h-[60px] max-w-[1440px] items-center justify-between gap-6 px-7">
-          {/* Brand */}
-          <Link href="/" className="flex items-center gap-3 font-semibold tracking-[0.02em]">
+        <div className="mx-auto flex h-[60px] max-w-[1440px] items-center justify-between gap-3 px-4 sm:gap-6 sm:px-6 md:px-7">
+          {/* Brand — tagline hides on very narrow phones so the account chip
+              still fits beside it without forcing the row to wrap. */}
+          <Link href="/" className="flex items-center gap-2 font-semibold tracking-[0.02em] sm:gap-3">
             <BrandOrbitLogo />
             <span className="text-[14.5px] leading-none text-text">
               FISSION
-              <span className="mt-px block font-mono text-[10px] uppercase tracking-[0.18em] text-textDim">
+              <span className="mt-px hidden font-mono text-[10px] uppercase tracking-[0.18em] text-textDim sm:block">
                 PROTOCOL · HEDERA
               </span>
             </span>
@@ -131,7 +132,7 @@ export function Nav() {
           </div>
 
           {/* Right cluster: chain-pill + connect / account */}
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-shrink-0 items-center gap-1.5 sm:gap-2.5">
             <span className="hidden items-center gap-2 rounded-[2px] border border-border px-2.5 py-1.5 font-mono text-[11px] text-textSec sm:inline-flex">
               <span className="term-pulse-dot inline-block size-[6px] rounded-full bg-white" />
               HEDERA · 295
@@ -198,7 +199,7 @@ export function Nav() {
       </nav>
 
       {onWrongChain && (
-        <div className="border-b border-error/30 bg-error/10 px-8 py-2 text-center text-[12px] text-error">
+        <div className="border-b border-error/30 bg-error/10 px-4 py-2 text-center text-[12px] text-error sm:px-8">
           Wrong network — Fission only operates on Hedera Mainnet (chain 295).{" "}
           <button
             type="button"
@@ -211,7 +212,7 @@ export function Nav() {
       )}
 
       {connectErrorMsg && !adapter.isConnected && (
-        <div className="border-b border-warning/30 bg-warning/10 px-8 py-2 text-center font-mono text-[11px] text-warning">
+        <div className="border-b border-warning/30 bg-warning/10 px-4 py-2 text-center font-mono text-[11px] text-warning sm:px-8">
           Connect failed: {connectErrorMsg.slice(0, 160)}
         </div>
       )}

@@ -36,7 +36,6 @@ const NAV = [
       { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fd984", label: "Zap", external: true },
       // MegaZap link intentionally omitted — contract is disabled in prod
       // (see README "Future work / MegaZap v2"). Restore when v2 redeploys.
-      { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fdf8c", label: "MegaZap", external: true },
       { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fb089", label: "SY adapter", external: true },
     ],
   },
@@ -45,8 +44,8 @@ const NAV = [
 export function Footer() {
   return (
     <footer className="border-t border-border bg-bg">
-      <div className="mx-auto max-w-[1440px] px-7 py-16">
-        <div className="grid gap-10 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
+      <div className="mx-auto max-w-[1440px] px-4 py-12 sm:px-6 sm:py-16 md:px-7">
+        <div className="grid gap-8 sm:grid-cols-2 sm:gap-10 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
           <div>
             <Link href="/" className="inline-flex items-center gap-2.5">
               <FissionLogo size={26} />
@@ -86,7 +85,7 @@ export function Footer() {
           ))}
         </div>
 
-        <div className="mt-14 flex flex-col items-center justify-between gap-4 border-t border-border pt-8 text-[12px] text-textDim md:flex-row">
+        <div className="mt-12 flex flex-col items-start justify-between gap-4 border-t border-border pt-8 text-[12px] text-textDim sm:items-center md:flex-row md:mt-14">
           <span>Fission Protocol · Hedera mainnet · chain 295</span>
           <span>
             Not investment advice. Smart contracts can lose funds. Read{" "}

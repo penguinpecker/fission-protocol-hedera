@@ -113,7 +113,7 @@ export function FlowOfFunds({ title = "Flow of funds", badge, steps }: Props) {
                 aria-hidden
                 className={`absolute left-[3px] top-[5px] block h-2 w-2 rounded-full ${dotColor} ${dotRing}`}
               />
-              <div className="flex items-start justify-between gap-3">
+              <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
                 <div className="min-w-0 flex-1">
                   <div
                     className={`font-mono text-[12px] font-medium leading-tight ${
@@ -127,13 +127,13 @@ export function FlowOfFunds({ title = "Flow of funds", badge, steps }: Props) {
                     {step.label}
                   </div>
                   {step.detail && (
-                    <div className="mt-0.5 font-mono text-[10px] leading-tight text-textDim">
+                    <div className="mt-0.5 break-words font-mono text-[10px] leading-tight text-textDim">
                       {step.detail}
                     </div>
                   )}
                 </div>
                 {(step.inToken || step.outToken) && (
-                  <div className="flex flex-shrink-0 flex-col items-end gap-0.5 text-right">
+                  <div className="flex max-w-full flex-shrink-0 flex-col items-end gap-0.5 text-right">
                     {step.inToken && step.outToken ? (
                       <FlowSwap inTok={step.inToken} outTok={step.outToken} />
                     ) : step.outToken ? (
@@ -179,14 +179,14 @@ function FlowSwap({ inTok, outTok }: { inTok: FlowToken; outTok: FlowToken }) {
   return (
     <div className="flex flex-col items-end gap-0.5">
       <div
-        className="flex items-baseline gap-1.5 font-mono text-[11px] text-text"
+        className="flex flex-wrap items-baseline justify-end gap-x-1.5 gap-y-0.5 font-mono text-[11px] text-text"
         style={{ fontVariantNumeric: "tabular-nums" }}
       >
-        <span>
+        <span className="whitespace-nowrap">
           {inTok.amount} <span className="text-textDim">{inTok.sym}</span>
         </span>
         <span aria-hidden className="text-textDim">→</span>
-        <span>
+        <span className="whitespace-nowrap">
           {outTok.amount} <span className="text-textDim">{outTok.sym}</span>
         </span>
       </div>

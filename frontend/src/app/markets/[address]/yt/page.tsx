@@ -87,7 +87,7 @@ function YtEconomics({ detail }: { detail: MarketDetail }) {
         <div className="mb-2 text-[10px] font-semibold uppercase tracking-[1.5px] text-warning">
           Payoff scenarios (per 1 SY of YT cost)
         </div>
-        <div className="grid grid-cols-3 gap-2 font-mono">
+        <div className="grid grid-cols-1 gap-2 font-mono sm:grid-cols-3">
           <Scenario yieldPct={4} payoff={payoff(4)} />
           <Scenario yieldPct={8} payoff={payoff(8)} />
           <Scenario yieldPct={16} payoff={payoff(16)} />

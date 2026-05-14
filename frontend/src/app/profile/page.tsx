@@ -123,14 +123,16 @@ function ProfileBody() {
   }, [totalsByMarket]);
 
   return (
-    <div className="mx-auto max-w-[1440px] px-7">
+    <div className="mx-auto max-w-[1440px] px-4 sm:px-6 md:px-7">
       <ProfileHead address={address} accountId={adapter.accountId ?? null} disconnect={adapter.disconnect} />
 
       <KpiStrip totals={totals} />
 
-      <div className="mb-16 grid gap-8 lg:grid-cols-[1fr_320px]">
+      <div className="mb-12 grid gap-8 sm:mb-16 lg:grid-cols-[1fr_320px]">
         {/* left — tabs + positions table */}
-        <PositionsSection rows={allRows} />
+        <div className="min-w-0">
+          <PositionsSection rows={allRows} />
+        </div>
 
         {/* right — sidebars */}
         <aside className="flex flex-col gap-6">
@@ -188,14 +190,14 @@ function ProfileHead({
     : `https://hashscan.io/mainnet/account/${address}`;
 
   return (
-    <div className="flex flex-wrap items-end justify-between gap-6 border-b border-border py-8">
-      <div className="term-fade flex items-center gap-5">
-        <div className="grid size-[54px] place-items-center border border-borderHover bg-white/[0.04] font-mono text-[18px] text-white">
+    <div className="flex flex-wrap items-end justify-between gap-4 border-b border-border py-6 sm:gap-6 sm:py-8">
+      <div className="term-fade flex min-w-0 items-center gap-3 sm:gap-5">
+        <div className="grid size-[44px] flex-shrink-0 place-items-center border border-borderHover bg-white/[0.04] font-mono text-[16px] text-white sm:size-[54px] sm:text-[18px]">
           ◐
         </div>
-        <div>
-          <div className="font-mono text-[18px] tracking-[0.02em] text-white">{short}</div>
-          <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.14em] text-textDim">
+        <div className="min-w-0">
+          <div className="font-mono text-[15px] tracking-[0.02em] text-white sm:text-[18px]">{short}</div>
+          <div className="mt-1 font-mono text-[10.5px] uppercase tracking-[0.14em] text-textDim sm:text-[11px]">
             HEDERA · {accountId ?? "—"} ·{" "}
             <a href={hashscan} target="_blank" rel="noreferrer" className="text-textSec hover:text-white">
               View on HashScan ↗
@@ -203,7 +205,7 @@ function ProfileHead({
           </div>
         </div>
       </div>
-      <div className="term-fade term-fade-d1 flex gap-2">
+      <div className="term-fade term-fade-d1 flex flex-wrap gap-2">
         <button
           type="button"
           onClick={onCopy}
@@ -227,7 +229,7 @@ function ProfileHead({
 
 function KpiStrip({ totals }: { totals: PortfolioTotals }) {
   return (
-    <div className="term-fade term-fade-d2 my-8 grid gap-px border border-border bg-border md:grid-cols-2 lg:grid-cols-4">
+    <div className="term-fade term-fade-d2 my-6 grid gap-px border border-border bg-border sm:grid-cols-2 sm:my-8 lg:grid-cols-4">
       <Kpi
         label="Portfolio value"
         value={totals.portfolioUsd !== undefined ? (formatUsd(totals.portfolioUsd) ?? "—") : "—"}
@@ -258,12 +260,12 @@ function KpiStrip({ totals }: { totals: PortfolioTotals }) {
 
 function Kpi({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
-    <div className="bg-white/[0.015] p-5">
+    <div className="bg-white/[0.015] p-4 sm:p-5">
       <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-textDim">{label}</div>
-      <div className="mt-2 font-mono text-[30px] font-medium tracking-[-0.02em] text-white tabular-nums">
+      <div className="mt-2 break-words font-mono text-[24px] font-medium tracking-[-0.02em] text-white tabular-nums sm:text-[30px]">
         {value}
       </div>
-      <div className="mt-1 font-mono text-[11.5px] text-textSec">{sub}</div>
+      <div className="mt-1 font-mono text-[11px] text-textSec sm:text-[11.5px]">{sub}</div>
     </div>
   );
 }
@@ -281,13 +283,13 @@ function PositionsSection({ rows }: { rows: PortfolioRow[] }) {
 
   return (
     <div>
-      <div className="flex w-fit gap-px border border-border bg-border">
+      <div className="flex w-fit max-w-full gap-px overflow-x-auto border border-border bg-border">
         {(["All", "PT", "YT", "LP", "History"] as const).map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => setTab(t)}
-            className={`px-4 py-3 font-mono text-[11px] uppercase tracking-[0.16em] transition ${
+            className={`whitespace-nowrap px-3 py-2.5 font-mono text-[11px] uppercase tracking-[0.16em] transition sm:px-4 sm:py-3 ${
               tab === t
                 ? "bg-white text-black"
                 : "bg-white/[0.015] text-textSec hover:bg-white/[0.04] hover:text-white"
@@ -298,7 +300,8 @@ function PositionsSection({ rows }: { rows: PortfolioRow[] }) {
         ))}
       </div>
 
-      <table className="w-full border-collapse border border-t-0 border-border bg-white/[0.015]">
+      <div className="overflow-x-auto border border-t-0 border-border bg-white/[0.015]">
+        <table className="w-full min-w-[820px] border-collapse">
         <thead className="bg-white/[0.04]">
           <tr>
             <PosTh>Market</PosTh>
@@ -328,7 +331,8 @@ function PositionsSection({ rows }: { rows: PortfolioRow[] }) {
             filtered.map((r, i) => <PositionRow key={`${r.market}-${r.kind}-${i}`} row={r} />)
           )}
         </tbody>
-      </table>
+        </table>
+      </div>
     </div>
   );
 }
@@ -420,7 +424,7 @@ function PosTh({
 }) {
   return (
     <th
-      className={`border-b border-border bg-white/[0.04] px-4 py-3.5 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-textDim ${
+      className={`whitespace-nowrap border-b border-border bg-white/[0.04] px-3 py-3 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-textDim sm:px-4 sm:py-3.5 ${
         align === "right" ? "text-right" : "text-left"
       }`}
     >
@@ -431,7 +435,7 @@ function PosTh({
 
 function PosTd({ children }: { children: React.ReactNode }) {
   return (
-    <td className="border-b border-border px-4 py-4 font-mono text-[13px] text-text last:border-b-0">
+    <td className="whitespace-nowrap border-b border-border px-3 py-3.5 font-mono text-[13px] text-text last:border-b-0 sm:px-4 sm:py-4">
       {children}
     </td>
   );
@@ -446,7 +450,7 @@ function PosNum({
 }) {
   return (
     <td
-      className={`border-b border-border px-4 py-4 text-right font-mono text-[13px] tabular-nums last:border-b-0 ${
+      className={`whitespace-nowrap border-b border-border px-3 py-3.5 text-right font-mono text-[13px] tabular-nums last:border-b-0 sm:px-4 sm:py-4 ${
         dim ? "text-textDim" : "text-white"
       }`}
     >

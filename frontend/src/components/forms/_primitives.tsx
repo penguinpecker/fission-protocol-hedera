@@ -86,7 +86,7 @@ export function FormHeaderStrip({
   right?: ReactNode;
 }) {
   return (
-    <div className="-mx-4 -mt-4 mb-3 flex items-center justify-between border-b border-border bg-white/[0.02] px-4 py-2">
+    <div className="-mx-4 -mt-4 mb-3 flex flex-wrap items-center justify-between gap-y-1 border-b border-border bg-white/[0.02] px-4 py-2">
       <div className="flex items-center gap-2">
         <span className="font-mono text-[10px] uppercase tracking-[2px] text-textSec">
           {name}
@@ -95,7 +95,7 @@ export function FormHeaderStrip({
           {version}
         </span>
       </div>
-      <div className="flex items-center gap-1.5">{right}</div>
+      <div className="flex flex-wrap items-center gap-1.5">{right}</div>
     </div>
   );
 }
@@ -149,7 +149,7 @@ export function SlippageChips({
           {(slippageBps / 100).toFixed(2)}%
         </span>
       </div>
-      <div className="flex items-stretch gap-1.5">
+      <div className="flex flex-wrap items-stretch gap-1.5">
         {SLIPPAGE_PRESETS.map((bps) => {
           const isActive = slippageBps === bps && !customStr;
           return (
@@ -160,7 +160,7 @@ export function SlippageChips({
                 setCustomStr("");
                 setSlippageBps(bps);
               }}
-              className={`flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] tabular-nums transition ${
+              className={`min-w-[58px] flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] tabular-nums transition ${
                 isActive
                   ? "border-text/60 bg-white/[0.08] text-text"
                   : "border-border bg-bgInput text-textSec hover:border-borderHover hover:text-text"
@@ -172,7 +172,7 @@ export function SlippageChips({
           );
         })}
         <div
-          className={`flex flex-1 items-center gap-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] transition ${
+          className={`flex min-w-[80px] flex-1 items-center gap-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] transition ${
             customStr
               ? "border-text/60 bg-white/[0.08]"
               : "border-border bg-bgInput"
