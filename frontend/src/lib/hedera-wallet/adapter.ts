@@ -430,7 +430,12 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
       .setContractId(cid(contractAddress))
       .setGas(gas)
       .setFunction(functionName, params);
-    if (payableHbar > 0) tx.setPayableAmount(new Hbar(payableHbar));
+    if (payableHbar > 0) {
+      // `new Hbar(n)` rejects floats with "Hbar in tinybars contains decimals".
+      // Round to whole tinybars (1 HBAR = 1e8 tinybars) before passing.
+      const tinybars = BigInt(Math.floor(payableHbar * 1e8));
+      tx.setPayableAmount(Hbar.fromTinybars(tinybars.toString()));
+    }
     if (nodeIds.length > 0) tx.setNodeAccountIds(nodeIds);
     await tx.freezeWithSigner(signer as never);
     const resp = await tx.executeWithSigner(signer as never);

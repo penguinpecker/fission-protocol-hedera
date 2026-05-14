@@ -719,51 +719,11 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
           }
         />
 
-        {/* SOURCE toggle */}
-        <div className="mb-3">
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-textDim">
-              Source
-            </span>
-            {!zapAvailable && (
-              <span className="font-mono text-[9px] uppercase tracking-[1.5px] text-warning">
-                Zap unavailable — using SY
-              </span>
-            )}
+        {!zapAvailable && (
+          <div className="mb-3 rounded-[6px] border border-warning/30 bg-warning/[0.06] px-3 py-2 font-mono text-[10px] leading-relaxed text-warning">
+            Zap not deployed for this market — using your existing SY shares as input.
           </div>
-          <div className="flex items-stretch gap-1.5">
-            <button
-              type="button"
-              onClick={() => { setSource("hbar"); setUsdStr(""); setRawStr(""); resetWrite(); }}
-              disabled={!zapAvailable}
-              className={`flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                effectiveSource === "hbar"
-                  ? "border-text/60 bg-white/[0.08] text-text"
-                  : "border-border bg-bgInput text-textSec hover:border-borderHover hover:text-text"
-              }`}
-            >
-              HBAR
-            </button>
-            <button
-              type="button"
-              onClick={() => { setSource("sy"); setUsdStr(""); setRawStr(""); resetWrite(); }}
-              className={`flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition ${
-                effectiveSource === "sy"
-                  ? "border-text/60 bg-white/[0.08] text-text"
-                  : "border-border bg-bgInput text-textSec hover:border-borderHover hover:text-text"
-              }`}
-            >
-              SY
-            </button>
-          </div>
-          <p className="mt-1.5 font-mono text-[9px] leading-relaxed text-textDim">
-            {effectiveSource === "hbar"
-              ? megaZapAvailable
-                ? "MegaZap: HBAR → SY → YT atomic in ONE signature."
-                : "Auto-mint: HBAR → SY → YT in one chained flow (2-4 wallet popups)."
-              : "Direct: spend SY shares you already hold."}
-          </p>
-        </div>
+        )}
 
         <SectionDivider label="Input" />
 
