@@ -17,7 +17,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SiweMessage } from "siwe";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 
@@ -50,14 +50,34 @@ export function useSiweAuth() {
   }, [adapter.isConnected, adapter.address]);
 
   // Wallet disconnect or address change → clear server session.
+  //
+  // Tracks the previous `isConnected` state to distinguish a real
+  // disconnect event ("was connected, now isn't") from the initial render
+  // where `adapter.isConnected` is `false` purely because the Hedera
+  // provider hasn't had a chance to restore its persisted WC session yet.
+  // Without this guard, the SIWE cookie gets logged out on every refresh
+  // before the wallet finishes restoring, and the user sees a Sign-In
+  // prompt despite having a valid 7-day session.
+  const prevConnectedRef = useRef<boolean | null>(null);
   useEffect(() => {
-    if (state.status !== "authenticated") return;
-    if (!adapter.isConnected) {
+    if (state.status !== "authenticated") {
+      prevConnectedRef.current = adapter.isConnected;
+      return;
+    }
+    const wasConnected = prevConnectedRef.current;
+    prevConnectedRef.current = adapter.isConnected;
+
+    // Real disconnect = previously saw `isConnected=true`, now `false`.
+    if (wasConnected === true && !adapter.isConnected) {
       void fetch("/api/auth/logout", { method: "POST", credentials: "include" });
       setState({ status: "idle" });
       return;
     }
-    if (adapter.address && adapter.address.toLowerCase() !== state.address.toLowerCase()) {
+    // Address change = wallet switched accounts, kick the cookie.
+    if (
+      adapter.address &&
+      adapter.address.toLowerCase() !== state.address.toLowerCase()
+    ) {
       void fetch("/api/auth/logout", { method: "POST", credentials: "include" });
       setState({ status: "idle" });
     }
