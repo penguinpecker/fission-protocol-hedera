@@ -10,22 +10,28 @@
  */
 
 export const SELECTOR_NAMES: Record<string, string> = {
-  // ───── ActionRouter (our writes)
+  // ───── ActionRouter v3 (our writes) — verified via keccak256 2026-05-15
   "0xbf35db06": "swapExactSyForPt",
+  "0x690b343f": "swapExactPtForSy",
   "0xc158091f": "buyYT",
-  "0xe6f5b25a": "addLiquidityProportional",
-  "0xa9da11cc": "removeLiquidityProportional",
-  "0xc9bf2c2c": "depositAndSplit",
-  "0x9be3c50d": "redeemAfterExpiryAndUnwrap",
-  // ───── Market (direct)
+  "0x15ee88c3": "addLiquidityProportional",
+  "0xcff15d64": "removeLiquidityProportional",
+  "0xd1e04b89": "depositAndSplit",
+  "0x82b1d54d": "redeemAfterExpiryAndUnwrap",
+  // ───── Market (direct) — verified via keccak256 2026-05-15
   "0xdbceb005": "split",
-  "0x24a47aeb": "merge",
+  "0x59d20b37": "splitTo",
+  "0x1d64ab72": "merge",
+  "0x4c2e00d2": "merge",
+  "0x7fd2778e": "redeemAfterExpiry",
   "0xffec999b": "redeemAfterExpiry",
-  "0xc681bea7": "addLiquidity",
-  "0xc23d3eef": "removeLiquidity",
-  // ───── SY adapter
-  "0xff5f3b56": "depositLiquidity",
-  "0xb3f5dfc7": "redeemLiquidity",
+  "0xb576468e": "addLiquidity",
+  "0xe39b0eb5": "removeLiquidity",
+  "0x73a888f6": "swapExactSyForPt",
+  "0x8488ba33": "swapExactPtForSy",
+  // ───── SY adapter — verified via keccak256 2026-05-15
+  "0x0c887b94": "depositLiquidity",
+  "0x675e3a96": "redeemLiquidity",
   "0x4641257d": "harvest",
   "0x4e71d92d": "claim",
   // ───── FissionZap
