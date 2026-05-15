@@ -546,48 +546,53 @@ function AddLp({
           }
         />
 
-        {/* SOURCE toggle — HBAR is now wired through MegaZap (single-tx zap). */}
+        {/* SOURCE toggle — HBAR routes through MegaZap (single-tx zap).
+            When MegaZap isn't deployed the HBAR path is dead-on-arrival, so
+            the toggle collapses to a single info row that just describes the
+            SY-direct route. Don't even render a disabled HBAR button. */}
         <div className="mb-3">
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-textDim">
-              Source
-            </span>
-            {!megaZapAvailable && (
-              <span className="font-mono text-[9px] uppercase tracking-[1.5px] text-warning">
-                MegaZap unavailable — using SY
-              </span>
-            )}
-          </div>
-          <div className="flex items-stretch gap-1.5">
-            <button
-              type="button"
-              onClick={() => setSource("hbar")}
-              disabled={!megaZapAvailable}
-              className={`flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                effectiveSource === "hbar"
-                  ? "border-text/60 bg-white/[0.08] text-text"
-                  : "border-border bg-bgInput text-textSec hover:border-borderHover hover:text-text"
-              }`}
-            >
-              HBAR
-            </button>
-            <button
-              type="button"
-              onClick={() => setSource("sy")}
-              className={`flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition ${
-                effectiveSource === "sy"
-                  ? "border-text/60 bg-white/[0.08] text-text"
-                  : "border-border bg-bgInput text-textSec hover:border-borderHover hover:text-text"
-              }`}
-            >
-              SY
-            </button>
-          </div>
-          <p className="mt-1.5 font-mono text-[9px] leading-relaxed text-textDim">
-            {effectiveSource === "hbar"
-              ? "MegaZap: HBAR → SY → swap half to PT → add LP, all in ONE signature."
-              : "Direct: contribute SY + PT you already hold."}
-          </p>
+          {megaZapAvailable ? (
+            <>
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-textDim">
+                  Source
+                </span>
+              </div>
+              <div className="flex items-stretch gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setSource("hbar")}
+                  className={`flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition ${
+                    effectiveSource === "hbar"
+                      ? "border-text/60 bg-white/[0.08] text-text"
+                      : "border-border bg-bgInput text-textSec hover:border-borderHover hover:text-text"
+                  }`}
+                >
+                  HBAR
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSource("sy")}
+                  className={`flex-1 rounded-[6px] border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition ${
+                    effectiveSource === "sy"
+                      ? "border-text/60 bg-white/[0.08] text-text"
+                      : "border-border bg-bgInput text-textSec hover:border-borderHover hover:text-text"
+                  }`}
+                >
+                  SY
+                </button>
+              </div>
+              <p className="mt-1.5 font-mono text-[9px] leading-relaxed text-textDim">
+                {effectiveSource === "hbar"
+                  ? "MegaZap: HBAR → SY → swap half to PT → add LP, all in ONE signature."
+                  : "Direct: contribute SY + PT you already hold."}
+              </p>
+            </>
+          ) : (
+            <p className="font-mono text-[9px] leading-relaxed text-textDim">
+              Direct: contribute SY + PT you already hold.
+            </p>
+          )}
         </div>
 
         {effectiveSource === "sy" && noPt ? (
