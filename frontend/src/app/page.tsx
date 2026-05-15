@@ -140,9 +140,8 @@ function Hero() {
         </h1>
 
         <p className="mt-6 max-w-[620px] animate-[fadeUp_0.6s_ease-out_0.3s_both] text-[15px] font-light leading-[1.55] text-textSec sm:mt-7 sm:text-[18px]">
-          Tokenize the Yield. Split any yield-bearing position into a
-          fixed-rate Principal Token and a perpetual Yield Token — HTS-native
-          on Hedera, governed by a 2-of-2 ThresholdKey behind a 48-hour Timelock.
+          Tokenize the Yield.
+          Trade fixed-rate Principal and perpetual Yield as separate tokens.
         </p>
 
         <div className="mt-8 flex animate-[fadeUp_0.6s_ease-out_0.4s_both] flex-wrap justify-center gap-3 sm:mt-10">

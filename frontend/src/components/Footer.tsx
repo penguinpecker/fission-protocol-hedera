@@ -52,7 +52,7 @@ export function Footer() {
               <span className="text-[17px] font-semibold tracking-tight text-text">Fission</span>
             </Link>
             <p className="mt-4 max-w-[280px] text-[13px] leading-relaxed text-textSec">
-              Tokenize the Yield. HTS-native PT/YT split, governed by a 2-of-2 Hedera ThresholdKey behind a 48-hour Timelock.
+              Tokenize the Yield. Trade fixed-rate Principal and perpetual Yield as separate tokens.
             </p>
           </div>
 
