@@ -40,6 +40,7 @@ import {
   pickPrimaryArg,
 } from "@/lib/activity-abi-registry";
 import { decodeSelector } from "@/lib/selector-decoder";
+import { createServiceRoleClient } from "@/lib/supabase/server";
 
 // ─────────────────────────────── types ───────────────────────────────
 
@@ -100,6 +101,27 @@ function freshlyCached<T>(c: CacheEntry<T> | null): T | undefined {
 
 // ─────────────────────────────── handler ───────────────────────────────
 
+// Shape of activity_log rows stored by the cron-indexer Railway worker.
+interface ActivityLogRow {
+  tx_hash: string;
+  address: string;
+  event_type: string;
+  market_address: string | null;
+  block_timestamp: string;
+  block_number: number | null;
+  payload: {
+    contract?: string;
+    contract_evm?: string;
+    to?: string;
+    amount_tinybars?: number;
+    gas_used?: number;
+    result?: string;
+    error_message?: string | null;
+    function_parameters?: string;
+    timestamp_consensus?: string;
+  } | null;
+}
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const address = url.searchParams.get("address");
@@ -110,48 +132,88 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "invalid_address" }, { status: 400 });
   }
 
-  const mirrorBase =
-    process.env.NEXT_PUBLIC_MIRROR_NODE_URL ??
-    "https://mainnet-public.mirrornode.hedera.com";
-
-  let mirror: MirrorContractResultsResponse;
+  // Read from the persisted index (kept warm by the cron-indexer Railway
+  // worker which polls Hedera Mirror Node every 60s). Falls back to mirror
+  // on Supabase failure so a transient DB outage doesn't blank the feed.
+  let rows: ActivityLogRow[] = [];
+  let usedFallback = false;
   try {
-    const res = await fetch(
-      `${mirrorBase}/api/v1/contracts/results?from=${address}&limit=${limit}&order=desc`,
-      { cache: "no-store" },
-    );
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: "mirror_unavailable", status: res.status },
-        { status: 502 },
-      );
-    }
-    mirror = (await res.json()) as MirrorContractResultsResponse;
-  } catch (e) {
-    return NextResponse.json(
-      { error: "mirror_fetch_failed", message: e instanceof Error ? e.message : "unknown" },
-      { status: 502 },
-    );
+    const supa = createServiceRoleClient();
+    const { data, error } = await supa
+      .from("activity_log")
+      .select("tx_hash,address,event_type,market_address,block_timestamp,block_number,payload")
+      .eq("address", address.toLowerCase())
+      .order("block_timestamp", { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    rows = (data ?? []) as ActivityLogRow[];
+  } catch {
+    // Fallback: read mirror live. Same path the route used pre-indexer.
+    usedFallback = true;
+    rows = await fetchMirrorFallback(address, limit);
   }
 
   // SY USD per share — read the warm cache if fresh, otherwise refresh INLINE.
-  // The previous "fire-and-forget" pattern was wrong for serverless: each
-  // function invocation may get a fresh container with no module-scope cache,
-  // so without awaiting the refresh `usd` was always `null` on first hit. We
-  // now block the response on a single refresh (~500ms including CoinGecko +
-  // 8 Hashio reads — all parallel via Promise.all), capped by Vercel's
-  // function timeout. If it fails, entries still ship without USD.
   let syUsdPerShare = freshlyCached(syUsdPerShareCache);
   if (syUsdPerShare === undefined) {
     await refreshSyUsdPerShare();
     syUsdPerShare = freshlyCached(syUsdPerShareCache);
   }
 
-  const entries: ActivityEntry[] = mirror.results
-    .map((r) => decodeRow(r, syUsdPerShare ?? null))
+  const entries: ActivityEntry[] = rows
+    .map((row) => decodeRow(toMirrorShape(row), syUsdPerShare ?? null))
     .filter((e): e is ActivityEntry => e !== null);
 
-  return NextResponse.json({ entries });
+  return NextResponse.json({ entries, source: usedFallback ? "mirror_fallback" : "activity_log" });
+}
+
+// Adapt an activity_log row to the shape decodeRow expects.
+function toMirrorShape(row: ActivityLogRow): MirrorContractResult {
+  const p = row.payload ?? {};
+  return {
+    hash: row.tx_hash,
+    // block_timestamp is ISO; decodeRow wants `seconds.nanos`. Use stored
+    // consensus timestamp when present (lossless), otherwise convert ISO.
+    timestamp: p.timestamp_consensus ?? `${Math.floor(new Date(row.block_timestamp).getTime() / 1000)}.0`,
+    to: (p.to ?? p.contract_evm ?? "").toLowerCase(),
+    from: row.address,
+    contract_id: null,
+    function_parameters: p.function_parameters ?? null,
+    result: p.result ?? "SUCCESS",
+    amount: typeof p.amount_tinybars === "number" ? p.amount_tinybars : undefined,
+  };
+}
+
+// Mirror-direct fallback used when Supabase is unavailable.
+async function fetchMirrorFallback(address: string, limit: number): Promise<ActivityLogRow[]> {
+  const mirrorBase =
+    process.env.NEXT_PUBLIC_MIRROR_NODE_URL ??
+    "https://mainnet-public.mirrornode.hedera.com";
+  try {
+    const res = await fetch(
+      `${mirrorBase}/api/v1/contracts/results?from=${address}&limit=${limit}&order=desc`,
+      { cache: "no-store" },
+    );
+    if (!res.ok) return [];
+    const j = (await res.json()) as MirrorContractResultsResponse;
+    return (j.results ?? []).map((r) => ({
+      tx_hash: r.hash,
+      address: (r.from ?? "").toLowerCase(),
+      event_type: "fallback",
+      market_address: null,
+      block_timestamp: new Date(Number(r.timestamp.split(".")[0]) * 1000).toISOString(),
+      block_number: null,
+      payload: {
+        to: r.to,
+        contract_evm: r.to,
+        function_parameters: r.function_parameters ?? undefined,
+        result: r.result,
+        amount_tinybars: typeof r.amount === "number" ? r.amount : undefined,
+      },
+    }));
+  } catch {
+    return [];
+  }
 }
 
 // ─────────────────────────────── row decoder ───────────────────────────────
