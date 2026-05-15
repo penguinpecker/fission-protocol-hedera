@@ -52,7 +52,7 @@ export function Footer() {
               <span className="text-[17px] font-semibold tracking-tight text-text">Fission</span>
             </Link>
             <p className="mt-4 max-w-[280px] text-[13px] leading-relaxed text-textSec">
-              Tokenize the Yield. Trade fixed-rate Principal and perpetual Yield as separate tokens.
+              Tokenize the Yield. Fixed-rate and perpetual yield markets on Hedera.
             </p>
           </div>
 

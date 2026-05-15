@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Fission Protocol — yield tokenization on Hedera",
   description:
-    "Tokenize the Yield. Trade fixed-rate Principal and perpetual Yield as separate tokens. HTS-native on Hedera.",
+    "Tokenize the Yield. Fixed-rate and perpetual yield markets on Hedera.",
   metadataBase: new URL("https://www.fissionp.com"),
 };
 
