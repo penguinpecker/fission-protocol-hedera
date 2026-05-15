@@ -254,10 +254,13 @@ function decodeRow(
         // calldata arg. Mirror Node's `amount` field is in tinybars (1 HBAR =
         // 1e8 tinybars).
         const raw = BigInt(r.amount);
+        const hbarUsd = freshlyCached(hbarUsdCache) ?? null;
+        const usd = hbarUsd !== null ? (Number(raw) / 1e8) * hbarUsd : undefined;
         amount = {
           token: "HBAR",
           raw: raw.toString(),
           formatted: formatTokenAmount(raw, 8),
+          usd,
         };
         side = "out";
       }

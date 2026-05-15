@@ -607,15 +607,19 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
       ? "text-success"
       : "text-white";
 
-  // Compose "+1,234.5678 SY-…" style. The raw `formatted` field already has
-  // 4-fractional-digit scaling — we just decorate with the sign + ticker.
-  const amountText = entry.amount
-    ? `${amountSign}${entry.amount.formatted} ${entry.amount.token}`
-    : null;
-  const usdText =
-    entry.amount && typeof entry.amount.usd === "number"
-      ? formatUsd(entry.amount.usd) ?? null
+  // Prefer USD on the primary line when we have it — user wants the activity
+  // feed denominated in dollars, not raw token tickers. The token-amount line
+  // moves to the secondary slot for context. Falls back to token amount only
+  // when no USD price is available (rare).
+  const hasUsd = entry.amount && typeof entry.amount.usd === "number";
+  const primaryText = hasUsd
+    ? `${amountSign}${formatUsd(entry.amount!.usd!) ?? ""}`
+    : entry.amount
+      ? `${amountSign}${entry.amount.formatted} ${entry.amount.token}`
       : null;
+  const secondaryText = hasUsd && entry.amount
+    ? `${entry.amount.formatted} ${entry.amount.token}`
+    : null;
 
   return (
     <a
@@ -634,13 +638,13 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
         </span>
       </div>
       <div className="flex flex-col items-end gap-0.5 whitespace-nowrap text-right">
-        {amountText ? (
-          <span className={`tabular-nums ${amountColor}`}>{amountText}</span>
+        {primaryText ? (
+          <span className={`tabular-nums ${amountColor}`}>{primaryText}</span>
         ) : (
           <span className="text-textSec">↗</span>
         )}
-        {usdText ? (
-          <span className="text-textDim text-[10.5px] tabular-nums">≈ {usdText}</span>
+        {secondaryText ? (
+          <span className="text-textDim text-[10.5px] tabular-nums">{secondaryText}</span>
         ) : null}
       </div>
     </a>

@@ -30,28 +30,37 @@ const CONTRACTS = [
 
 // Selector → canonical event_type (enum-constrained in activity_log).
 // Selectors not in this map (approve, transfer, HTS helpers, etc.) are
-// skipped — they aren't protocol events.
+// skipped — they aren't protocol events. All selectors below verified
+// via keccak256 of the live signatures on 2026-05-15; the previous list
+// had several phantom selectors (notably 0xe6f5b25a for addLiquidity)
+// that silently dropped real router calls.
 const SELECTOR_TO_EVENT = {
-  // ActionRouter v3
-  "0xbf35db06": "swap_sy_for_pt",     // swapExactSyForPt
+  // ActionRouter v3 — IFissionMarketCommon encodes as address
+  "0xbf35db06": "swap_sy_for_pt",     // swapExactSyForPt(address,uint256,uint256,address,uint256)
+  "0x690b343f": "swap_pt_for_sy",     // swapExactPtForSy(address,uint256,uint256,address,uint256)
   "0xc158091f": "swap_pt_for_sy",     // buyYT (composite, but a swap_pt_for_sy fires inside)
-  "0xe6f5b25a": "add_liquidity",      // addLiquidityProportional
-  "0xa9da11cc": "remove_liquidity",   // removeLiquidityProportional
-  "0xc9bf2c2c": "split",              // depositAndSplit
-  "0x9be3c50d": "redeem_after_expiry",
+  "0x15ee88c3": "add_liquidity",      // addLiquidityProportional(address,uint256,uint256,uint256,address,uint256)
+  "0xcff15d64": "remove_liquidity",   // removeLiquidityProportional(address,uint256,uint256,uint256,address,uint256)
+  "0xd1e04b89": "split",              // depositAndSplit(address,uint256,address,address,uint256)
+  "0x82b1d54d": "redeem_after_expiry",// redeemAfterExpiryAndUnwrap(address,uint256,uint256,address,uint256)
   // Market (direct)
-  "0xdbceb005": "split",
-  "0x24a47aeb": "merge",
-  "0xffec999b": "redeem_after_expiry",
-  "0xc681bea7": "add_liquidity",
-  "0xc23d3eef": "remove_liquidity",
+  "0xdbceb005": "split",              // split(uint256)
+  "0x59d20b37": "split",              // splitTo(uint256,address,address)
+  "0x1d64ab72": "merge",              // merge(uint256,uint256,address)
+  "0x4c2e00d2": "merge",              // merge(uint256,address)
+  "0x7fd2778e": "redeem_after_expiry",// redeemAfterExpiry(uint256,address)
+  "0xffec999b": "redeem_after_expiry",// redeemAfterExpiry(uint256,uint256,address)
+  "0xb576468e": "add_liquidity",      // addLiquidity(uint256,uint256,uint256,address)
+  "0xe39b0eb5": "remove_liquidity",   // removeLiquidity(uint256,uint256,uint256,address)
+  "0x73a888f6": "swap_sy_for_pt",     // swapExactSyForPt(uint256,uint256,address)
+  "0x8488ba33": "swap_pt_for_sy",     // swapExactPtForSy(uint256,uint256,address)
   // SY adapter
-  "0xff5f3b56": "deposit",            // depositLiquidity
-  "0xb3f5dfc7": "redeem",             // redeemLiquidity
-  "0x4641257d": "claim_rewards",      // harvest
-  "0x4e71d92d": "claim_yield",        // claim
+  "0x0c887b94": "deposit",            // depositLiquidity(uint256,uint256,uint256,uint256,address,uint128)
+  "0x675e3a96": "redeem",             // redeemLiquidity(uint128,uint256,uint256,address)
+  "0x4641257d": "claim_rewards",      // harvest()
+  "0x4e71d92d": "claim_yield",        // claim()
   // FissionZap / MegaZap (HBAR → SY entry; treat as deposit at the protocol level)
-  "0xe056955f": "deposit",            // zapHbarToSy
+  "0xe056955f": "deposit",            // zapHbarToSy(address,uint256,uint256,uint256,uint128,address)
 };
 
 const MARKET0 = "0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d";
