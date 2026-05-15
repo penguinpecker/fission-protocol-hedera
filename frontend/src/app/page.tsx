@@ -99,10 +99,6 @@ const FAQ = [
     q: "Has this been audited?",
     a: "Two internal audit passes complete (24 + 9 findings, all H/M closed). External audit is on the path before the next chain expansion. Read the full audit notes in the repo.",
   },
-  {
-    q: "How is this different from staking HBARX?",
-    a: "Staking HBARX gives you the full variable yield. Splitting separates yield from principal — you can sell the principal half (PT) for cash up front, or buy more yield exposure (YT) without touching principal. Two different products with different risk shapes.",
-  },
 ];
 
 export default function LandingPage() {
