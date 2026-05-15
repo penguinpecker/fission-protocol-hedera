@@ -1,0 +1,13 @@
+{
+  "name": "fission-cron-refresh",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Railway cron worker — POSTs fissionp.com/api/markets/refresh to keep markets_cache warm.",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

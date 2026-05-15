@@ -1,0 +1,13 @@
+{
+  "name": "fission-cron-indexer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Railway worker — polls Hedera Mirror for Fission contract calls and writes decoded rows to Supabase activity_log.",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
