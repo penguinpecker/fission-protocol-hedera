@@ -51,6 +51,28 @@ const INITIAL: HederaWalletState = {
   error: null,
 };
 
+/** Sync localStorage probe used as the LAZY initial useState value. If the
+ *  browser has any non-empty wc@2 session key we assume a restore is about
+ *  to happen and bake `status: "connecting"` into the very first render —
+ *  otherwise WalletGate sees `idle` for one frame and flashes the "Connect"
+ *  prompt before the mount effect can mark us as connecting. */
+function probeHasStoredWcSession(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (!k) continue;
+      if (k.startsWith("wc@2:") && k.includes("session")) {
+        const v = window.localStorage.getItem(k);
+        if (v && v !== "[]" && v !== "{}" && v !== "null") return true;
+      }
+    }
+  } catch {
+    /* localStorage disabled / private mode — fall through */
+  }
+  return false;
+}
+
 const APP_METADATA = {
   name: "Fission Protocol",
   description: "Yield-stripping AMM on Hedera",
@@ -59,7 +81,13 @@ const APP_METADATA = {
 };
 
 export function HederaWalletProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<HederaWalletState>(INITIAL);
+  // Lazy initialiser — runs once on first render, BEFORE any paint. Reads
+  // localStorage to decide whether to start in "connecting" (gate shows
+  // skeleton) or "idle" (gate shows Connect). Eliminates the one-frame
+  // flash that this session has been ping-ponging back to.
+  const [state, setState] = useState<HederaWalletState>(() =>
+    probeHasStoredWcSession() ? { ...INITIAL, status: "connecting" } : INITIAL,
+  );
   const connectorRef = useRef<{ disconnectAll: () => Promise<void>; signers: unknown[] } | null>(null);
 
   /**
