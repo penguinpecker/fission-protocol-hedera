@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useChainId } from "wagmi";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
@@ -347,6 +347,16 @@ function ProtocolStatsRows({ markets }: { markets: MarketRow[] }) {
     setTvlByMarket({});
   }, [markets.length]);
 
+  // Stable handler — passing an inline arrow here makes every TvlReporter's
+  // effect refire each render. Profile page hit the same trap and locked the
+  // main thread, blocking header clicks.
+  const handleTvlReport = useCallback((address: string, usd: number | undefined) => {
+    setTvlByMarket((prev) => {
+      if (prev[address] === usd) return prev;
+      return { ...prev, [address]: usd };
+    });
+  }, []);
+
   const totalSyShares = markets.reduce((acc, m) => acc + m.totalSy, 0n);
   const totalPt = markets.reduce((acc, m) => acc + m.totalPt, 0n);
   const totalLp = markets.reduce((acc, m) => acc + m.lpSupply, 0n);
@@ -369,14 +379,10 @@ function ProtocolStatsRows({ markets }: { markets: MarketRow[] }) {
       {markets.map((m) => (
         <TvlReporter
           key={m.address}
+          marketAddress={m.address}
           syAddress={m.syAddress}
           totalSy={m.totalSy}
-          onReport={(usd) =>
-            setTvlByMarket((prev) => {
-              if (prev[m.address] === usd) return prev;
-              return { ...prev, [m.address]: usd };
-            })
-          }
+          onReport={handleTvlReport}
         />
       ))}
     </>
@@ -389,22 +395,22 @@ function ProtocolStatsRows({ markets }: { markets: MarketRow[] }) {
  * the table so the hook call site is stable.
  */
 function TvlReporter({
+  marketAddress,
   syAddress,
   totalSy,
   onReport,
 }: {
+  marketAddress: `0x${string}`;
   syAddress: `0x${string}` | undefined;
   totalSy: bigint;
-  onReport: (usd: number | undefined) => void;
+  onReport: (marketAddress: string, usd: number | undefined) => void;
 }) {
   const { usdPerShare } = useSyValueUsd(syAddress);
   useEffect(() => {
     const tvl =
       usdPerShare !== undefined && totalSy > 0n ? Number(totalSy) * usdPerShare : undefined;
-    onReport(tvl);
-    // onReport identity is stable in practice (parent uses functional setState)
-    // but we list deps explicitly so the linter is happy.
-  }, [usdPerShare, totalSy, onReport]);
+    onReport(marketAddress, tvl);
+  }, [marketAddress, usdPerShare, totalSy, onReport]);
   return null;
 }
 

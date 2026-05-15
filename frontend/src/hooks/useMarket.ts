@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useReadContracts } from "wagmi";
 import { erc20Abi, marketAbi, syAbi } from "@/lib/abis";
 
@@ -86,50 +87,52 @@ export function useMarketDetail(market: `0x${string}` | undefined) {
     allowFailure: true,
   });
 
-  if (!marketRead.data || !syRead.data || !facadeRead.data) {
+  // Memoize the assembled detail so the returned object has stable identity
+  // across renders when the underlying multicall data hasn't changed —
+  // consumers depend on `detail` in useEffect deps, and a fresh object every
+  // render would refire those effects (which earlier locked /profile).
+  const detail = useMemo<MarketDetail | undefined>(() => {
+    if (!marketRead.data || !syRead.data || !facadeRead.data) return undefined;
+    const md = marketRead.data;
+    const sd = syRead.data;
+    const fd = facadeRead.data;
+    const sy = pluck<`0x${string}`>(md[0] as never);
+    const pt = pluck<`0x${string}`>(md[1] as never);
+    const yt = pluck<`0x${string}`>(md[2] as never);
+    const lp = pluck<`0x${string}`>(md[3] as never);
+    const expiry = pluck<bigint>(md[4] as never);
+    const totalSy = pluck<bigint>(md[6] as never);
+    const totalPt = pluck<bigint>(md[7] as never);
+    const lastLnImpliedRate = pluck<bigint>(md[8] as never);
+    const syShareToken = pluck<`0x${string}`>(sd[0] as never);
+    if (!sy || !pt || !yt || !lp || expiry === undefined || totalSy === undefined || totalPt === undefined || lastLnImpliedRate === undefined || !syShareToken) {
+      return undefined;
+    }
+    return {
+      sy,
+      syShare: syShareToken,
+      pt,
+      yt,
+      lp,
+      expiry,
+      scalarRoot: pluck<bigint>(md[5] as never) ?? 0n,
+      totalSy,
+      totalPt,
+      lastLnImpliedRate,
+      lpSupply: pluck<bigint>(fd[1] as never) ?? 0n,
+      globalIndex: pluck<bigint>(md[9] as never) ?? 0n,
+      syName: pluck<string>(fd[0] as never) ?? "—",
+      syDecimals: Number(pluck<number>(sd[1] as never) ?? 18),
+      syExchangeRate: pluck<bigint>(sd[2] as never) ?? 0n,
+    };
+  }, [marketRead.data, syRead.data, facadeRead.data]);
+
+  if (!detail) {
     return {
       data: undefined,
       isLoading: marketRead.isLoading || syRead.isLoading || facadeRead.isLoading,
     };
   }
-
-  const md = marketRead.data;
-  const sd = syRead.data;
-  const fd = facadeRead.data;
-
-  // sy / pt / yt / lp / expiry / lastLnImpliedRate / totalSy / totalPt are
-  // mandatory; if any are missing we can't render the page.
-  const sy = pluck<`0x${string}`>(md[0] as never);
-  const pt = pluck<`0x${string}`>(md[1] as never);
-  const yt = pluck<`0x${string}`>(md[2] as never);
-  const lp = pluck<`0x${string}`>(md[3] as never);
-  const expiry = pluck<bigint>(md[4] as never);
-  const totalSy = pluck<bigint>(md[6] as never);
-  const totalPt = pluck<bigint>(md[7] as never);
-  const lastLnImpliedRate = pluck<bigint>(md[8] as never);
-  const syShareToken = pluck<`0x${string}`>(sd[0] as never);
-
-  if (!sy || !pt || !yt || !lp || expiry === undefined || totalSy === undefined || totalPt === undefined || lastLnImpliedRate === undefined || !syShareToken) {
-    return { data: undefined, isLoading: false };
-  }
-
-  const detail: MarketDetail = {
-    sy,
-    syShare: syShareToken,
-    pt,
-    yt,
-    lp,
-    expiry,
-    scalarRoot: pluck<bigint>(md[5] as never) ?? 0n,
-    totalSy,
-    totalPt,
-    lastLnImpliedRate,
-    lpSupply: pluck<bigint>(fd[1] as never) ?? 0n,
-    globalIndex: pluck<bigint>(md[9] as never) ?? 0n, // FissionMarketRewards has no globalIndex; default 0
-    syName: pluck<string>(fd[0] as never) ?? "—",
-    syDecimals: Number(pluck<number>(sd[1] as never) ?? 18),
-    syExchangeRate: pluck<bigint>(sd[2] as never) ?? 0n,
-  };
   return { data: detail, isLoading: false };
 }
 
@@ -159,18 +162,22 @@ export function useUserPosition(
     allowFailure: true,
   });
 
-  if (!result.data) return { data: undefined, isLoading: result.isLoading };
-  const r = result.data;
-  const pluck = <T,>(entry: { status: "success"; result: T } | { status: "failure"; error: Error } | undefined): T | undefined =>
-    entry?.status === "success" ? entry.result : undefined;
-  return {
-    data: {
+  // Memoize for stable object identity across renders — consumers list
+  // `position` in useEffect deps and would otherwise refire infinitely.
+  const data = useMemo(() => {
+    if (!result.data) return undefined;
+    const r = result.data;
+    const pluck = <T,>(entry: { status: "success"; result: T } | { status: "failure"; error: Error } | undefined): T | undefined =>
+      entry?.status === "success" ? entry.result : undefined;
+    return {
       sy: (pluck<bigint>(r[0] as never) ?? 0n),
       pt: (pluck<bigint>(r[1] as never) ?? 0n),
       yt: (pluck<bigint>(r[2] as never) ?? 0n),
       lp: (pluck<bigint>(r[3] as never) ?? 0n),
       claimableYield: (pluck<bigint>(r[4] as never) ?? 0n),
-    },
-    isLoading: false,
-  };
+    };
+  }, [result.data]);
+
+  if (!data) return { data: undefined, isLoading: result.isLoading };
+  return { data, isLoading: false };
 }

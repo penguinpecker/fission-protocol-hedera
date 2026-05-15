@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useChainId } from "wagmi";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { Nav } from "@/components/Nav";
@@ -91,6 +91,16 @@ function ProfileBody() {
     setTotalsByMarket({});
   }, [address, marketAddrs.length]);
 
+  // Stable handler so PositionAccumulator's effect doesn't refire every render
+  // and pin the main thread (which starved the header's click handlers).
+  const handleReport = useCallback(
+    (m: string, rows: PortfolioRow[], t: Partial<PortfolioTotals>) => {
+      setRowsByMarket((prev) => ({ ...prev, [m]: rows }));
+      setTotalsByMarket((prev) => ({ ...prev, [m]: t }));
+    },
+    [],
+  );
+
   const allRows = useMemo(() => Object.values(rowsByMarket).flat(), [rowsByMarket]);
 
   const totals: PortfolioTotals = useMemo(() => {
@@ -155,10 +165,7 @@ function ProfileBody() {
             key={m}
             market={m}
             user={address}
-            onReport={(rows, t) => {
-              setRowsByMarket((prev) => ({ ...prev, [m]: rows }));
-              setTotalsByMarket((prev) => ({ ...prev, [m]: t }));
-            }}
+            onReport={handleReport}
           />
         ))}
       </div>
@@ -720,7 +727,11 @@ function PositionAccumulator({
 }: {
   market: `0x${string}`;
   user: `0x${string}` | undefined;
-  onReport: (rows: PortfolioRow[], totals: Partial<PortfolioTotals>) => void;
+  onReport: (
+    market: string,
+    rows: PortfolioRow[],
+    totals: Partial<PortfolioTotals>,
+  ) => void;
 }) {
   const { data: detail } = useMarketDetail(market);
   const { data: position } = useUserPosition(market, detail, user);
@@ -728,11 +739,11 @@ function PositionAccumulator({
 
   useEffect(() => {
     if (!detail || !position) {
-      onReport([], {});
+      onReport(market, [], {});
       return;
     }
     const { rows, totals } = buildRows(market, detail, position, usdPerShare, usdcPerShare, whbarPerShare);
-    onReport(rows, totals);
+    onReport(market, rows, totals);
   }, [market, detail, position, usdPerShare, usdcPerShare, whbarPerShare, onReport]);
 
   return null;
