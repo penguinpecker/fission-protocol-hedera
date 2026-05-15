@@ -414,48 +414,6 @@ The 99/1 split was set on-chain 2026-05-10 via `setFee(lnFeeRateRoot, 1)` from t
 
 ---
 
-## Development
-
-```bash
-# Contracts
-cd contracts
-forge install
-forge build
-forge test -vv
-forge test --match-contract Invariant --runs 256000
-
-# Frontend
-cd frontend
-npm ci
-npm run dev   # localhost:3000
-
-# Run the indexer manually (refreshes markets_cache)
-curl -X POST https://www.fissionp.com/api/markets/refresh \
-  -H "Authorization: Bearer $CRON_SECRET"
-
-# Validate Market 0 (33 read-only invariants)
-node scripts/validate-market0.mjs
-
-# Top up Market 0 with proportional liquidity (operator only, while
-# pre-handoff)
-HBAR_TO_WRAP=2000 HBAR_TO_SWAP_FOR_USDC=1000 \
-USDC_AMOUNT_OUT_MIN=94000000 SY_DEPOSIT_SLIPPAGE_BPS=500 \
-node scripts/top-up-market0.mjs
-```
-
-Required env (`frontend/.env.local`):
-```
-NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=...
-NEXT_PUBLIC_HEDERA_CHAIN_ID=295
-NEXT_PUBLIC_SUPABASE_URL=...
-NEXT_PUBLIC_SUPABASE_ANON_KEY=...
-SUPABASE_SERVICE_ROLE_KEY=...     # server-only, never expose
-SESSION_SECRET=<32-byte hex>      # crypto.randomBytes(32).toString('hex')
-CRON_SECRET=<32-byte hex>
-```
-
----
-
 ## Audits & security
 
 - **Internal pass 1** (`audits/internal/SECURITY_REVIEW_2026-05-02.md`) — 24 findings; all H/M closed.
