@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { FissionLogo } from "@/components/FissionLogo";
+import { HeroCta } from "@/components/HeroCta";
 import { LockIcon, BoltIcon, BranchIcon, ShieldIcon, FlowIcon, ChainIcon } from "@/components/Icons";
 
 const STRATEGIES = [
@@ -145,12 +146,7 @@ function Hero() {
         </p>
 
         <div className="mt-8 flex animate-[fadeUp_0.6s_ease-out_0.4s_both] flex-wrap justify-center gap-3 sm:mt-10">
-          <Link
-            href="/markets"
-            className="rounded-xl bg-white px-7 py-[13px] text-[14px] font-semibold text-bg transition hover:opacity-90 sm:px-9 sm:py-[15px] sm:text-[15px]"
-          >
-            Open the markets
-          </Link>
+          <HeroCta />
           <Link
             href="/whitepaper"
             className="rounded-xl border border-borderHover px-6 py-[13px] text-[14px] font-medium text-text transition hover:bg-white/[0.05] sm:px-7 sm:py-[15px] sm:text-[15px]"
