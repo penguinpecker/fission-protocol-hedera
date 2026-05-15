@@ -206,7 +206,7 @@ export function Nav() {
                   ? "Opening…"
                   : autoSignAfterConnectRef.current && auth.status === "loading"
                     ? "Signing…"
-                    : "Connect & Sign"}
+                    : "Connect Wallet"}
               </button>
             )}
 

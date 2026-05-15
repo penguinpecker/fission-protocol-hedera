@@ -92,7 +92,7 @@ export function HeroCta() {
       disabled={hedera.status === "connecting"}
       className={baseClass}
     >
-      {hedera.status === "connecting" ? "Opening…" : "Connect & Sign"}
+      {hedera.status === "connecting" ? "Opening…" : "Connect Wallet"}
     </button>
   );
 }
