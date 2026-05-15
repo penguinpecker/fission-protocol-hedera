@@ -587,7 +587,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         },
         {
           label: "Buy YT (buyYT)",
-          detail: `Pendle inverse swap · yield accrues now · ≤ ${(slippageBps / 100).toFixed(2)}% slippage`,
+          detail: `Inverse swap · yield accrues now · ≤ ${(slippageBps / 100).toFixed(2)}% slippage`,
           inToken:
             syForSwap > 0n
               ? { sym: "SY", amount: formatCompact(syForSwap) }
@@ -634,7 +634,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         },
         {
           label: "Fission AMM",
-          detail: "Pendle inverse swap (YT leverage)",
+          detail: "Inverse swap (YT leverage)",
           isActive: isActive && !isDoneFinal,
           isComplete: isDoneFinal,
         },

@@ -6,7 +6,7 @@ import { Footer } from "@/components/Footer";
  * Whitepaper page — high-level, casual explainer for the protocol.
  * No deep math, no contract source dives. Just: what is Fission, what
  * are the strategies, how does the underlying yield source work, why
- * does this exist. Pendle-style economics in plain English.
+ * does this exist. PT/YT-split economics in plain English.
  *
  * Linked from the Nav (replacing the old Docs + Audits external links)
  * and from the landing-hero CTA.
@@ -164,7 +164,7 @@ export default function WhitepaperPage() {
             </li>
           </ol>
           <p className="mt-3">
-            When you deposit HBAR, our zap contract: wraps half to WHBAR, swaps the other half to USDC on SaucerSwap, deposits both into our V3 LP NFT, and mints you SY. One transaction. The Pendle-style math then lets you trade that SY for PT / YT / LP.
+            When you deposit HBAR, our zap contract: wraps half to WHBAR, swaps the other half to USDC on SaucerSwap, deposits both into our V3 LP NFT, and mints you SY. One transaction. The split math then lets you trade that SY for PT / YT / LP.
           </p>
           <p className="mt-3">
             The protocol harvests fees from the V3 NFT periodically. Those fees flow to YT holders (their yield) and LP holders (their AMM fees). PT holders don&apos;t earn fees directly — they earn the spread between buy price and the 1-SY redemption.
@@ -180,7 +180,7 @@ export default function WhitepaperPage() {
               ["FissionFactory", "Whitelists yield sources, deploys new markets per maturity date."],
               ["FissionZap", "One-tx HBAR → SY. Handles the WHBAR wrap + USDC swap + V3 deposit."],
               ["SY adapter", "Wraps the underlying yield source (V3 LP NFT). Mints share tokens."],
-              ["Market", "The Pendle-V2-style AMM where PT/YT/LP get minted and traded."],
+              ["Market", "The logit-curve AMM where PT/YT/LP get minted and traded."],
               ["ActionRouter", "Single entry point for swap / mint LP / redeem flows."],
               ["Timelock + Threshold", "2-of-2 keys, 48-hour delay, govern any protocol changes."],
             ]}

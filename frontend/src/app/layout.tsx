@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Fission Protocol — yield tokenization on Hedera",
   description:
-    "Split SaucerSwap V2 LP yield into fixed-rate Principal Tokens (PT) and variable-yield tokens (YT). Pendle V2-faithful, HTS-native, live on Hedera mainnet.",
+    "Tokenize the Yield. Split any yield-bearing position into fixed-rate Principal Tokens (PT) and perpetual Yield Tokens (YT). HTS-native, live on Hedera mainnet.",
   metadataBase: new URL("https://www.fissionp.com"),
 };
 

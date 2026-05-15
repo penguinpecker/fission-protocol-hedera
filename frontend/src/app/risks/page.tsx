@@ -39,7 +39,7 @@ export default function RisksPage() {
         <UL>
           <li>LP positions earn 99% of Fission AMM swap fees. If trading volume is zero, LPs earn nothing.</li>
           <li>Pre-expiry LP exit is via <code>removeLiquidity</code> — return is proportional SY + PT. Post-expiry exit auto-redeems the PT share for SY.</li>
-          <li>LP positions are exposed to PT/SY divergence (Pendle V2 analogue of impermanent loss).</li>
+          <li>LP positions are exposed to PT/SY divergence — the PT/YT analogue of impermanent loss.</li>
         </UL>
 
         <H2>Platform risks</H2>

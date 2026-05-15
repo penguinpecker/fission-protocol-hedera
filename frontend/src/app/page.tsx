@@ -73,13 +73,13 @@ const STREAMS = [
     subtitle: "99% to LPs, 1% to treasury",
     rate: "~0.03% per Fission trade",
     description:
-      "When traders swap PT↔SY on our AMM, we charge a small Pendle V2 fee. After our 2026-05-10 update, 99% of that fee compounds back into LP token value. The protocol's only revenue is the 1% treasury cut.",
+      "When traders swap PT↔SY on our AMM, we charge a small logit-curve fee. After our 2026-05-10 update, 99% of that fee compounds back into LP token value. The protocol's only revenue is the 1% treasury cut.",
   },
 ];
 
 const FAQ = [
   {
-    q: "Do I need to understand Pendle to use this?",
+    q: "Is this complicated?",
     a: "No. If you want a fixed APY on your SaucerSwap LP exposure, click Buy PT and forget it. The complexity matters only when you're choosing between roles.",
   },
   {
@@ -88,7 +88,7 @@ const FAQ = [
   },
   {
     q: "Why does YT not go to zero at expiry?",
-    a: "Our SY uses the Pendle-Kyber pattern: exchangeRate stays at 1e18 forever, the V3 NFT keeps earning fees indefinitely. YT remains a perpetual claim on those fees. Standard rate-bearing markets do retire YT at expiry; ours does not.",
+    a: "Our SY uses a reward-streaming pattern: exchangeRate stays at 1e18 forever, the V3 NFT keeps earning fees indefinitely. YT remains a perpetual claim on those fees. Standard rate-bearing markets do retire YT at expiry; ours does not.",
   },
   {
     q: "Who controls the protocol?",
@@ -139,10 +139,9 @@ function Hero() {
         </h1>
 
         <p className="mt-6 max-w-[620px] animate-[fadeUp_0.6s_ease-out_0.3s_both] text-[15px] font-light leading-[1.55] text-textSec sm:mt-7 sm:text-[18px]">
-          Tokenize the future yield from a SaucerSwap V2 LP into a fixed-rate
-          principal token and a perpetual yield token. Pendle V2-faithful,
-          HTS-native, governed by a 2-of-2 Hedera Threshold key behind a 48-hour
-          Timelock.
+          Tokenize the Yield. Split any yield-bearing position into a
+          fixed-rate Principal Token and a perpetual Yield Token — HTS-native
+          on Hedera, governed by a 2-of-2 ThresholdKey behind a 48-hour Timelock.
         </p>
 
         <div className="mt-8 flex animate-[fadeUp_0.6s_ease-out_0.4s_both] flex-wrap justify-center gap-3 sm:mt-10">
@@ -162,7 +161,7 @@ function Hero() {
 
         <ul className="mt-12 grid w-full max-w-[840px] grid-cols-2 gap-px overflow-hidden rounded-2xl border border-border bg-border sm:mt-16 md:grid-cols-4">
           {[
-            ["Pendle V2-faithful", "math"],
+            ["Logit-curve", "AMM"],
             ["HTS-native", "PT / YT / LP"],
             ["99 / 1", "LP / treasury split"],
             ["48h", "timelock window"],
