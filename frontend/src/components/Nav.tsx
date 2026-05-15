@@ -173,7 +173,16 @@ export function Nav() {
                   </span>
                   <button
                     type="button"
-                    onClick={signIn}
+                    onClick={() => {
+                      // Arm the post-auth redirect ref so the "Sign In" path
+                      // (wallet already connected, just signing) lands on
+                      // /markets like the combined Connect & Sign path does.
+                      // Without this, only handleConnect would trigger the
+                      // redirect and the standalone Sign In click silently
+                      // stayed on whatever page the user was on.
+                      redirectAfterAuthRef.current = true;
+                      void signIn();
+                    }}
                     disabled={onWrongChain}
                     className="rounded-[2px] border border-white bg-white px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85 disabled:opacity-50"
                   >
