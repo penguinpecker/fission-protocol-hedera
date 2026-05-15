@@ -150,6 +150,7 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
           ptBalance={ptBalance}
           syAllowance={syAllowance}
           ptAllowance={ptAllowance}
+          refetchAllowances={balRead.refetch}
           adapter={adapter}
           hedera={hedera}
         />
@@ -176,6 +177,9 @@ interface AddProps {
   ptBalance: bigint;
   syAllowance: bigint;
   ptAllowance: bigint;
+  /** Forces wagmi to re-read SY+PT allowances. Call after each approve so the
+   *  "needs approve" predicate flips false and the button can advance. */
+  refetchAllowances: () => unknown;
   adapter: ReturnType<typeof useWalletAdapter>;
   hedera: ReturnType<typeof useHederaWallet>;
 }
@@ -188,6 +192,7 @@ function AddLp({
   ptBalance,
   syAllowance,
   ptAllowance,
+  refetchAllowances,
   adapter,
   hedera,
 }: AddProps) {
@@ -297,6 +302,10 @@ function AddLp({
         }),
       );
       setTxHash(hash as `0x${string}`);
+      // wagmi caches allowance reads — force a re-fetch so the predicate
+      // `syAllowance < parsedSy` flips false and the next click advances to
+      // PT-approve / addLiquidity instead of signing another SY-approve.
+      await refetchAllowances();
     } catch {
       /* error captured */
     }
@@ -313,6 +322,7 @@ function AddLp({
         }),
       );
       setTxHash(hash as `0x${string}`);
+      await refetchAllowances();
     } catch {
       /* error captured */
     }
