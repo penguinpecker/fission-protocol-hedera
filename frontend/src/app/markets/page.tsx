@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useChainId } from "wagmi";
 import { Nav } from "@/components/Nav";
@@ -231,59 +232,66 @@ function MarketRow({
       : 1;
 
   const subLabel = row.isRewards ? "Market 0 · Rewards" : meta?.protocol ?? row.symbol;
+  const router = useRouter();
+  const href = `/markets/${row.address}`;
 
+  // Whole-row click → navigate. Previously only the first two Tds wrapped
+  // their content in <Link>; the other 6 cells (maturity / APY / TVL / PT
+  // price / 24h / status) were inert. onClick on <tr> makes the entire
+  // surface a click target; the star button uses stopPropagation so it
+  // still toggles the watchlist instead of routing.
   return (
-    <tr className="group cursor-pointer border-b border-border last:border-b-0 transition hover:bg-white/[0.04]">
+    <tr
+      role="link"
+      tabIndex={0}
+      onClick={() => router.push(href)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          router.push(href);
+        }
+      }}
+      aria-label={`Open ${symbol}`}
+      className="group cursor-pointer border-b border-border last:border-b-0 transition hover:bg-white/[0.04] focus:bg-white/[0.04] focus:outline-none"
+    >
       <Td>
-        <Link
-          href={`/markets/${row.address}`}
-          className="block"
-          aria-label={`Open ${symbol}`}
-        >
-          <div className="flex items-center gap-2">
-            {/* Star button — overlaid before the symbol so users can curate
-                without leaving the list. Stops propagation so the row click
-                still routes to the market detail page when the symbol /
-                anywhere else is hit. */}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onStar();
-              }}
-              disabled={!signedIn}
-              title={
-                signedIn
-                  ? starred
-                    ? "Remove from watchlist"
-                    : "Add to watchlist"
-                  : "Sign in to use watchlist"
-              }
-              className={`-ml-1 grid size-6 place-items-center transition ${
-                signedIn
-                  ? starred
-                    ? "text-white"
-                    : "text-textDim hover:text-white"
-                  : "cursor-not-allowed opacity-30"
-              }`}
-              aria-pressed={starred}
-            >
-              {starred ? "★" : "☆"}
-            </button>
-            <div className="flex flex-col gap-0.5">
-              <span className="font-mono text-[13px] font-medium tracking-[0.02em] text-white">
-                {symbol}
-              </span>
-              <span className="font-mono text-[11px] text-textDim">{subLabel}</span>
-            </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onStar();
+            }}
+            disabled={!signedIn}
+            title={
+              signedIn
+                ? starred
+                  ? "Remove from watchlist"
+                  : "Add to watchlist"
+                : "Sign in to use watchlist"
+            }
+            className={`-ml-1 grid size-6 place-items-center transition ${
+              signedIn
+                ? starred
+                  ? "text-white"
+                  : "text-textDim hover:text-white"
+                : "cursor-not-allowed opacity-30"
+            }`}
+            aria-pressed={starred}
+          >
+            {starred ? "★" : "☆"}
+          </button>
+          <div className="flex flex-col gap-0.5">
+            <span className="font-mono text-[13px] font-medium tracking-[0.02em] text-white">
+              {symbol}
+            </span>
+            <span className="font-mono text-[11px] text-textDim">{subLabel}</span>
           </div>
-        </Link>
+        </div>
       </Td>
       <Td>
-        <Link href={`/markets/${row.address}`} className="block font-mono text-[13px] text-text">
-          {underlying}
-        </Link>
+        <span className="font-mono text-[13px] text-text">{underlying}</span>
       </Td>
       <NumTd dim={row.expired}>{row.expired ? "—" : `${row.daysLeft}d · ${row.expiryDate}`}</NumTd>
       <NumTd accent>{row.expired ? "—" : `${row.impliedApy.toFixed(2)}%`}</NumTd>
