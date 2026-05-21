@@ -65,6 +65,19 @@ export const routerAbi = [
   },
   {
     type: "function",
+    name: "swapExactYtForSy",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "ytIn", type: "uint256" },
+      { name: "minSyOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "syOut", type: "uint256" }],
+  },
+  {
+    type: "function",
     name: "addLiquidityProportional",
     stateMutability: "nonpayable",
     inputs: [
@@ -258,6 +271,17 @@ export const marketWriteAbi = [
     stateMutability: "nonpayable",
     inputs: [{ name: "amount", type: "uint256" }],
     outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "swapExactYtForSy",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "ytIn", type: "uint256" },
+      { name: "minSyOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+    ],
+    outputs: [{ name: "syOut", type: "uint256" }],
   },
   {
     type: "function",

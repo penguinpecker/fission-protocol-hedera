@@ -33,6 +33,10 @@ interface IFissionMarketCommon {
         external
         returns (uint256 syUsed);
 
+    function swapExactYtForSy(uint256 ytIn, uint256 minSyOut, address receiver)
+        external
+        returns (uint256 syOut);
+
     function addLiquidity(uint256 syIn, uint256 ptIn, uint256 minLpOut, address receiver)
         external
         returns (uint256 lpOut);

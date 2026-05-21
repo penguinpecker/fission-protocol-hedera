@@ -52,6 +52,24 @@ export type WriteOp =
       deadline: bigint;
     }
   | {
+      kind: "swapExactPtForSy";
+      router: `0x${string}`;
+      market: `0x${string}`;
+      ptIn: bigint;
+      minSyOut: bigint;
+      receiver: `0x${string}`;
+      deadline: bigint;
+    }
+  | {
+      // Sell YT — called directly on the Market (YT is frozen, can't proxy via Router).
+      // The Market wipes the user's YT in-place using its WIPE key.
+      kind: "swapExactYtForSy";
+      market: `0x${string}`;
+      ytIn: bigint;
+      minSyOut: bigint;
+      receiver: `0x${string}`;
+    }
+  | {
       kind: "zapHbarToSy";
       zap: `0x${string}`;
       sy: `0x${string}`;
@@ -296,6 +314,24 @@ async function writeEvm(
           args: [op.market, op.syBudget, op.minSyOut, op.receiver, op.deadline],
         }),
       };
+    case "swapExactPtForSy":
+      return {
+        txHash: await writeContractAsync({
+          abi: routerAbi,
+          address: op.router,
+          functionName: "swapExactPtForSy",
+          args: [op.market, op.ptIn, op.minSyOut, op.receiver, op.deadline],
+        }),
+      };
+    case "swapExactYtForSy":
+      return {
+        txHash: await writeContractAsync({
+          abi: marketWriteAbi,
+          address: op.market,
+          functionName: "swapExactYtForSy",
+          args: [op.ytIn, op.minSyOut, op.receiver],
+        }),
+      };
     case "zapHbarToSy": {
       // Hashio takes wei (1 HBAR = 1e18); Hashio divides by 1e10 before the
       // contract, which then sees tinybars. parseEther = wei.
@@ -508,6 +544,30 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
           .addUint256(toBN(op.deadline)),
         0,
         4_000_000,
+      );
+    case "swapExactPtForSy":
+      return exec(
+        op.router,
+        "swapExactPtForSy",
+        new ContractFunctionParameters()
+          .addAddress(op.market)
+          .addUint256(toBN(op.ptIn))
+          .addUint256(toBN(op.minSyOut))
+          .addAddress(op.receiver)
+          .addUint256(toBN(op.deadline)),
+        0,
+        3_500_000,
+      );
+    case "swapExactYtForSy":
+      return exec(
+        op.market,
+        "swapExactYtForSy",
+        new ContractFunctionParameters()
+          .addUint256(toBN(op.ytIn))
+          .addUint256(toBN(op.minSyOut))
+          .addAddress(op.receiver),
+        0,
+        4_500_000,
       );
     case "zapHbarToSy":
       return exec(

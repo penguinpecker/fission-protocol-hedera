@@ -74,6 +74,16 @@ contract FissionMarket is
     ///      received YT. Used to decide whether `_mintYt` needs to unfreeze first.
     mapping(address => bool) internal _ytFrozen;
 
+    /// @notice Contract-tracked YT balances. The Hedera HTS ERC-20 facade's
+    ///         `balanceOf(addr)` reverts (or returns 0) when `addr` is the long-zero
+    ///         EVM representation of an Ed25519 HAPI account — meaning yield accrual
+    ///         that read `IERC20(yt).balanceOf(user)` would silently see zero for
+    ///         Ed25519 holders and never owe them their share. Because YT is
+    ///         freeze-by-default and only this Market can mint/burn it, this mapping
+    ///         is the authoritative source for yield distribution and is independent
+    ///         of the HTS facade's caller-resolution quirks.
+    mapping(address => uint256) internal _ytBal;
+
     /// @notice The HTS-native LP token. Market is treasury + supplyKey + wipeKey holder.
     ///         No freeze key — LP is freely transferable (pausing trading would strand
     ///         users on secondary markets).
@@ -117,6 +127,7 @@ contract FissionMarket is
     error ZeroAddress();
     error ReserveFeeTooHigh(uint256 given, uint256 max);
     error SYRateBelowOne(uint256 syRate);
+    error InsufficientYt(uint256 have, uint256 want);
 
     // ───────────────────── events ─────────────────────
 
@@ -303,6 +314,7 @@ contract FissionMarket is
             HtsHelpers.freeze(yt, to);
             _ytFrozen[to] = true;
         }
+        _ytBal[to] += amount;
     }
 
     /// @dev Burn HTS YT: wipe REQUIRES the account to be unfrozen first
@@ -315,12 +327,25 @@ contract FissionMarket is
             bool wasFrozen = _ytFrozen[from];
             if (wasFrozen) HtsHelpers.unfreeze(yt, from);
             HtsHelpers.wipeFrom(yt, from, amount);
-            if (wasFrozen && IERC20(yt).balanceOf(from) > 0) {
+            _ytBal[from] -= amount;
+            // Use internal `_ytBal` instead of the HTS facade — the facade reverts
+            // for Ed25519 long-zero EVM addresses.
+            if (wasFrozen && _ytBal[from] > 0) {
                 HtsHelpers.freeze(yt, from);
             } else if (wasFrozen) {
                 _ytFrozen[from] = false;
             }
+            return;
         }
+        _ytBal[from] -= amount;
+    }
+
+    /// @notice Contract-tracked YT balance. Use this for any consumer that needs a
+    ///         reliable per-user YT balance on Hedera — `IERC20(yt).balanceOf(addr)`
+    ///         is unreliable when `addr` is the long-zero EVM representation of an
+    ///         Ed25519 HAPI account.
+    function ytBalanceOf(address user) external view returns (uint256) {
+        return _ytBal[user];
     }
 
     /// @dev Mint HTS LP to `to`: mint to treasury, transfer out (LP is unfrozen).
@@ -508,6 +533,64 @@ contract FissionMarket is
         emit Swap(msg.sender, receiver, -int256(ptIn), netSy, netSyFee, netSyToReserve);
     }
 
+    /// @notice Sell YT pre-expiry for SY. Atomically: AMM "buys" `ytIn` PT from
+    ///         its own pool, the Market pairs that PT with the user's YT and burns
+    ///         both (merge semantics), the released backing SY funds (a) the AMM
+    ///         settlement (`syOwed`) and (b) the user's sale proceeds (`ytIn - syOwed`).
+    /// @dev    Settles accrued yield via `_accrue` first so the user keeps the
+    ///         yield earned while they held the YT.
+    /// @dev    `_ytBal[msg.sender]` is the source of truth (Ed25519-safe — see the
+    ///         `_ytBal` storage doc for why we don't read the HTS facade here).
+    function swapExactYtForSy(uint256 ytIn, uint256 minSyOut, address receiver)
+        external
+        nonReentrant
+        whenNotPaused
+        preExpiry
+        returns (uint256 syOut)
+    {
+        if (ytIn == 0) revert ZeroAmount();
+        if (receiver == address(0)) revert ZeroAddress();
+
+        uint256 userYt = _ytBal[msg.sender];
+        if (userYt < ytIn) revert InsufficientYt(userYt, ytIn);
+
+        // Settle accrued yield on the pre-burn YT balance so the user keeps it.
+        _accrue(msg.sender);
+
+        // Curve: same math as `swapExactSyForPt(ptOut=ytIn)` — AMM conceptually sells
+        // `ytIn` PT (out of pool) for `syOwed` SY (received back).
+        MarketMath.MarketState memory ms = _loadState();
+        int256 syIndex = int256(sy.exchangeRate());
+        MarketMath.PreCompute memory pre = MarketMath.getMarketPreCompute(ms, syIndex, block.timestamp);
+        (int256 netSy, int256 netSyFee, int256 netSyToReserve, int256 newRate) =
+            MarketMath.executeTradeCore(ms, pre, int256(ytIn), block.timestamp);
+
+        if (netSy >= 0) revert InsufficientOutput();
+        uint256 syOwed = uint256(-netSy);
+        if (syOwed >= ytIn) revert InsufficientOutput();
+        syOut = ytIn - syOwed;
+        if (syOut < minSyOut) revert InsufficientOutput();
+
+        // AMM-pool accounting: -ytIn PT (pool sold them), +syOwed SY (pool received).
+        totalPt -= ytIn;
+        totalSy += syOwed;
+        lastLnImpliedRate = newRate;
+
+        // Burn the PT from the pool's inventory + wipe the user's YT (paired merge).
+        _burnPt(address(this), ytIn);
+        _burnYt(msg.sender, ytIn);
+
+        // Pay user their sale proceeds.
+        IERC20(sy.shareToken()).safeTransfer(receiver, syOut);
+
+        if (netSyToReserve > 0) {
+            IERC20(sy.shareToken()).safeTransfer(treasury, uint256(netSyToReserve));
+            totalSy -= uint256(netSyToReserve);
+        }
+
+        emit Swap(msg.sender, receiver, int256(ytIn), netSy, netSyFee, netSyToReserve);
+    }
+
     function swapExactSyForPt(uint256 syInMax, uint256 ptOut, address receiver)
         external
         nonReentrant
@@ -652,7 +735,8 @@ contract FissionMarket is
             return;
         }
         if (gi > ui && yt != address(0)) {
-            uint256 ytBal = IERC20(yt).balanceOf(user);
+            // Use internal `_ytBal` instead of the HTS facade — see `_ytBal` doc.
+            uint256 ytBal = _ytBal[user];
             if (ytBal > 0) {
                 // owed in SY-share units = ytBal * (gi - ui) / gi
                 uint256 owed = (ytBal * (gi - ui)) / gi;
@@ -689,7 +773,7 @@ contract FissionMarket is
         if (ui == 0) return userOwed[user];
         uint256 extra;
         if (gi > ui && yt != address(0)) {
-            uint256 ytBal = IERC20(yt).balanceOf(user);
+            uint256 ytBal = _ytBal[user];
             if (ytBal > 0) extra = (ytBal * (gi - ui)) / gi;
         }
         return userOwed[user] + extra;

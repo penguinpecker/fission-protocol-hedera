@@ -34,6 +34,18 @@ contract MockHederaTokenService is IHederaTokenService, IMockHederaForFacade, IM
     mapping(address => mapping(address => bool)) internal _frozen;
     mapping(address => mapping(address => mapping(address => uint256))) internal _allow; // token => owner => spender => amt
 
+    /// @notice Test hook: addresses flagged here cause `balanceOf` to revert (mimics
+    ///         the real-Hedera quirk where the HTS ERC-20 facade reverts when the
+    ///         queried address is an Ed25519 long-zero EVM representation). The
+    ///         actual ledger balance is unaffected — only EVM-side reads break.
+    mapping(address => bool) internal _facadeReadBroken;
+
+    /// @notice Test-only — flag `account` as Ed25519-like (HTS facade `balanceOf`
+    ///         will revert). Per-account, not per-token, matching the real quirk.
+    function __setFacadeReadBroken(address account, bool broken) external {
+        _facadeReadBroken[account] = broken;
+    }
+
     error NotAFacade(address caller);
 
     modifier onlyFacade(address token) {
@@ -314,6 +326,10 @@ contract MockHederaTokenService is IHederaTokenService, IMockHederaForFacade, IM
     // ───────────────────── view surface (for facade + tests) ─────────────────────
 
     function balanceOf(address token, address account) external view override returns (uint256) {
+        // Mirror Hedera's HTS-facade quirk: when the queried EVM address is the
+        // long-zero rep of an Ed25519 HAPI account, the facade reverts. Tests use
+        // `__setFacadeReadBroken(account, true)` to opt an address into this mode.
+        if (_facadeReadBroken[account]) revert("HTS_FACADE_ED25519");
         return _balanceOf[token][account];
     }
 

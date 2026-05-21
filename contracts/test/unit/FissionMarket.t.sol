@@ -577,4 +577,110 @@ contract FissionMarketTest is Test {
     // Removed test_onYTBalanceChange_onlyYTReverts — the callback path is gone.
     // HTS YT has no _update hook; yield settlement is now explicit at every market
     // entry point that touches a user's YT balance.
+
+    // ───────────────────── swapExactYtForSy (sell YT) ─────────────────────
+
+    function test_sellYt_payoutMatchesYtIntrinsicValue() public {
+        vm.startPrank(alice);
+        IERC20(syShare).approve(address(market), type(uint256).max);
+        market.split(50_000e6);
+        vm.stopPrank();
+
+        uint256 preSy = IERC20(syShare).balanceOf(alice);
+        uint256 prePt = IERC20(pt).balanceOf(alice);
+
+        vm.prank(alice);
+        uint256 syOut = market.swapExactYtForSy(20_000e6, 0, alice);
+
+        assertGt(syOut, 0);
+        assertLt(syOut, 20_000e6, "YT paid more than face - math inverted");
+        assertEq(IERC20(syShare).balanceOf(alice), preSy + syOut);
+        assertEq(IERC20(pt).balanceOf(alice), prePt, "PT must not move");
+        assertEq(market.ytBalanceOf(alice), 30_000e6);
+    }
+
+    function test_sellYt_revertsOnInsufficientYt() public {
+        vm.startPrank(alice);
+        IERC20(syShare).approve(address(market), type(uint256).max);
+        market.split(10_000e6);
+        vm.stopPrank();
+        vm.expectRevert(
+            abi.encodeWithSelector(FissionMarket.InsufficientYt.selector, 10_000e6, 20_000e6)
+        );
+        vm.prank(alice);
+        market.swapExactYtForSy(20_000e6, 0, alice);
+    }
+
+    function test_sellYt_revertsPostExpiry() public {
+        vm.startPrank(alice);
+        IERC20(syShare).approve(address(market), type(uint256).max);
+        market.split(10_000e6);
+        vm.stopPrank();
+        vm.warp(expiry + 1);
+        vm.expectRevert(FissionMarket.MarketExpired.selector);
+        vm.prank(alice);
+        market.swapExactYtForSy(1_000e6, 0, alice);
+    }
+
+    function test_sellYt_preservesPreviouslyAccruedYield() public {
+        vm.startPrank(alice);
+        IERC20(syShare).approve(address(market), type(uint256).max);
+        market.split(50_000e6);
+        vm.stopPrank();
+
+        // Yield accrues via exchange-rate growth.
+        sy.setExchangeRate(1.10e18);
+        uint256 owedBefore = market.previewYield(alice);
+        assertGt(owedBefore, 0, "test setup: alice should have owed yield");
+
+        // Sell half her YT.
+        vm.prank(alice);
+        market.swapExactYtForSy(25_000e6, 0, alice);
+
+        // Previously-accrued yield is still claimable (settled before the burn).
+        uint256 preSy = IERC20(syShare).balanceOf(alice);
+        vm.prank(alice);
+        uint256 paid = market.claimYield(alice);
+        assertGe(paid, owedBefore, "settled yield preserved");
+        assertEq(IERC20(syShare).balanceOf(alice), preSy + paid);
+    }
+
+    // ───────────────────── Ed25519 facade quirk (regression) ─────────────────────
+
+    /// @notice On Hedera mainnet, `IERC20(htsToken).balanceOf(addr)` reverts when
+    ///         `addr` is the long-zero EVM representation of an Ed25519 HAPI account.
+    ///         Pre-fix, this silently zeroed out yield accrual. Post-fix, the Market
+    ///         tracks YT balances internally and is independent of the facade quirk.
+    function test_ed25519_user_earns_yield_despite_facade_revert() public {
+        address ed25519User = bob;
+        IMockBalanceBroken(address(0x167)).__setFacadeReadBroken(ed25519User, true);
+
+        vm.startPrank(ed25519User);
+        IERC20(syShare).approve(address(market), type(uint256).max);
+        market.split(50_000e6);
+        vm.stopPrank();
+
+        // Sanity: HTS facade reverts for this user; contract-tracked balance is fine.
+        vm.expectRevert(bytes("HTS_FACADE_ED25519"));
+        IERC20(yt).balanceOf(ed25519User);
+        assertEq(market.ytBalanceOf(ed25519User), 50_000e6);
+
+        // Generate yield via exchange-rate growth.
+        sy.setExchangeRate(1.10e18);
+
+        // previewYield must not revert and must show non-zero owed.
+        uint256 owed = market.previewYield(ed25519User);
+        assertGt(owed, 0, "ed25519 user should have non-zero owed yield");
+
+        // claimYield actually pays out.
+        uint256 preSy = IERC20(syShare).balanceOf(ed25519User);
+        vm.prank(ed25519User);
+        uint256 paid = market.claimYield(ed25519User);
+        assertEq(paid, owed, "claimYield matches preview");
+        assertEq(IERC20(syShare).balanceOf(ed25519User), preSy + paid);
+    }
+}
+
+interface IMockBalanceBroken {
+    function __setFacadeReadBroken(address account, bool broken) external;
 }

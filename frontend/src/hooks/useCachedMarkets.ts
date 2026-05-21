@@ -23,6 +23,9 @@ export interface CachedMarket {
   lp_total_supply: string | null;
   initialized: boolean;
   last_synced: string;
+  is_archived?: boolean;
+  archived_reason?: string | null;
+  archived_at?: string | null;
 }
 
 // Cache freshness window. Rows older than this are treated as missing so the
@@ -32,16 +35,18 @@ export interface CachedMarket {
 // movement (addLiquidity, swap) silently lingered as stale TVL for hours.
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-export function useCachedMarkets() {
+export function useCachedMarkets(opts: { includeArchived?: boolean } = {}) {
   const [markets, setMarkets] = useState<CachedMarket[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const includeArchived = opts.includeArchived ?? false;
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch("/api/markets", { cache: "no-store" });
+        const url = includeArchived ? "/api/markets?includeArchived=1" : "/api/markets";
+        const r = await fetch(url, { cache: "no-store" });
         if (!r.ok) throw new Error(`markets_${r.status}`);
         const j = (await r.json()) as { markets: CachedMarket[] };
         const all = j.markets ?? [];
@@ -62,7 +67,7 @@ export function useCachedMarkets() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [includeArchived]);
 
   return { markets, loading, error };
 }

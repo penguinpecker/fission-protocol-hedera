@@ -119,6 +119,11 @@ contract ActionRouterV3 is ReentrancyGuardTransient {
     }
 
     // ───────────────────── YT trade (long yield) ─────────────────────
+    //
+    // NOTE: `swapExactYtForSy` is NOT a router action — YT is freeze-by-default
+    // and can't be transferred to the Router for proxying. The dApp calls
+    // `FissionMarket.swapExactYtForSy(ytIn, minSyOut, receiver)` directly on the
+    // Market contract, which wipes the user's YT in-place via its WIPE key.
 
     function buyYT(
         IFissionMarketCommon market,

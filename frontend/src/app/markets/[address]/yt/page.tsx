@@ -1,10 +1,14 @@
 "use client";
 
 /**
- * Buy YT sub-page — strategy economics on the left, BuyYtForm on the right.
+ * YT sub-page — strategy economics on the left, Buy/Sell form on the right.
+ * Tab toggles between BuyYtForm (SY → YT via router.buyYT split+sell-PT) and
+ * SellYtForm (YT → SY via market.swapExactYtForSy direct call).
  */
+import { useState } from "react";
 import { MarketSubPageShell } from "@/components/MarketSubPageShell";
 import { BuyYtForm } from "@/components/forms/BuyYtForm";
+import { SellYtForm } from "@/components/forms/SellYtForm";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, impliedApyPct } from "@/hooks/useMarkets";
 import { ytToSyRate } from "@/components/MarketPositionCard";
@@ -13,12 +17,59 @@ export default function YtPage({ params }: { params: Promise<{ address: string }
   return (
     <MarketSubPageShell
       params={params}
-      crumb="Buy YT"
+      crumb="YT"
       renderEconomics={(detail) => <YtEconomics detail={detail} />}
       renderTradeForm={({ detail, user, market, syBalance }) => (
-        <BuyYtForm market={market} detail={detail} user={user} syBalance={syBalance} />
+        <YtTradeForm detail={detail} user={user} market={market} syBalance={syBalance} />
       )}
     />
+  );
+}
+
+function YtTradeForm({
+  detail,
+  user,
+  market,
+  syBalance,
+}: {
+  detail: MarketDetail;
+  user: `0x${string}` | undefined;
+  market: `0x${string}`;
+  syBalance: bigint;
+}) {
+  const [mode, setMode] = useState<"buy" | "sell">("buy");
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="inline-flex w-fit rounded-[8px] border border-border bg-bgInput p-0.5 font-mono text-[10px] uppercase tracking-[1.5px]">
+        <button
+          type="button"
+          onClick={() => setMode("buy")}
+          className={`rounded-[6px] px-3 py-1.5 transition ${
+            mode === "buy"
+              ? "bg-white/[0.08] text-text"
+              : "text-textDim hover:text-text"
+          }`}
+        >
+          Buy YT
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("sell")}
+          className={`rounded-[6px] px-3 py-1.5 transition ${
+            mode === "sell"
+              ? "bg-white/[0.08] text-text"
+              : "text-textDim hover:text-text"
+          }`}
+        >
+          Sell YT
+        </button>
+      </div>
+      {mode === "buy" ? (
+        <BuyYtForm market={market} detail={detail} user={user} syBalance={syBalance} />
+      ) : (
+        <SellYtForm market={market} detail={detail} user={user} />
+      )}
+    </div>
   );
 }
 

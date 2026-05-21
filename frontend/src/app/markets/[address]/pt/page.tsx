@@ -1,11 +1,14 @@
 "use client";
 
 /**
- * Buy PT sub-page — strategy economics on the left, BuyPtForm on the right.
- * Same shell as /yt and /lp; copy in this file is what changes.
+ * PT sub-page — strategy economics on the left, Buy/Sell form on the right.
+ * Tab toggles between BuyPtForm (SY → PT via swapExactSyForPt + HBAR zap) and
+ * SellPtForm (PT → SY via swapExactPtForSy). Same shell as /yt and /lp.
  */
+import { useState } from "react";
 import { MarketSubPageShell } from "@/components/MarketSubPageShell";
 import { BuyPtForm } from "@/components/forms/BuyPtForm";
+import { SellPtForm } from "@/components/forms/SellPtForm";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate } from "@/components/MarketPositionCard";
@@ -14,12 +17,59 @@ export default function PtPage({ params }: { params: Promise<{ address: string }
   return (
     <MarketSubPageShell
       params={params}
-      crumb="Buy PT"
+      crumb="PT"
       renderEconomics={(detail) => <PtEconomics detail={detail} />}
       renderTradeForm={({ detail, user, market, syBalance }) => (
-        <BuyPtForm market={market} detail={detail} user={user} syBalance={syBalance} />
+        <PtTradeForm detail={detail} user={user} market={market} syBalance={syBalance} />
       )}
     />
+  );
+}
+
+function PtTradeForm({
+  detail,
+  user,
+  market,
+  syBalance,
+}: {
+  detail: MarketDetail;
+  user: `0x${string}` | undefined;
+  market: `0x${string}`;
+  syBalance: bigint;
+}) {
+  const [mode, setMode] = useState<"buy" | "sell">("buy");
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="inline-flex w-fit rounded-[8px] border border-border bg-bgInput p-0.5 font-mono text-[10px] uppercase tracking-[1.5px]">
+        <button
+          type="button"
+          onClick={() => setMode("buy")}
+          className={`rounded-[6px] px-3 py-1.5 transition ${
+            mode === "buy"
+              ? "bg-white/[0.08] text-text"
+              : "text-textDim hover:text-text"
+          }`}
+        >
+          Buy PT
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("sell")}
+          className={`rounded-[6px] px-3 py-1.5 transition ${
+            mode === "sell"
+              ? "bg-white/[0.08] text-text"
+              : "text-textDim hover:text-text"
+          }`}
+        >
+          Sell PT
+        </button>
+      </div>
+      {mode === "buy" ? (
+        <BuyPtForm market={market} detail={detail} user={user} syBalance={syBalance} />
+      ) : (
+        <SellPtForm market={market} detail={detail} user={user} />
+      )}
+    </div>
   );
 }
 

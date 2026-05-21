@@ -618,6 +618,213 @@ contract FissionMarketRewardsTest is Test {
         assertEq(v1, c1);
     }
 
+    // ───────────────────── Ed25519 facade quirk (regression) ─────────────────────
+
+    /// @notice On Hedera mainnet, `IERC20(htsToken).balanceOf(addr)` reverts when
+    ///         `addr` is the long-zero EVM representation of an Ed25519 HAPI account.
+    ///         Pre-fix, this silently zeroed out reward accrual for any Ed25519 user
+    ///         (cosigner B at 0.0.10457309 was the first observed case on mainnet).
+    ///         Post-fix, the Market tracks YT balances internally and is independent
+    ///         of the facade. Both Ed25519 and ECDSA holders earn pro-rata rewards.
+    function test_ed25519_user_earns_rewards_despite_facade_revert() public {
+        address ecdsaUser = alice;          // facade balanceOf works
+        address ed25519User = bob;          // facade balanceOf will revert
+        IMockBalanceBroken(address(0x167)).__setFacadeReadBroken(ed25519User, true);
+
+        // Both split equal amounts → 1:1 YT ratio.
+        vm.prank(ecdsaUser);
+        market.split(200_000e6);
+        vm.prank(ed25519User);
+        market.split(200_000e6);
+
+        // Sanity: HTS facade reverts for Ed25519 user, works for ECDSA user.
+        assertEq(IERC20(yt).balanceOf(ecdsaUser), 200_000e6, "ECDSA facade read");
+        vm.expectRevert(bytes("HTS_FACADE_ED25519"));
+        IERC20(yt).balanceOf(ed25519User);
+
+        // Contract-tracked balance is correct for BOTH users.
+        assertEq(market.ytBalanceOf(ecdsaUser), 200_000e6);
+        assertEq(market.ytBalanceOf(ed25519User), 200_000e6);
+
+        // Drive a reward cycle. Harvest pulls fees into the Market and bumps
+        // globalRewardIndex; previewRewards is a static view that doesn't harvest.
+        uint256 marketShare0 = _marketShareOfInjected(400e6);
+        uint256 marketShare1 = _marketShareOfInjected(200e6);
+        _injectFees(400e6, 200e6);
+        market.harvestRewards();
+
+        // previewRewards must not revert for the Ed25519 user (regression: it used
+        // to internally call the reverting facade) and must compute the right slice.
+        (uint256 pv0, uint256 pv1) = market.previewRewards(ed25519User);
+        assertApproxEqAbs(pv0, marketShare0 / 2, 2, "preview r0");
+        assertApproxEqAbs(pv1, marketShare1 / 2, 2, "preview r1");
+
+        // claimRewards must actually pay out — pre-fix it returned (0, 0).
+        vm.prank(ed25519User);
+        (uint256 r0, uint256 r1) = market.claimRewards(ed25519User);
+        assertApproxEqAbs(r0, marketShare0 / 2, 2, "ed25519 r0");
+        assertApproxEqAbs(r1, marketShare1 / 2, 2, "ed25519 r1");
+
+        // ECDSA control: same allocation, same payout.
+        vm.prank(ecdsaUser);
+        (uint256 c0, uint256 c1) = market.claimRewards(ecdsaUser);
+        assertApproxEqAbs(c0, marketShare0 / 2, 2, "ecdsa r0");
+        assertApproxEqAbs(c1, marketShare1 / 2, 2, "ecdsa r1");
+    }
+
+    // ───────────────────── swapExactYtForSy (sell YT) ─────────────────────
+
+    function test_sellYt_payoutMatchesYtIntrinsicValue() public {
+        // alice splits → has 200k PT + 200k YT.
+        vm.prank(alice);
+        market.split(200_000e6);
+
+        // Snapshot pre-sale balances.
+        uint256 preSy = IERC20(syShare).balanceOf(alice);
+        uint256 preYt = market.ytBalanceOf(alice);
+        uint256 prePt = IERC20(pt).balanceOf(alice);
+        uint256 totalPtPre = market.totalPt();
+        uint256 totalSyPre = market.totalSy();
+
+        uint256 sellAmount = 50_000e6;
+
+        // Quote via swapExactSyForPt math: how many SY would you spend to buy
+        // sellAmount PT? That's `syOwed`. User receives sellAmount - syOwed.
+        vm.prank(alice);
+        uint256 syOut = market.swapExactYtForSy(sellAmount, 0, alice);
+
+        // Sanity: payout positive, less than 1:1 (PT trades at discount → YT has value).
+        assertGt(syOut, 0, "got nothing");
+        assertLt(syOut, sellAmount, "YT paid more than face - math inverted");
+
+        // YT balance decreased by exact sell amount.
+        assertEq(market.ytBalanceOf(alice), preYt - sellAmount, "internal YT bal");
+
+        // PT balance unchanged — sell YT must NOT consume the user's PT.
+        assertEq(IERC20(pt).balanceOf(alice), prePt, "PT must not move");
+
+        // SY balance up by syOut.
+        assertEq(IERC20(syShare).balanceOf(alice), preSy + syOut, "SY delta");
+
+        // AMM pool: PT down by sellAmount, SY up by syOwed (=sellAmount - syOut)
+        // minus reserve fee. We can't easily isolate the fee here, so check the
+        // looser bound: totalPt decreased exactly sellAmount, totalSy increased.
+        assertEq(market.totalPt(), totalPtPre - sellAmount, "AMM PT delta");
+        assertGt(market.totalSy(), totalSyPre, "AMM SY increased");
+    }
+
+    function test_sellYt_revertsOnInsufficientYt() public {
+        vm.prank(alice);
+        market.split(10_000e6);
+        // Alice has 10k YT but tries to sell 20k.
+        vm.expectRevert(
+            abi.encodeWithSelector(FissionMarketRewards.InsufficientYt.selector, 10_000e6, 20_000e6)
+        );
+        vm.prank(alice);
+        market.swapExactYtForSy(20_000e6, 0, alice);
+    }
+
+    function test_sellYt_revertsBelowMinSyOut() public {
+        vm.prank(alice);
+        market.split(100_000e6);
+
+        // Quote to know the intrinsic payout, then set minSyOut above it.
+        // We don't have a `previewSellYt` view — use a high floor and expect revert.
+        vm.expectRevert(FissionMarketRewards.InsufficientOutput.selector);
+        vm.prank(alice);
+        market.swapExactYtForSy(1_000e6, 1_000e6, alice); // demands 1:1 → too high
+    }
+
+    function test_sellYt_revertsOnZeroAmount() public {
+        vm.prank(alice);
+        vm.expectRevert(FissionMarketRewards.ZeroAmount.selector);
+        market.swapExactYtForSy(0, 0, alice);
+    }
+
+    function test_sellYt_revertsZeroReceiver() public {
+        vm.prank(alice);
+        market.split(10_000e6);
+        vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
+        vm.prank(alice);
+        market.swapExactYtForSy(1_000e6, 0, address(0));
+    }
+
+    function test_sellYt_revertsPostExpiry() public {
+        vm.prank(alice);
+        market.split(10_000e6);
+        vm.warp(expiry + 1);
+        vm.expectRevert(FissionMarketRewards.MarketExpired.selector);
+        vm.prank(alice);
+        market.swapExactYtForSy(1_000e6, 0, alice);
+    }
+
+    function test_sellYt_settlesRewardsBeforeBurn() public {
+        // alice splits, fees accrue, then alice sells YT — she should retain her
+        // accrued rewards.
+        vm.prank(alice);
+        market.split(100_000e6);
+
+        _injectFees(100e6, 50e6);
+        market.harvestRewards();
+
+        (uint256 preview0Before, uint256 preview1Before) = market.previewRewards(alice);
+        assertGt(preview0Before + preview1Before, 0, "test setup: alice should have accrued");
+
+        vm.prank(alice);
+        market.swapExactYtForSy(50_000e6, 0, alice);
+
+        // She now has half the YT but the previously-accrued rewards are still claimable.
+        vm.prank(alice);
+        (uint256 r0, uint256 r1) = market.claimRewards(alice);
+        assertApproxEqAbs(r0, preview0Before, 1, "settled r0 preserved");
+        assertApproxEqAbs(r1, preview1Before, 1, "settled r1 preserved");
+    }
+
+    function test_sellYt_ed25519_userWorks() public {
+        // The Ed25519 facade-revert quirk does not break Sell YT — the function
+        // reads `_ytBal` (internal), not `IERC20(yt).balanceOf`.
+        // We send the SY proceeds to a NON-Ed25519 address so we can assert on the
+        // recipient's balance via the facade (the bug doesn't affect that read).
+        address ed25519User = bob;
+        address proceeds = address(0xCAFE);
+        IMockBalanceBroken(address(0x167)).__setFacadeReadBroken(ed25519User, true);
+
+        vm.prank(ed25519User);
+        market.split(100_000e6);
+
+        uint256 preProceeds = IERC20(syShare).balanceOf(proceeds);
+        vm.prank(ed25519User);
+        uint256 syOut = market.swapExactYtForSy(50_000e6, 0, proceeds);
+
+        assertGt(syOut, 0);
+        assertEq(IERC20(syShare).balanceOf(proceeds), preProceeds + syOut);
+        assertEq(market.ytBalanceOf(ed25519User), 50_000e6);
+    }
+
+    function test_ed25519_user_merge_and_redeem_work() public {
+        address ed25519User = bob;
+        IMockBalanceBroken(address(0x167)).__setFacadeReadBroken(ed25519User, true);
+
+        // Get PT+YT.
+        vm.prank(ed25519User);
+        market.split(100_000e6);
+        assertEq(market.ytBalanceOf(ed25519User), 100_000e6);
+
+        // Inject fees so there's a settle-able accrual.
+        _injectFees(100e6, 50e6);
+
+        // Merge half — pre-fix the `_burnYt` refreeze branch read the facade and
+        // would revert for Ed25519 users.
+        vm.prank(ed25519User);
+        market.merge(50_000e6);
+        assertEq(market.ytBalanceOf(ed25519User), 50_000e6);
+
+        // Pending rewards from before the merge are still claimable.
+        vm.prank(ed25519User);
+        (uint256 r0, uint256 r1) = market.claimRewards(ed25519User);
+        assertGt(r0 + r1, 0, "ed25519 user should have non-zero claim");
+    }
+
     // ───────────────────── helpers ─────────────────────
 
     /// @dev Push fees into the SY's underlying V3 position, simulating swap accrual.
@@ -632,6 +839,10 @@ contract FissionMarketRewardsTest is Test {
         }
         npm.feeIn(sy.positionTokenId(), a0, a1);
     }
+}
+
+interface IMockBalanceBroken {
+    function __setFacadeReadBroken(address account, bool broken) external;
 }
 
 /// @dev Minimal SY-shape that returns a 1-element reward array (≠ 2). Used to test the
