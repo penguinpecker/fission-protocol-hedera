@@ -153,6 +153,20 @@ YT downside risks (you should know):
 - Holding past expiry is fine — fees keep flowing
 - The same SY-value (impermanent-loss-style) risks that affect PT also affect YT
 
+### Selling YT before expiry
+
+Two ways to exit a YT position pre-expiry without burning the perpetuity:
+
+1. **Hold and claim** — `Market.claimRewards(receiver)` pulls your share of accrued V3 fees in SAUCE/WHBAR. Doesn't reduce your YT balance.
+2. **Sell YT for SY** — `Market.swapExactYtForSy(ytIn, minSyOut, receiver)`. Atomic in-place: the Market wipes your YT (using its WIPE key on the HTS token — no transfer needed since YT is frozen-by-default), burns matching PT from its own AMM pool, and pays you `ytIn − syOwed` SY.
+
+The math behind Sell YT:
+- `syOwed` = AMM-curve cost of buying `ytIn` PT (same math as `swapExactSyForPt(ptOut=ytIn)`)
+- Pre-expiry, PT trades at a discount → `syOwed < ytIn` → you receive a positive `ytIn − syOwed` SY
+- Effectively: 1 YT exits for `(1 − ptRate)` SY, where `ptRate` is the live PT/SY exchange rate from the curve
+
+This is the same exit value you'd get from `(1) borrow 1 PT, (2) merge with your 1 YT into 1 SY, (3) repay PT via Sell PT on the AMM` — collapsed into a single tx since the Market holds the WIPE key. No router custody, no flash callback.
+
 ---
 
 ## What is the LP token, exactly?

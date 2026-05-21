@@ -5,6 +5,22 @@
 > a mainnet deploy is at the operator's risk until at least Phase 9 audit pipeline
 > completes (see `docs/IMPLEMENTATION_PLAN.md`).
 
+> **2026-05-22 update — Ed25519 fix redeploy is now LIVE.**
+> Current production set:
+> - FissionFactory: `0x...a00b4e` / `0.0.10488654`
+> - StandardMarketDeployer: `0x...a00b46` / `0.0.10488646`
+> - RewardsMarketDeployer:  `0x...a00b4b` / `0.0.10488651`
+> - Market 0 (`SS-V2-90D-FIX`): `0x36ed8f34c9bfc0004f107153b1a16099f8910b58` / `0.0.10488661`
+>
+> SY adapter `0x...009fb089`, FissionZap `0x...009fd984`, ActionRouter v3 `0x...009fd993`
+> are unchanged and re-used.
+>
+> The references to the old factory (`0x...009fb0b3`) and old market
+> (`0xfa903b…8a6d`) below remain for historical context. They are archived in
+> `deployments/295.json#abandoned` and `is_archived=true` in `markets_cache`.
+> Old market is no longer surfaced in the dApp; deep-link still resolves so
+> any residual positions there can be withdrawn manually.
+
 > **v1.0 launch decision (2026-05-08):** the bootstrap factory at
 > `0x00000000000000000000000000000000009fb0b3` (`SY_REVIEW_WINDOW=0`) is
 > being adopted as the production factory. Penpie defence is dropped from

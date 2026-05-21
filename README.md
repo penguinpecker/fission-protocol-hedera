@@ -89,13 +89,15 @@ All deployments tracked in [`deployments/295.json`](deployments/295.json). HashS
 
 | Contract | EVM | Hedera ID | HashScan |
 |---|---|---|---|
-| **FissionFactory** | `0x...009fb0b3` | `0.0.10465459` | [view](https://hashscan.io/mainnet/contract/0.0.10465459) |
-| **ActionRouter v3** | `0x...009fdf89` | `0.0.10477449` | [view](https://hashscan.io/mainnet/contract/0.0.10477449) |
+| **FissionFactory** *(2026-05-22 Ed25519 fix)* | `0x...a00b4e` | `0.0.10488654` | [view](https://hashscan.io/mainnet/contract/0.0.10488654) |
+| **ActionRouter v3** | `0x...009fd993` | `0.0.10475923` | [view](https://hashscan.io/mainnet/contract/0.0.10475923) |
 | **FissionZap** (HBAR→SY) | `0x...009fd984` | `0.0.10475908` | [view](https://hashscan.io/mainnet/contract/0.0.10475908) |
 | **SY_SaucerSwapV2LP** | `0x...009fb089` | `0.0.10465417` | [view](https://hashscan.io/mainnet/contract/0.0.10465417) |
-| **Market 0 — `SS-V2-90D`** | `0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d` | `0.0.10465460` | [view](https://hashscan.io/mainnet/contract/0.0.10465460) |
-| StandardMarketDeployer | `0x...009fb0af` | `0.0.10465455` | [view](https://hashscan.io/mainnet/contract/0.0.10465455) |
-| RewardsMarketDeployer | `0x...009fb0b1` | `0.0.10465457` | [view](https://hashscan.io/mainnet/contract/0.0.10465457) |
+| **Market 0 — `SS-V2-90D-FIX`** | `0x36ed8f34c9bfc0004f107153b1a16099f8910b58` | `0.0.10488661` | [view](https://hashscan.io/mainnet/contract/0.0.10488661) |
+| StandardMarketDeployer | `0x...a00b46` | `0.0.10488646` | [view](https://hashscan.io/mainnet/contract/0.0.10488646) |
+| RewardsMarketDeployer | `0x...a00b4b` | `0.0.10488651` | [view](https://hashscan.io/mainnet/contract/0.0.10488651) |
+
+> **2026-05-22 redeploy** — addresses above replaced the pre-fix set. The old factory (`0x...009fb0b3`) and old market (`0xfa903b…8a6d`) had an Ed25519 reward-accrual bug where the Hedera HTS facade's `balanceOf(addr)` silently returned 0 for long-zero EVM addresses of Ed25519 accounts (HashPack's default key type), zeroing out reward + yield accrual for those users. Fixed by tracking YT balances internally in `_ytBal[address]`. Operator's $700+ V3 LP position has been migrated to the new market; old contracts remain on chain but archived in the dApp. Full forensic write-up: [`audits/internal/SECURITY_REVIEW_ED25519_BAL_2026-05-22.md`](audits/internal/SECURITY_REVIEW_ED25519_BAL_2026-05-22.md).
 
 ### Governance
 
@@ -104,16 +106,29 @@ All deployments tracked in [`deployments/295.json`](deployments/295.json). HashS
 | **Timelock** (48h) | `0x...009fc1c0` | `0.0.10469824` | [view](https://hashscan.io/mainnet/contract/0.0.10469824) |
 | **2-of-2 ThresholdKey** account | `0x...009fc1be` | `0.0.10469822` | [view](https://hashscan.io/mainnet/account/0.0.10469822) |
 
-### Market 0 HTS tokens
+### Market 0 HTS tokens (new 2026-05-22 set)
 
 | Token | Symbol | EVM | Hedera ID | HashScan |
 |---|---|---|---|---|
 | SY shares | `fSY-SS-V2` | `0x...009fb08b` | `0.0.10465419` | [view](https://hashscan.io/mainnet/token/0.0.10465419) |
-| Principal Token | `fPT-SS-V2-90D` | `0x...009fb0b5` | `0.0.10465461` | [view](https://hashscan.io/mainnet/token/0.0.10465461) |
-| Yield Token | `fYT-SS-V2-90D` | `0x...009fb0b6` | `0.0.10465462` | [view](https://hashscan.io/mainnet/token/0.0.10465462) |
-| LP Token | `fLP-SS-V2-90D` | `0x...009fb0b7` | `0.0.10465463` | [view](https://hashscan.io/mainnet/token/0.0.10465463) |
+| Principal Token | `fPT-SS-V2-90D-FIX` | `0x...a00b56` | `0.0.10488662` | [view](https://hashscan.io/mainnet/token/0.0.10488662) |
+| Yield Token | `fYT-SS-V2-90D-FIX` | `0x...a00b57` | `0.0.10488663` | [view](https://hashscan.io/mainnet/token/0.0.10488663) |
+| LP Token | `fLP-SS-V2-90D-FIX` | `0x...a00b58` | `0.0.10488664` | [view](https://hashscan.io/mainnet/token/0.0.10488664) |
+
+SY share token is reused from the legacy deployment — the same V3 NFT-backed asset, just exposed via the fixed market. PT/YT/LP are freshly minted per market.
 
 All four are HTS-native fungibles with 18 decimals. YT is frozen post-receive so user-to-user transfers revert — it's AMM-only by design, which closes a stale-yield-index exploit class.
+
+### Trade surface
+
+| Action | Where | Notes |
+|---|---|---|
+| Buy PT | `ActionRouter.swapExactSyForPt(market, syIn, ptOut, …)` | Or via `FissionZap.zapHbarToSy` → router |
+| **Sell PT** *(new UI)* | `ActionRouter.swapExactPtForSy(market, ptIn, minSyOut, …)` | Contract path always existed; UI shipped 2026-05-22 |
+| Buy YT | `ActionRouter.buyYT(market, syBudget, …)` | Splits then sells PT internally |
+| **Sell YT** *(new — contract + UI)* | `Market.swapExactYtForSy(ytIn, minSyOut, receiver)` | Direct on Market, no router proxy — YT is frozen-by-default so the Market uses its WIPE key to consume YT in-place + burns paired PT from the AMM pool. Pays user `ytIn − syOwed` SY where `syOwed` follows the same curve as `swapExactSyForPt(ptOut=ytIn)` |
+| Add/Remove LP | `ActionRouter.addLiquidityProportional` / `removeLiquidityProportional` | |
+| Redeem after expiry | `Market.redeemAfterExpiry(ptIn, ytIn, receiver)` | Rewards-type market: PT-only (1:1 to SY); standard market: both PT and YT |
 
 ---
 
