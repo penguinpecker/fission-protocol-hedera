@@ -672,6 +672,23 @@ contract FissionMarketRewardsTest is Test {
         assertApproxEqAbs(c1, marketShare1 / 2, 2, "ecdsa r1");
     }
 
+    // ───────────────────── M-1 audit fix (splitTo address(this) rejection) ─
+
+    function test_splitTo_revertsOnMarketAsPtReceiver() public {
+        vm.startPrank(alice);
+        // alice still has SY from setUp transfer + approval.
+        vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
+        market.splitTo(10_000e6, address(market), alice);
+        vm.stopPrank();
+    }
+
+    function test_splitTo_revertsOnMarketAsYtReceiver() public {
+        vm.startPrank(alice);
+        vm.expectRevert(FissionMarketRewards.ZeroAddress.selector);
+        market.splitTo(10_000e6, alice, address(market));
+        vm.stopPrank();
+    }
+
     // ───────────────────── swapExactYtForSy (sell YT) ─────────────────────
 
     function test_sellYt_payoutMatchesYtIntrinsicValue() public {

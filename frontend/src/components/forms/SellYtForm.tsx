@@ -174,7 +174,7 @@ export function SellYtForm({ market, detail, user }: Props) {
     },
     {
       label: "Fission Market",
-      detail: `wipe YT · burn paired PT · swapExactYtForSy`,
+      detail: `wipe YT · burn pool PT · swapExactYtForSy`,
       isActive: isPending && !isDoneFinal,
       isComplete: isDoneFinal,
     },

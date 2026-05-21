@@ -115,6 +115,12 @@ export function SellPtForm({ market, detail, user }: Props) {
     ptRead.data?.[0]?.status === "success" ? (ptRead.data[0].result as bigint) : 0n;
   const allowance =
     ptRead.data?.[1]?.status === "success" ? (ptRead.data[1].result as bigint) : 0n;
+  // Ed25519 long-zero EVM addresses cause HTS-facade balanceOf to revert. Detect
+  // that case so the "insufficient balance" gate doesn't dead-lock the form for
+  // an Ed25519 user who actually holds PT. When the read failed, we skip the
+  // local insufficiency check and let the on-chain transferFrom revert if the
+  // user genuinely doesn't have the funds.
+  const ptBalanceReadFailed = ptRead.data?.[0]?.status === "failure";
 
   /* ─────────────────────────── parsed input */
 
@@ -134,7 +140,10 @@ export function SellPtForm({ market, detail, user }: Props) {
     return parseRawBigInt(rawStr);
   }, [inputMode, usdStr, rawStr, usdPerPt]);
 
-  const insufficient = parsedPt > ptBalance;
+  // Skip the local "insufficient" gate when the HTS facade read failed — see
+  // `ptBalanceReadFailed` doc above. The on-chain swap reverts authoritatively
+  // if the user actually doesn't hold enough PT.
+  const insufficient = !ptBalanceReadFailed && parsedPt > ptBalance;
   // Limit governed by the AMM's SY side — selling PT means pulling SY out.
   const sizeLimit = computeSizeLimit(parsedPt, detail.totalPt, detail.totalSy);
 
@@ -163,6 +172,12 @@ export function SellPtForm({ market, detail, user }: Props) {
         amount: parsedPt,
       });
       setLastTxHash(txHash);
+      // In EVM mode, writeContractAsync returns on hash, NOT on receipt — the
+      // immediate refetch can race the approve confirmation and the next sell
+      // step would see stale allowance. Hedera-mode `executeWithSigner` already
+      // waits for receipt internally. Either way, wait one mirror-lag cycle
+      // before re-reading allowance so the AMM call sees the post-approve state.
+      await new Promise((r) => setTimeout(r, adapter.mode === "evm" ? 3500 : 1500));
       await ptRead.refetch();
       return true;
     } catch (e) {
@@ -382,6 +397,11 @@ export function SellPtForm({ market, detail, user }: Props) {
               <span className="block font-mono text-[10px] font-medium text-error">
                 Insufficient PT — you have {formatCompact(ptBalance)}.
               </span>
+            ) : ptBalanceReadFailed ? (
+              <span className="block font-mono text-[10px] font-medium text-warning">
+                PT balance unavailable for this wallet (HTS facade quirk).
+                Your tx will revert on-chain if you don&apos;t actually hold this PT.
+              </span>
             ) : sizeLimit.message ? (
               <span className="block font-mono text-[10px] font-medium text-warning">
                 {sizeLimit.message}
@@ -443,6 +463,7 @@ export function SellPtForm({ market, detail, user }: Props) {
                   setWriteError(null);
                   setUsdStr("");
                   setRawStr("");
+                  void ptRead.refetch();
                 }}
                 className="underline underline-offset-2 hover:text-text"
               >

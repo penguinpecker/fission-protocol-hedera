@@ -417,6 +417,11 @@ contract FissionMarketRewards is
         returns (uint256)
     {
         if (ptReceiver == address(0) || ytReceiver == address(0)) revert ZeroAddress();
+        // M-1 audit fix (2026-05-22 review): reject `address(this)` as a receiver.
+        // Minting PT/YT to the Market itself would corrupt AMM accounting (totalPt
+        // drifts from physical PT balance; `_ytBal[market]` would dilute every other
+        // YT holder's reward share since `totalSupply` includes it).
+        if (ptReceiver == address(this) || ytReceiver == address(this)) revert ZeroAddress();
         return _split(amount, ptReceiver, ytReceiver);
     }
 

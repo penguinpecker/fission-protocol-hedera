@@ -8,11 +8,12 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { hederaMainnet } from "@/lib/chains";
 
 export async function GET(req: Request) {
-  // ?includeArchived=1 returns archived markets too (default: active only).
+  // ?includeArchived=(1|true|yes|on) returns archived markets too (default: active only).
   // Default callers — the /markets page list, the watchlist — get active markets;
   // history / position pages can opt in to see archived entries.
   const url = new URL(req.url);
-  const includeArchived = url.searchParams.get("includeArchived") === "1";
+  const includeArchivedRaw = (url.searchParams.get("includeArchived") ?? "").toLowerCase();
+  const includeArchived = ["1", "true", "yes", "on"].includes(includeArchivedRaw);
 
   const supa = createServiceRoleClient();
   let q = supa

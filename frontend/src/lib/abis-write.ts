@@ -63,19 +63,10 @@ export const routerAbi = [
       { name: "syRefund", type: "uint256" },
     ],
   },
-  {
-    type: "function",
-    name: "swapExactYtForSy",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "market", type: "address" },
-      { name: "ytIn", type: "uint256" },
-      { name: "minSyOut", type: "uint256" },
-      { name: "receiver", type: "address" },
-      { name: "deadline", type: "uint256" },
-    ],
-    outputs: [{ name: "syOut", type: "uint256" }],
-  },
+  // NOTE: `swapExactYtForSy` is intentionally NOT on the routerAbi — YT is
+  // freeze-by-default and cannot be transferred to a Router for proxying.
+  // The dApp calls `FissionMarket.swapExactYtForSy(...)` directly via
+  // `marketWriteAbi` below.
   {
     type: "function",
     name: "addLiquidityProportional",

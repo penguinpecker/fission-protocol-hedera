@@ -458,6 +458,11 @@ contract FissionMarket is
         returns (uint256)
     {
         if (ptReceiver == address(0) || ytReceiver == address(0)) revert ZeroAddress();
+        // M-1 audit fix (2026-05-22 review): reject `address(this)` as a receiver.
+        // Minting PT/YT to the Market itself would corrupt AMM accounting (totalPt
+        // drifts from physical PT balance; `_ytBal[market]` accumulates and dilutes
+        // every other YT holder's reward share since totalSupply includes it).
+        if (ptReceiver == address(this) || ytReceiver == address(this)) revert ZeroAddress();
         return _split(amount, ptReceiver, ytReceiver);
     }
 
@@ -727,7 +732,10 @@ contract FissionMarket is
     /// @notice Settle accrued yield for `user` against their YT balance and old userIndex.
     /// @dev    Expects `_updateGlobalIndex()` already called this tx.
     function _accrueUser(address user) internal {
-        if (user == address(0) || user == address(0xdEaD)) return;
+        // M-2 audit fix (2026-05-22 review): skip `address(this)` so any future
+        // path that touches Market-held YT (defensive — no such path today after
+        // the M-1 splitTo fix) doesn't accumulate uncollectable `userOwed`.
+        if (user == address(0) || user == address(0xdEaD) || user == address(this)) return;
         uint256 gi = globalIndex;
         uint256 ui = userIndex[user];
         if (ui == 0) {

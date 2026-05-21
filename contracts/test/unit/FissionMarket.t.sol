@@ -578,6 +578,24 @@ contract FissionMarketTest is Test {
     // HTS YT has no _update hook; yield settlement is now explicit at every market
     // entry point that touches a user's YT balance.
 
+    // ───────────────────── M-1 audit fix (splitTo address(this) rejection) ─
+
+    function test_splitTo_revertsOnMarketAsPtReceiver() public {
+        vm.startPrank(alice);
+        IERC20(syShare).approve(address(market), type(uint256).max);
+        vm.expectRevert(FissionMarket.ZeroAddress.selector);
+        market.splitTo(10_000e6, address(market), alice);
+        vm.stopPrank();
+    }
+
+    function test_splitTo_revertsOnMarketAsYtReceiver() public {
+        vm.startPrank(alice);
+        IERC20(syShare).approve(address(market), type(uint256).max);
+        vm.expectRevert(FissionMarket.ZeroAddress.selector);
+        market.splitTo(10_000e6, alice, address(market));
+        vm.stopPrank();
+    }
+
     // ───────────────────── swapExactYtForSy (sell YT) ─────────────────────
 
     function test_sellYt_payoutMatchesYtIntrinsicValue() public {
