@@ -117,3 +117,60 @@ frontend/src/components/forms/SellYtForm.tsx     (new)
 frontend/src/app/markets/[address]/pt/page.tsx   (Buy/Sell tab)
 frontend/src/app/markets/[address]/yt/page.tsx   (Buy/Sell tab)
 ```
+
+## Live mainnet deploy + audit — 2026-05-22
+
+Deployed new contract set (operator-signed). SY adapter (`0x...009fb089`) and V3 NFT #74444 (USDC/WHBAR ~$700-1300) reused — operator's existing positions on the old market are untouched.
+
+**New addresses on chain 295:**
+- StandardMarketDeployer: `0.0.10488646` / `0x...a00b46`
+- RewardsMarketDeployer:  `0.0.10488651` / `0x...a00b4b`
+- FissionFactory (new):   `0.0.10488654` / `0x...a00b4e`
+- Market 0 (new):         `0.0.10488661` / `0x36ed8f34c9bfc0004f107153b1a16099f8910b58`
+  - PT: `0.0.10488662` · YT: `0.0.10488663` · LP: `0.0.10488664`
+  - Expiry: 2026-08-19T22:25:40Z (90d)
+  - Seed: 30 HBAR zap → ~22M raw SY + 22M raw PT (~$1.50/side starter)
+
+**Frontend env rotated:** `NEXT_PUBLIC_FACTORY_ADDRESS = 0x...a00b4e`. Vercel redeployed 2026-05-22.
+
+**Supabase migration applied (`20260522000000_archive_market_0.sql`):**
+- `is_archived` / `archived_reason` / `archived_at` columns added to `markets_cache`
+- Old Market 0 (`0xfa90...8a6d`) flagged archived
+- `/api/markets` filters archived by default; `?includeArchived=(1|true|yes|on)` opts in
+
+**6/6 live mainnet tests passed** (`scripts/audit-new-market.mjs`):
+- `previewRewards` view returns OK; `previewYield` reverts on rewards-type (frontend already guards via `allowFailure: true` in `useUserPosition`)
+- `swapExactSyForPt` (Buy PT): tx `0.0.10463169@1779403442.536336538` — PT delivered, totalPt↓, totalSy↑, lastLnImpliedRate↓ (correct sign)
+- `swapExactPtForSy` (Sell PT): tx `...1779403468.767158610` — SY delivered, totalPt↑, totalSy↓
+- `buyYT` (router): tx `...1779403518.100223211` — YT delivered, SY refund correct
+- **`swapExactYtForSy` (Sell YT, NEW)**: tx `...1779403532.459886672` — 100k YT burned via WIPE; syOut=1,962 (< ytIn ✓); totalPt↓100k, totalSy↑98k. Ed25519 WIPE path works on Hedera mainnet
+- Slippage revert: `CONTRACT_REVERT_EXECUTED` on demand-2x-PT (correct)
+
+Live audit cost: 25.41 HBAR (including 13 HBAR HBAR→SY zap top-up).
+
+## Forensic audit findings — 2026-05-22
+
+Five audit angles run in parallel (post-deploy):
+
+**Supabase / indexer:** HIGH `/api/markets?includeArchived=true` was rejected pre-fix — only `"1"` was accepted. **Fixed**: now accepts `1|true|yes|on` case-insensitive (live verified). Med: partial index column choice (cosmetic). Med: indexer doesn't gate new markets — flag for ops.
+
+**Frontend forms / adapter:** HIGH SellPtForm dead-locked for Ed25519 users (HTS-facade `balanceOf` silently 0n → "Insufficient PT"). **Fixed**: detects read failure, skips local insufficiency gate. HIGH approve→swap race in EVM mode (writeContractAsync resolves on hash not receipt). **Fixed**: 3.5s delay (EVM) / 1.5s (Hedera) before allowance refetch. Med refetch on success reset. **Fixed**. Low SellYtForm flow copy "burn paired PT" was misleading. **Fixed**: "burn pool PT". Low dead routerAbi swapExactYtForSy entry. **Removed**.
+
+**HTS edge cases / storage / access:** H-1 `_burnYt` treasury branch could underflow `_ytBal[address(this)]` if market ever held YT (unreachable today). M-1 `swapExactYtForSy` totalPt underflow gives generic Panic vs InsufficientLiquidity. Both flagged for future hardening; not exploitable on live deploy.
+
+**AMM math / reentrancy / sell paths:** M-1 `splitTo` allowed `ptReceiver = address(this)` → corrupts AMM accounting (totalPt drift, dilutes other YT holders via inflated totalSupply). **Source fixed** (4 new regression tests). M-2 `_accrueUser` didn't skip `address(this)`. **Source fixed**. Live deploy bytecode unaffected — no UI path passes the market address as receiver. Defensive only.
+
+**Footer / UI:** MEDIUM Footer.tsx had stale links to old Market 0 + old Factory + wrong router address. **Fixed**: now point at the 2026-05-22 redeploy addresses.
+
+**Opera CLI walkthrough:** all routes 200, no JS errors, indexer populated new market correctly, archived market deep-link still loads, `/api/markets` shape correct in both modes.
+
+**Live mainnet flow tests:** 6/6 PASS (above). Sell-YT validated end-to-end with real HBAR.
+
+## Tests after fixes
+
+324 pass / 0 fail / 2 skip (was 320). +4 new tests cover `splitTo` rejection of `address(this)` as receiver on both market variants.
+
+## What's NOT redeployed
+
+- The M-1/M-2 `splitTo` + `_accrueUser` defensive fixes are in source only; live contracts at `0x...a00b4e` factory + `0x36ed...8b58` market still have the original `splitTo` that accepts `address(this)`. Risk: requires intentional user error (no UI passes the market as a receiver). Acceptable for v1.
+- Next redeploy cycle should pull in the source-fixed `splitTo` + `_accrueUser`.
