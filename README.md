@@ -97,6 +97,11 @@ All deployments tracked in [`deployments/295.json`](deployments/295.json). HashS
 | StandardMarketDeployer | `0x...a00b46` | `0.0.10488646` | [view](https://hashscan.io/mainnet/contract/0.0.10488646) |
 | RewardsMarketDeployer | `0x...a00b4b` | `0.0.10488651` | [view](https://hashscan.io/mainnet/contract/0.0.10488651) |
 
+**HashScan verification** (chain 295, via [Sourcify](https://sourcify.dev/server)):
+- ✅ FissionFactory — full match
+- ✅ SY_SaucerSwapV2LP — full match
+- ⏳ StandardMarketDeployer, RewardsMarketDeployer, Market 0 (FissionMarketRewards instance), ActionRouterV3, FissionZap — Foundry's `via_ir = true` produces bytecode that Sourcify can't exactly reproduce from the same metadata; manual upload via HashScan UI (`https://hashscan.io/mainnet/contract/<entity_id>/source`) is the workaround. Source code in this repo is byte-identical to what's deployed.
+
 > **2026-05-22 redeploy** — addresses above replaced the pre-fix set. The old factory (`0x...009fb0b3`) and old market (`0xfa903b…8a6d`) had an Ed25519 reward-accrual bug where the Hedera HTS facade's `balanceOf(addr)` silently returned 0 for long-zero EVM addresses of Ed25519 accounts (HashPack's default key type), zeroing out reward + yield accrual for those users. Fixed by tracking YT balances internally in `_ytBal[address]`. Operator's $700+ V3 LP position has been migrated to the new market; old contracts remain on chain but archived in the dApp. Full forensic write-up: [`audits/internal/SECURITY_REVIEW_ED25519_BAL_2026-05-22.md`](audits/internal/SECURITY_REVIEW_ED25519_BAL_2026-05-22.md).
 
 ### Governance
