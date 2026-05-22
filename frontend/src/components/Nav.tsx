@@ -3,11 +3,15 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { useAccount, useChainId, useSwitchChain } from "wagmi";
+import { useAccount, useChainId, useConnect, useSwitchChain } from "wagmi";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { HEDERA_MAINNET_CHAIN_ID } from "@/lib/wagmi";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
+import {
+  ensureHederaMainnet,
+  isInjectedWalletAvailable,
+} from "@/lib/hedera-wallet/connect-evm";
 
 function shortAddr(addr: string): string {
   return addr.slice(0, 6) + "…" + addr.slice(-4);
@@ -60,10 +64,28 @@ export function Nav() {
   //     (with a still-valid cookie) doesn't bounce the user back to /markets.
   const autoSignAfterConnectRef = useRef(false);
   const redirectAfterAuthRef = useRef(false);
-  const handleConnect = async () => {
+  const wagmiConnect = useConnect();
+  const injectedAvailable = isInjectedWalletAvailable();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const handleConnectHedera = async () => {
+    setPickerOpen(false);
     autoSignAfterConnectRef.current = true;
     redirectAfterAuthRef.current = true;
     await hedera.connect();
+  };
+  const handleConnectEvm = async () => {
+    setPickerOpen(false);
+    autoSignAfterConnectRef.current = true;
+    redirectAfterAuthRef.current = true;
+    try {
+      const connector = wagmiConnect.connectors.find((c) => c.id === "injected");
+      if (!connector) return;
+      await wagmiConnect.connectAsync({ connector });
+      await ensureHederaMainnet();
+    } catch {
+      autoSignAfterConnectRef.current = false;
+      redirectAfterAuthRef.current = false;
+    }
   };
   const handleDisconnect = async () => {
     if (auth.status === "authenticated") await signOut();
@@ -191,23 +213,59 @@ export function Nav() {
                 </div>
               )
             ) : (
-              <button
-                type="button"
-                onClick={handleConnect}
-                disabled={isConnecting || !hederaAvailable}
-                title={
-                  !hederaAvailable
-                    ? "WalletConnect not configured (NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID missing)"
-                    : "Two HashPack popups, back-to-back: 1) connect, 2) sign in. Then we land you on /markets."
-                }
-                className="rounded-[2px] border border-white bg-white px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isConnecting
-                  ? "Opening…"
-                  : autoSignAfterConnectRef.current && auth.status === "loading"
-                    ? "Signing…"
-                    : "Connect Wallet"}
-              </button>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen((v) => !v)}
+                  disabled={isConnecting || wagmiConnect.isPending}
+                  className="rounded-[2px] border border-white bg-white px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isConnecting || wagmiConnect.isPending
+                    ? "Opening…"
+                    : autoSignAfterConnectRef.current && auth.status === "loading"
+                      ? "Signing…"
+                      : "Connect Wallet"}
+                </button>
+                {pickerOpen && (
+                  <>
+                    {/* click-outside backdrop */}
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setPickerOpen(false)}
+                    />
+                    <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-[260px] rounded-md border border-borderHover bg-bg/95 p-1.5 shadow-lg backdrop-blur-sm">
+                      <button
+                        type="button"
+                        onClick={handleConnectHedera}
+                        disabled={!hederaAvailable}
+                        className="flex w-full flex-col items-start gap-0.5 rounded-[3px] px-3 py-2.5 text-left transition hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <span className="text-[13px] font-semibold text-text">
+                          Hedera Wallet
+                        </span>
+                        <span className="font-mono text-[10px] text-textDim">
+                          HashPack · Kabila · Blade (Ed25519 + ECDSA)
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleConnectEvm}
+                        disabled={!injectedAvailable}
+                        className="flex w-full flex-col items-start gap-0.5 rounded-[3px] px-3 py-2.5 text-left transition hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <span className="text-[13px] font-semibold text-text">
+                          EVM Wallet
+                        </span>
+                        <span className="font-mono text-[10px] text-textDim">
+                          {injectedAvailable
+                            ? "MetaMask · Rabby · OKX (ECDSA only)"
+                            : "No browser wallet detected"}
+                        </span>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             )}
 
             <button

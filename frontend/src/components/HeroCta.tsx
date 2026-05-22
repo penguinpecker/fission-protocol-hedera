@@ -13,10 +13,15 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useConnect } from "wagmi";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import {
+  ensureHederaMainnet,
+  isInjectedWalletAvailable,
+} from "@/lib/hedera-wallet/connect-evm";
 
 export function HeroCta() {
   const adapter = useWalletAdapter();
@@ -80,19 +85,93 @@ export function HeroCta() {
     );
   }
 
-  // Fully disconnected → kick off the combined Connect & Sign chain.
+  // Fully disconnected → show the wallet picker (Hedera vs EVM).
+  return <DisconnectedCta
+    baseClass={baseClass}
+    onPickHedera={async () => {
+      autoSignAfterConnectRef.current = true;
+      redirectAfterAuthRef.current = true;
+      await hedera.connect();
+    }}
+    hederaPending={hedera.status === "connecting"}
+  />;
+}
+
+function DisconnectedCta({
+  baseClass,
+  onPickHedera,
+  hederaPending,
+}: {
+  baseClass: string;
+  onPickHedera: () => Promise<void>;
+  hederaPending: boolean;
+}) {
+  const wagmiConnect = useConnect();
+  const [open, setOpen] = useState(false);
+  const injectedAvailable = isInjectedWalletAvailable();
+
+  const onPickEvm = async () => {
+    setOpen(false);
+    try {
+      const connector = wagmiConnect.connectors.find((c) => c.id === "injected");
+      if (!connector) return;
+      await wagmiConnect.connectAsync({ connector });
+      await ensureHederaMainnet();
+    } catch {
+      /* user rejected or wallet unavailable */
+    }
+  };
+
   return (
-    <button
-      type="button"
-      onClick={async () => {
-        autoSignAfterConnectRef.current = true;
-        redirectAfterAuthRef.current = true;
-        await hedera.connect();
-      }}
-      disabled={hedera.status === "connecting"}
-      className={baseClass}
-    >
-      {hedera.status === "connecting" ? "Opening…" : "Connect Wallet"}
-    </button>
+    <div className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={hederaPending || wagmiConnect.isPending}
+        className={baseClass}
+      >
+        {hederaPending || wagmiConnect.isPending ? "Opening…" : "Connect Wallet"}
+      </button>
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setOpen(false)}
+          />
+          <div className="absolute left-1/2 top-[calc(100%+8px)] z-50 w-[280px] -translate-x-1/2 rounded-md border border-borderHover bg-bg/95 p-1.5 text-left shadow-lg backdrop-blur-sm">
+            <button
+              type="button"
+              onClick={async () => {
+                setOpen(false);
+                await onPickHedera();
+              }}
+              className="flex w-full flex-col items-start gap-0.5 rounded-[3px] px-3 py-2.5 transition hover:bg-white/[0.06]"
+            >
+              <span className="text-[13px] font-semibold text-text">
+                Hedera Wallet
+              </span>
+              <span className="font-mono text-[10px] text-textDim">
+                HashPack · Kabila · Blade (Ed25519 + ECDSA)
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={onPickEvm}
+              disabled={!injectedAvailable}
+              className="flex w-full flex-col items-start gap-0.5 rounded-[3px] px-3 py-2.5 transition hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <span className="text-[13px] font-semibold text-text">
+                EVM Wallet
+              </span>
+              <span className="font-mono text-[10px] text-textDim">
+                {injectedAvailable
+                  ? "MetaMask · Rabby · OKX (ECDSA only)"
+                  : "No browser wallet detected"}
+              </span>
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
