@@ -217,12 +217,18 @@ function MarketRow({
 
   // SY USD valuation. For HBARX-style adapters this resolves to undefined and
   // we just fall back to the SY-share count formatted compactly.
+  // Pool depth = SY side + PT side. Pre-expiry PT trades near 1:1 to SY in
+  // share-units (PT redeems for SY 1:1 in the rewards-type market), so they
+  // are commensurable and summing them gives the AMM-pool's full $ value.
+  // Previously this only counted `totalSy`, undercounting the pool by ~22%
+  // and confusing users post-migration.
   const { usdPerShare } = useSyValueUsd(row.syAddress);
+  const poolUnits = row.totalSy + row.totalPt;
   const tvlUsd =
-    usdPerShare !== undefined && row.totalSy > 0n
-      ? Number(row.totalSy) * usdPerShare
+    usdPerShare !== undefined && poolUnits > 0n
+      ? Number(poolUnits) * usdPerShare
       : undefined;
-  const tvlDisplay = formatUsd(tvlUsd) ?? formatCompact(row.totalSy);
+  const tvlDisplay = formatUsd(tvlUsd) ?? formatCompact(poolUnits);
 
   // PT price in SY units: discounted simple-interest model lined up with
   // MarketPositionCard.ptToSyRate.
@@ -381,6 +387,7 @@ function ProtocolStatsRows({ markets }: { markets: MarketRow[] }) {
           key={m.address}
           marketAddress={m.address}
           syAddress={m.syAddress}
+          totalPt={m.totalPt}
           totalSy={m.totalSy}
           onReport={handleTvlReport}
         />
@@ -398,19 +405,22 @@ function TvlReporter({
   marketAddress,
   syAddress,
   totalSy,
+  totalPt,
   onReport,
 }: {
   marketAddress: `0x${string}`;
   syAddress: `0x${string}` | undefined;
   totalSy: bigint;
+  totalPt: bigint;
   onReport: (marketAddress: string, usd: number | undefined) => void;
 }) {
   const { usdPerShare } = useSyValueUsd(syAddress);
   useEffect(() => {
+    const poolUnits = totalSy + totalPt;
     const tvl =
-      usdPerShare !== undefined && totalSy > 0n ? Number(totalSy) * usdPerShare : undefined;
+      usdPerShare !== undefined && poolUnits > 0n ? Number(poolUnits) * usdPerShare : undefined;
     onReport(marketAddress, tvl);
-  }, [marketAddress, usdPerShare, totalSy, onReport]);
+  }, [marketAddress, usdPerShare, totalSy, totalPt, onReport]);
   return null;
 }
 
