@@ -37,7 +37,14 @@ export const HEDERA_MAINNET_CHAIN_ID = 295;
 
 export const wagmiConfig = createConfig({
   chains: [hederaMainnet],
-  connectors: [injected({ shimDisconnect: true })],
+  // `shimDisconnect: true` had to be removed — observed live (2026-05-23) it
+  // caused a React #300 "Maximum update depth exceeded" loop in EVM mode.
+  // wagmi v2's shim emits storage-event state updates on every page load
+  // that re-fire our subscription-based hooks, racing with our own
+  // setAccountOpen / setIsConnected effects in Nav.tsx. Without shim,
+  // MetaMask still persists its own session (it owns window.ethereum), so
+  // refresh-recovery isn't lost — wagmi just doesn't try to second-guess.
+  connectors: [injected()],
   transports: {
     [hederaMainnet.id]: http(),
   },
