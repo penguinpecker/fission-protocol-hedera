@@ -14,7 +14,7 @@
  * Post-zap SY-balance reads are Hashio-lag-aware (5× 1s retries) so the
  * approve + buy use the chain-observed delta, not the UI estimate.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
@@ -447,28 +447,47 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     await stepBuyYt(parsedSy);
   }, [adapter.mode, adapter.accountId, detail.yt, hedera, needsApprove, parsedSy, routerDeployed, setStatus, stepApprove, stepBuyYt, syBalance, user]);
 
+  // Re-entry guard — see BuyPtForm note for rationale. Without this, a
+  // double-click during the brief isPending flicker between legs would
+  // launch a second concurrent chain.
+  const chainInFlight = useRef(false);
   const onPrimary = useCallback(async () => {
+    if (chainInFlight.current) return;
     if (!user) return;
-    if (flowState.kind === "error") {
-      if (effectiveSource === "hbar" && megaZapAvailable) {
-        void runMegaZapYt(hbarAmount);
+    chainInFlight.current = true;
+    try {
+      if (flowState.kind === "error") {
+        if (effectiveSource === "hbar" && megaZapAvailable) {
+          await runMegaZapYt(hbarAmount);
+          return;
+        }
+        const carry = flowState.syAcquired;
+        await runHbarChainFromStep(flowState.failedAt, carry);
         return;
       }
-      const carry = flowState.syAcquired;
-      void runHbarChainFromStep(flowState.failedAt, carry);
-      return;
-    }
-    if (effectiveSource === "hbar") {
-      if (hbarAmount <= 0 || !zapAvailable) return;
-      if (megaZapAvailable) {
-        void runMegaZapYt(hbarAmount);
+      if (effectiveSource === "hbar") {
+        if (hbarAmount <= 0 || !zapAvailable) return;
+        if (megaZapAvailable) {
+          await runMegaZapYt(hbarAmount);
+        } else {
+          await runHbarChainFromStep(1);
+        }
       } else {
-        void runHbarChainFromStep(1);
+        await runSyChain();
       }
-    } else {
-      void runSyChain();
+    } finally {
+      chainInFlight.current = false;
     }
   }, [effectiveSource, flowState, hbarAmount, megaZapAvailable, runHbarChainFromStep, runMegaZapYt, runSyChain, user, zapAvailable]);
+
+  // Clear inputs on successful done so a stale form state can't drive a
+  // duplicate buy after the chain reports complete.
+  useEffect(() => {
+    if (flowState.kind === "done") {
+      setUsdStr("");
+      setRawStr("");
+    }
+  }, [flowState.kind]);
 
   useEffect(() => {
     if (flowState.kind !== "done" && flowState.kind !== "error") return;

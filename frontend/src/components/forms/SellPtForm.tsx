@@ -12,7 +12,7 @@
  * Post-expiry, prefer `redeemAfterExpiry` (1:1) over swap — the AMM curve
  * pays slightly less than par. The form auto-disables in that case.
  */
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
@@ -214,29 +214,53 @@ export function SellPtForm({ market, detail, user }: Props) {
     }
   }, [adapter, market, minSyOut, parsedPt, user]);
 
+  // Re-entry guard against double-click after a successful sell (stale
+  // form state would re-submit the same parsedPt before the balance read
+  // refreshes). Synchronous via ref so it survives setIsPending flicker.
+  const chainInFlight = useRef(false);
   const onPrimary = useCallback(async () => {
+    if (chainInFlight.current) return;
     if (!user || parsedPt === 0n || !routerDeployed || expired) return;
     if (insufficient || sizeLimit.exceeded) return;
+    chainInFlight.current = true;
     setWriteError(null);
+    try {
+      if (flowState.kind === "error") {
+        // Resume from the failed step.
+        if (flowState.failedAt === "approve") {
+          const ok = await runApprove();
+          if (!ok) return;
+          const sellOk = await runSell();
+          if (sellOk) {
+            setUsdStr("");
+            setRawStr("");
+            void ptRead.refetch();
+          }
+        } else {
+          const sellOk = await runSell();
+          if (sellOk) {
+            setUsdStr("");
+            setRawStr("");
+            void ptRead.refetch();
+          }
+        }
+        return;
+      }
 
-    if (flowState.kind === "error") {
-      // Resume from the failed step.
-      if (flowState.failedAt === "approve") {
+      if (needsApprove) {
         const ok = await runApprove();
         if (!ok) return;
-        await runSell();
-      } else {
-        await runSell();
       }
-      return;
+      const sellOk = await runSell();
+      if (sellOk) {
+        setUsdStr("");
+        setRawStr("");
+        void ptRead.refetch();
+      }
+    } finally {
+      chainInFlight.current = false;
     }
-
-    if (needsApprove) {
-      const ok = await runApprove();
-      if (!ok) return;
-    }
-    await runSell();
-  }, [user, parsedPt, routerDeployed, expired, insufficient, sizeLimit.exceeded, flowState, needsApprove, runApprove, runSell]);
+  }, [user, parsedPt, routerDeployed, expired, insufficient, sizeLimit.exceeded, flowState, needsApprove, runApprove, runSell, ptRead]);
 
   const isPending =
     adapter.isWritePending ||

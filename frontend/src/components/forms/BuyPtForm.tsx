@@ -25,7 +25,7 @@
  * lag receipts by 1-2s sometimes, so we poll-refetch up to 5× at 1s
  * intervals until we see the delta materialize.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
@@ -515,30 +515,53 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
 
   /* ─────────────────────────── primary handler */
 
+  // Re-entry guard: blocks duplicate chains from a double-click. The chain
+  // orchestrators (runMegaZapPt / runHbarChainFromStep / runSyChain) call
+  // setStatus internally so isPending flickers — without a synchronous ref
+  // guard, a click landing during that gap launches a second concurrent
+  // chain and submits two on-chain txs.
+  const chainInFlight = useRef(false);
   const onPrimary = useCallback(async () => {
+    if (chainInFlight.current) return;
     if (!user) return;
-    if (flowState.kind === "error") {
-      // Retry. MegaZap path: retry the single-tx fast-path. Legacy chain:
-      // resume from the failed step (so a successful zap doesn't re-run).
-      if (effectiveSource === "hbar" && megaZapAvailable) {
-        void runMegaZapPt(hbarAmount);
+    chainInFlight.current = true;
+    try {
+      if (flowState.kind === "error") {
+        // Retry. MegaZap path: retry the single-tx fast-path. Legacy chain:
+        // resume from the failed step (so a successful zap doesn't re-run).
+        if (effectiveSource === "hbar" && megaZapAvailable) {
+          await runMegaZapPt(hbarAmount);
+          return;
+        }
+        const carry = flowState.syAcquired;
+        await runHbarChainFromStep(flowState.failedAt, carry);
         return;
       }
-      const carry = flowState.syAcquired;
-      void runHbarChainFromStep(flowState.failedAt, carry);
-      return;
-    }
-    if (effectiveSource === "hbar") {
-      if (hbarAmount <= 0 || !zapAvailable) return;
-      if (megaZapAvailable) {
-        void runMegaZapPt(hbarAmount);
+      if (effectiveSource === "hbar") {
+        if (hbarAmount <= 0 || !zapAvailable) return;
+        if (megaZapAvailable) {
+          await runMegaZapPt(hbarAmount);
+        } else {
+          await runHbarChainFromStep(1);
+        }
       } else {
-        void runHbarChainFromStep(1);
+        await runSyChain();
       }
-    } else {
-      void runSyChain();
+    } finally {
+      chainInFlight.current = false;
     }
   }, [effectiveSource, flowState, hbarAmount, megaZapAvailable, runHbarChainFromStep, runMegaZapPt, runSyChain, user, zapAvailable]);
+
+  // After a successful chain, clear inputs so the form requires a fresh
+  // amount before another buy (the balance reads catch up via Hashio cache
+  // on their own cadence; this is the belt that prevents a second click
+  // from submitting before they do).
+  useEffect(() => {
+    if (flowState.kind === "done") {
+      setUsdStr("");
+      setRawStr("");
+    }
+  }, [flowState.kind]);
 
   // Reset flow state when the user switches mode or clears their input — so
   // the "Retry from step N" button doesn't linger on a different trade.
