@@ -90,6 +90,46 @@ export const marketAbi = [
   },
 ] as const;
 
+// FissionLens — exact swap-output previews. Replaces the frontend's
+// simple-interest `1 - ptRate` model which drifts ~1.8% high on the YT side
+// (PT side fine because PT trades near 1). Without the lens, SellYtForm needs
+// 5%+ slippage to avoid InsufficientOutput reverts.
+export const lensAbi = [
+  {
+    type: "function",
+    name: "previewSwapExactYtForSy",
+    stateMutability: "view",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "ytIn", type: "uint256" },
+    ],
+    outputs: [
+      { name: "syOut", type: "uint256" },
+      { name: "syOwed", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "previewSwapExactPtForSy",
+    stateMutability: "view",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "ptIn", type: "uint256" },
+    ],
+    outputs: [{ name: "syOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "previewSwapExactSyForPt",
+    stateMutability: "view",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "ptOut", type: "uint256" },
+    ],
+    outputs: [{ name: "syUsed", type: "uint256" }],
+  },
+] as const;
+
 export const erc20Abi = [
   { type: "function", name: "name", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
   { type: "function", name: "symbol", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },

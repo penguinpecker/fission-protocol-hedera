@@ -18,6 +18,12 @@ export const ADDRESSES = {
   // signature. Optional — when not deployed in the current env, forms fall
   // back to the legacy multi-step chain via FissionZap + Router.
   megaZap: (process.env.NEXT_PUBLIC_MEGA_ZAP_ADDRESS ?? ZERO) as `0x${string}`,
+  // FissionLens — read-only swap-preview contract. Forms call it before
+  // showing a quote so minSyOut/minPtOut are computed against the exact
+  // Pendle V2 curve output instead of the dApp's simple-interest model.
+  // Without the lens, Sell YT in particular needs 5%+ slippage tolerance
+  // because the linear model drifts ~1.8% high vs the actual logit curve.
+  lens: (process.env.NEXT_PUBLIC_LENS_ADDRESS ?? "0x0000000000000000000000000000000000a00fde") as `0x${string}`,
 } as const;
 
 export const isDeployed = (addr: string): boolean =>

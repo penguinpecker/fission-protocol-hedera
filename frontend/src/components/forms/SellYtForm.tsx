@@ -22,6 +22,8 @@ import { useSyValueUsd } from "@/hooks/useSyValueUsd";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
+import { ADDRESSES, isDeployed } from "@/lib/addresses";
+import { lensAbi } from "@/lib/abis";
 import {
   FormHeaderStrip,
   MoneyInput,
@@ -51,13 +53,10 @@ export function SellYtForm({ market, detail, user }: Props) {
   const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
   const [usdStr, setUsdStr] = useState("");
   const [rawStr, setRawStr] = useState("");
-  // 500 bps (5%) default — the AMM's Pendle V2 curve doesn't match the
-  // frontend's simple-interest `1 - ptRate` estimate; the gap is small but
-  // varies with pool state and ytPrice is small enough that any drift becomes
-  // a large relative miss. Combined with the 0.95 estimate buffer below this
-  // gives ~9.75% headroom under the model — enough to absorb pool drift
-  // between page-render and tx-submit at any practical depth.
-  const [slippageBps, setSlippageBps] = useState(500);
+  // 50 bps (0.5%) default — with the FissionLens preview wired in below, the
+  // syEstimate matches the chain's exact AMM output. The model-drift workaround
+  // (5%/5% buffer) is no longer needed.
+  const [slippageBps, setSlippageBps] = useState(50);
 
   const [flowState, setFlowState] = useState<FlowKind>({ kind: "idle" });
   const [lastTxHash, setLastTxHash] = useState<string | undefined>(undefined);
@@ -132,17 +131,38 @@ export function SellYtForm({ market, detail, user }: Props) {
   // Sell YT depletes the AMM's PT inventory (PT is burned) → limit on totalPt.
   const sizeLimit = computeSizeLimit(parsedYt, detail.totalPt, detail.totalSy);
 
-  /* ─────────────────────────── SY estimate + slippage floor */
+  /* ─────────────────────────── SY estimate via FissionLens (exact curve) */
 
-  // Linear approximation: syOut ≈ ytIn × (1 - ptRate). The contract recomputes
-  // the exact figure via the AMM curve and reverts if it falls below minSyOut.
-  // Pre-shrink the estimate by 5% to absorb the simple-interest vs AMM-curve
-  // model drift on the YT side — empirical reverts at 1% buffer + 1.5%
-  // slippage showed the actual curve was ~0.16% below the form's minSyOut,
-  // so we lean harder on the buffer instead of trusting the linear model.
-  const syEstimateNum =
-    parsedYt > 0n && ytPrice > 0 ? Number(parsedYt) * ytPrice * 0.95 : 0;
-  const syEstimate = syEstimateNum > 0 ? BigInt(Math.floor(syEstimateNum)) : 0n;
+  // Call lens.previewSwapExactYtForSy(market, ytIn) to get the chain's exact
+  // AMM output for this trade size. Falls back to the simple-interest linear
+  // model (1 - ptRate) only if the lens isn't deployed in this env.
+  const lensReady = isDeployed(ADDRESSES.lens) && parsedYt > 0n;
+  const lensRead = useReadContracts({
+    contracts: lensReady
+      ? [
+          {
+            abi: lensAbi,
+            address: ADDRESSES.lens,
+            functionName: "previewSwapExactYtForSy",
+            args: [market, parsedYt],
+          } as const,
+        ]
+      : [],
+    query: { enabled: lensReady },
+    allowFailure: true,
+  });
+  const lensSyOut =
+    lensRead.data?.[0]?.status === "success"
+      ? (lensRead.data[0].result as readonly [bigint, bigint])[0]
+      : undefined;
+  // Linear fallback only if lens unavailable. With the lens wired in production,
+  // this branch is dead unless someone runs the dApp against an env without
+  // NEXT_PUBLIC_LENS_ADDRESS — slippage default still works against the model.
+  const linearEstimate =
+    parsedYt > 0n && ytPrice > 0
+      ? BigInt(Math.floor(Number(parsedYt) * ytPrice * 0.95))
+      : 0n;
+  const syEstimate = lensSyOut ?? linearEstimate;
   const minSyOut = (syEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
   /* ─────────────────────────── primary handler */
