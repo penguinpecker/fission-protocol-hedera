@@ -23,7 +23,7 @@ import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate } from "@/components/MarketPositionCard";
 import { useHbarUsd, useSyValueUsd } from "@/hooks/useSyValueUsd";
-import { ADDRESSES, HEDERA_TOKENS, isDeployed } from "@/lib/addresses";
+import { ADDRESSES, HEDERA_TOKENS, isDeployed, MAX_UINT256 } from "@/lib/addresses";
 import { erc20Abi } from "@/lib/abis";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
@@ -298,7 +298,8 @@ function AddLp({
           kind: "approveErc20",
           token: detail.syShare,
           spender: ADDRESSES.router,
-          amount: parsedSy,
+          // Set-once allowance: every future Add LP skips the SY approve prompt.
+          amount: MAX_UINT256,
         }),
       );
       setTxHash(hash as `0x${string}`);
@@ -318,7 +319,8 @@ function AddLp({
           kind: "approveErc20",
           token: detail.pt,
           spender: ADDRESSES.router,
-          amount: parsedPt,
+          // Set-once allowance: every future Add LP skips the PT approve prompt.
+          amount: MAX_UINT256,
         }),
       );
       setTxHash(hash as `0x${string}`);
@@ -1003,7 +1005,8 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
           kind: "approveErc20",
           token: detail.lp,
           spender: ADDRESSES.router,
-          amount: parsedLp,
+          // Set-once allowance: every future Remove LP skips the approve prompt.
+          amount: MAX_UINT256,
         }),
       );
       setTxHash(hash as `0x${string}`);

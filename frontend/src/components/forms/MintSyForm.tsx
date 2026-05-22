@@ -23,6 +23,7 @@ import {
   USDC_DECIMALS,
   WHBAR_DECIMALS,
   isDeployed,
+  MAX_UINT256,
 } from "@/lib/addresses";
 import { AssociationGate } from "@/components/AssociationGate";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
@@ -477,13 +478,17 @@ function LegacyMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${strin
       setIsPending(false);
     }
   };
+  // Set-once allowances: future Mint SY skips both approve prompts. The SY
+  // adapter is the only spender we approve here, and it pulls the exact
+  // amounts the user signed via depositLiquidity — unbounded allowance does
+  // not enable over-pulling beyond what `deposit` requests.
   const approveUsdc = () =>
     guarded(() =>
-      adapter.write({ kind: "approveErc20", token: HEDERA_TOKENS.USDC, spender: sy, amount: usdcParsed }),
+      adapter.write({ kind: "approveErc20", token: HEDERA_TOKENS.USDC, spender: sy, amount: MAX_UINT256 }),
     );
   const approveWhbar = () =>
     guarded(() =>
-      adapter.write({ kind: "approveErc20", token: HEDERA_TOKENS.WHBAR, spender: sy, amount: whbarParsed }),
+      adapter.write({ kind: "approveErc20", token: HEDERA_TOKENS.WHBAR, spender: sy, amount: MAX_UINT256 }),
     );
   const deposit = () => {
     if (!user) return;

@@ -18,7 +18,7 @@ import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate } from "@/components/MarketPositionCard";
 import { useSyValueUsd } from "@/hooks/useSyValueUsd";
-import { ADDRESSES, isDeployed } from "@/lib/addresses";
+import { ADDRESSES, isDeployed, MAX_UINT256 } from "@/lib/addresses";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
@@ -169,7 +169,8 @@ export function SellPtForm({ market, detail, user }: Props) {
         kind: "approveErc20",
         token: detail.pt,
         spender,
-        amount: parsedPt,
+        // Set-once allowance: every future Sell PT skips the approve prompt.
+        amount: MAX_UINT256,
       });
       setLastTxHash(txHash);
       // In EVM mode, writeContractAsync returns on hash, NOT on receipt — the

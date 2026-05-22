@@ -29,6 +29,13 @@ export const ADDRESSES = {
 export const isDeployed = (addr: string): boolean =>
   addr.toLowerCase() !== ZERO && /^0x[0-9a-fA-F]{40}$/.test(addr);
 
+// MAX-uint approval: set once, never re-prompt. Standard DeFi pattern —
+// converts the 3-tx LP-add (approve SY → approve PT → addLiquidity) into a
+// 1-tx flow after the first interaction. Trust assumption (router can pull
+// unbounded SY/PT) is the same one already in place; router_v3 is audited
+// and the only spender we approve.
+export const MAX_UINT256 = (1n << 256n) - 1n;
+
 /**
  * SaucerSwap V2 + HTS token addresses on Hedera mainnet. These are
  * external (not under our control); pinned here so the Mint-SY flow can
