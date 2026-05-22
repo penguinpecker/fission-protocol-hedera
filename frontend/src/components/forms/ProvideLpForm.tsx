@@ -960,6 +960,8 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
+  // Re-entry guard for chained approve→remove flow (see AddLp's note).
+  const chainInFlight = useRef(false);
 
   const useWagmiReceipt = adapter.mode === "evm";
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
@@ -1050,25 +1052,26 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
     }
   };
 
-  const onApprove = async () => {
+  const onApprove = async (): Promise<boolean> => {
     try {
       const { txHash: hash } = await wrap(() =>
         adapter.write({
           kind: "approveErc20",
           token: detail.lp,
           spender: ADDRESSES.router,
-          // Set-once allowance: every future Remove LP skips the approve prompt.
           amount: MAX_HTS_APPROVE,
         }),
       );
       setTxHash(hash as `0x${string}`);
+      await allowanceRead.refetch();
+      return true;
     } catch {
-      /* error captured */
+      return false;
     }
   };
 
-  const onRemove = async () => {
-    if (!user || parsedLp === 0n || !routerDeployed || insufficientLp) return;
+  const onRemove = async (): Promise<boolean> => {
+    if (!user || parsedLp === 0n || !routerDeployed || insufficientLp) return false;
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     try {
       const { txHash: hash } = await wrap(() =>
@@ -1084,14 +1087,33 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
         }),
       );
       setTxHash(hash as `0x${string}`);
+      return true;
     } catch {
-      /* error captured */
+      return false;
     }
   };
 
-  const onPrimary = () => {
-    if (needsLpApprove) onApprove();
-    else onRemove();
+  // Chained remove flow: single click walks through every signature
+  // (approve LP → removeLiquidity). Same re-entry guard as AddLp to block
+  // duplicate removes from a double-click.
+  const onPrimary = async () => {
+    if (chainInFlight.current) return;
+    chainInFlight.current = true;
+    try {
+      const doApprove = needsLpApprove;
+      if (doApprove) {
+        const ok = await onApprove();
+        if (!ok) return;
+      }
+      const removeOk = await onRemove();
+      if (removeOk) {
+        setUsdStr("");
+        setRawStr("");
+        void allowanceRead.refetch();
+      }
+    } finally {
+      chainInFlight.current = false;
+    }
   };
 
   const isActive = isPending || isConfirmingFinal;
