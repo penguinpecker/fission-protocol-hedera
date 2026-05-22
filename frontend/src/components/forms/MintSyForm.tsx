@@ -14,7 +14,7 @@
  * wrap half / swap half on SaucerSwap V2 → V3 LP NFT → SY mint).
  */
 import { useMemo, useRef, useState } from "react";
-import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
+import { useBalance, useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import { parseUnits } from "viem";
 import { erc20Abi } from "@/lib/abis";
 import {
@@ -120,6 +120,22 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
   };
 
   const tooSmall = hbarAmount > 0 && hbarAmount < 1;
+
+  // HBAR-balance gate. The zap pulls hbarIn + 5 HBAR NPM fee as msg.value,
+  // plus ~5-6 HBAR gas on the heavy V3 NFT mint step. Without this gate,
+  // the user gets an opaque "HTTP client error" (EVM) or "not enough HBAR"
+  // (HashPack) instead of a useful number.
+  const hbarBalanceRead = useBalance({
+    address: user,
+    query: { enabled: !!user },
+  });
+  const hbarBalanceWhole =
+    hbarBalanceRead.data ? Number(hbarBalanceRead.data.value) / 1e18 : undefined;
+  const hbarHeadroom = 11;
+  const hbarTotalNeeded = hbarAmount + hbarHeadroom;
+  const insufficientHbar =
+    hbarBalanceWhole !== undefined && hbarAmount > 0 && hbarBalanceWhole < hbarTotalNeeded;
+
   const isPending = isSubmitting || adapter.isWritePending;
   const isActive = isPending || isConfirmingFinal;
   const isDone = isConfirmedFinal;
@@ -314,7 +330,7 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
 
         <button
           type="button"
-          disabled={!user || hbarAmount === 0 || isPending || isConfirmingFinal}
+          disabled={!user || hbarAmount === 0 || insufficientHbar || isPending || isConfirmingFinal}
           onClick={onZap}
           className="w-full rounded-[10px] bg-white px-7 py-3.5 font-mono text-sm font-semibold uppercase tracking-[1px] text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -322,11 +338,13 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
             ? "Connect wallet"
             : hbarAmount === 0
               ? "Enter amount"
-              : isPending
-                ? "Sign in HashPack…"
-                : isConfirmingFinal
-                  ? "Waiting for confirmation…"
-                  : `Mint SY with ${hbarAmount.toFixed(2)} HBAR`}
+              : insufficientHbar
+                ? `Need ${hbarTotalNeeded.toFixed(1)} HBAR (have ${hbarBalanceWhole?.toFixed(2) ?? "?"})`
+                : isPending
+                  ? "Sign in HashPack…"
+                  : isConfirmingFinal
+                    ? "Waiting for confirmation…"
+                    : `Mint SY with ${hbarAmount.toFixed(2)} HBAR`}
         </button>
 
         {isConfirmedFinal && txHash && (

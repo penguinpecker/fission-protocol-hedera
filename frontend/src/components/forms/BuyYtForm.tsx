@@ -15,7 +15,7 @@
  * approve + buy use the chain-observed delta, not the UI estimate.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
+import { useBalance, useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate, ytToSyRate } from "@/components/MarketPositionCard";
@@ -135,6 +135,23 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   const insufficient = effectiveSource === "sy" && parsedSy > syBalance;
   const needsSy = effectiveSource === "sy" && syBalance === 0n;
   const sizeLimit = computeSizeLimit(syForSwap, detail.totalSy, detail.totalPt);
+
+  // HBAR-source gate — see note in BuyPtForm.tsx. Wallet would otherwise
+  // reject the tx with an opaque insufficient/HTTP error instead of
+  // showing the user the real number upfront.
+  const hbarBalanceRead = useBalance({
+    address: user,
+    query: { enabled: !!user && effectiveSource === "hbar" },
+  });
+  const hbarBalanceWhole =
+    hbarBalanceRead.data ? Number(hbarBalanceRead.data.value) / 1e18 : undefined;
+  const hbarHeadroom = 11;
+  const hbarTotalNeeded = effectiveSource === "hbar" ? hbarAmount + hbarHeadroom : 0;
+  const insufficientHbar =
+    effectiveSource === "hbar" &&
+    hbarBalanceWhole !== undefined &&
+    hbarAmount > 0 &&
+    hbarBalanceWhole < hbarTotalNeeded;
 
   /* ─────────────────────────── YT estimate */
 
@@ -683,6 +700,10 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     if (effectiveSource === "hbar") {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
+      if (insufficientHbar) {
+        const have = hbarBalanceWhole?.toFixed(2) ?? "?";
+        return `Need ${hbarTotalNeeded.toFixed(1)} HBAR (have ${have})`;
+      }
       if (megaZapAvailable) {
         if (flowState.kind === "error") return "Retry MegaZap";
         if (flowState.kind === "associating") return "Associating tokens…";
@@ -723,7 +744,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     isConfirmingFinal ||
     !routerDeployed ||
     (effectiveSource === "hbar"
-      ? hbarAmount === 0 || !zapAvailable
+      ? hbarAmount === 0 || !zapAvailable || insufficientHbar
       : parsedSy === 0n || insufficient || sizeLimit.exceeded);
 
   return (

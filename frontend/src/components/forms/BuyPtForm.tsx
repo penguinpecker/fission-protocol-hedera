@@ -26,7 +26,7 @@
  * intervals until we see the delta materialize.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
+import { useBalance, useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate } from "@/components/MarketPositionCard";
@@ -172,6 +172,29 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   const insufficient = effectiveSource === "sy" && parsedSy > syBalance;
   const needsSy = effectiveSource === "sy" && syBalance === 0n;
   const sizeLimit = computeSizeLimit(syForSwap, detail.totalSy, detail.totalPt);
+
+  // HBAR-source forms route through the FissionZap (legacy 4-tx chain) or
+  // MegaZap (1-tx fast-path). Either way the user pays `hbarIn + 5 HBAR
+  // NPM` as value, plus gas. On the legacy chain, gas alone can hit 5-6
+  // HBAR for the heavy zap step (V3 NFT mint). Without a frontend gate,
+  // the wallet rejects the tx with an opaque "insufficient HBAR" or
+  // "HTTP client error" depending on path. Surface the real number here.
+  const hbarBalanceRead = useBalance({
+    address: user,
+    query: { enabled: !!user && effectiveSource === "hbar" },
+  });
+  const hbarBalanceWhole =
+    hbarBalanceRead.data ? Number(hbarBalanceRead.data.value) / 1e18 : undefined;
+  // Total HBAR the user must hold: amount + 5 NPM fee + ~6 HBAR worst-case
+  // gas safety. MegaZap path uses less gas (~2 HBAR) but we use the upper
+  // bound so the gate is honest.
+  const hbarHeadroom = 11;
+  const hbarTotalNeeded = effectiveSource === "hbar" ? hbarAmount + hbarHeadroom : 0;
+  const insufficientHbar =
+    effectiveSource === "hbar" &&
+    hbarBalanceWhole !== undefined &&
+    hbarAmount > 0 &&
+    hbarBalanceWhole < hbarTotalNeeded;
 
   /* ─────────────────────────── PT estimate + slippage floor */
 
@@ -766,6 +789,10 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     if (effectiveSource === "hbar") {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
+      if (insufficientHbar) {
+        const have = hbarBalanceWhole?.toFixed(2) ?? "?";
+        return `Need ${hbarTotalNeeded.toFixed(1)} HBAR (have ${have})`;
+      }
       if (megaZapAvailable) {
         // Fast path. The MegaZap is a single contract call — at most one
         // associate popup beforehand on Hedera mode.
@@ -809,7 +836,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     isConfirmingFinal ||
     !routerDeployed ||
     (effectiveSource === "hbar"
-      ? hbarAmount === 0 || !zapAvailable
+      ? hbarAmount === 0 || !zapAvailable || insufficientHbar
       : parsedSy === 0n || insufficient || sizeLimit.exceeded);
 
   return (
