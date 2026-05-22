@@ -291,48 +291,49 @@ function AddLp({
   // (`IERC20(market.sy())` casting the SY contract address as the share token)
   // is fixed in v3 by pulling `sy.shareToken()` correctly. Approvals are on
   // the SY-share + PT toward the router.
-  const onApproveSy = async () => {
+  //
+  // Each leg returns `true` on success / `false` on user-cancel-or-revert so
+  // the chained `onPrimary` flow below can short-circuit cleanly instead of
+  // proceeding past a failed approve into a doomed addLiquidity.
+  const onApproveSy = async (): Promise<boolean> => {
     try {
       const { txHash: hash } = await wrap(() =>
         adapter.write({
           kind: "approveErc20",
           token: detail.syShare,
           spender: ADDRESSES.router,
-          // Set-once allowance: every future Add LP skips the SY approve prompt.
           amount: MAX_HTS_APPROVE,
         }),
       );
       setTxHash(hash as `0x${string}`);
-      // wagmi caches allowance reads — force a re-fetch so the predicate
-      // `syAllowance < parsedSy` flips false and the next click advances to
-      // PT-approve / addLiquidity instead of signing another SY-approve.
       await refetchAllowances();
+      return true;
     } catch {
-      /* error captured */
+      return false;
     }
   };
 
-  const onApprovePt = async () => {
+  const onApprovePt = async (): Promise<boolean> => {
     try {
       const { txHash: hash } = await wrap(() =>
         adapter.write({
           kind: "approveErc20",
           token: detail.pt,
           spender: ADDRESSES.router,
-          // Set-once allowance: every future Add LP skips the PT approve prompt.
           amount: MAX_HTS_APPROVE,
         }),
       );
       setTxHash(hash as `0x${string}`);
       await refetchAllowances();
+      return true;
     } catch {
-      /* error captured */
+      return false;
     }
   };
 
-  const onAdd = async () => {
-    if (!user || noInput || !routerDeployed) return;
-    if (insufficientSy || insufficientPt) return;
+  const onAdd = async (): Promise<boolean> => {
+    if (!user || noInput || !routerDeployed) return false;
+    if (insufficientSy || insufficientPt) return false;
 
     if (adapter.mode === "hedera" && adapter.accountId) {
       try {
@@ -345,7 +346,7 @@ function AddLp({
         }
       } catch (e) {
         setWriteError(e instanceof Error ? e.message : String(e));
-        return;
+        return false;
       }
     }
 
@@ -370,20 +371,34 @@ function AddLp({
         }),
       );
       setTxHash(hash as `0x${string}`);
+      return true;
     } catch {
-      /* error captured */
+      return false;
     }
   };
 
-  const onPrimary = () => {
+  // Chained add-LP flow: a single CTA click walks the user through every
+  // signature prompt required to reach addLiquidity. Capture the
+  // needsXxxApprove booleans at click time so a stale closure can't make us
+  // re-prompt for an approve we just executed.
+  const onPrimary = async () => {
     if (effectiveSource === "hbar") {
       // MegaZap path: no approvals needed (we pay HBAR directly).
       onZapHbarToLp();
       return;
     }
-    if (needsSyApprove) onApproveSy();
-    else if (needsPtApprove) onApprovePt();
-    else onAdd();
+    const doSyApprove = needsSyApprove;
+    const doPtApprove = needsPtApprove;
+
+    if (doSyApprove) {
+      const ok = await onApproveSy();
+      if (!ok) return;
+    }
+    if (doPtApprove) {
+      const ok = await onApprovePt();
+      if (!ok) return;
+    }
+    await onAdd();
   };
 
   const ratioLabel =

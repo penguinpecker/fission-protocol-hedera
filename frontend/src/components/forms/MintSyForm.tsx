@@ -470,28 +470,29 @@ function LegacyMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${strin
     else setWhbarAmt(s);
   };
 
-  const guarded = async (fn: () => Promise<unknown>) => {
+  // Each leg returns boolean so the chained `runMintFlow` can short-circuit
+  // on a user-cancel or revert instead of barreling into a doomed deposit.
+  const guarded = async (fn: () => Promise<unknown>): Promise<boolean> => {
     setIsPending(true);
     try {
       await fn();
+      return true;
+    } catch {
+      return false;
     } finally {
       setIsPending(false);
     }
   };
-  // Set-once allowances: future Mint SY skips both approve prompts. The SY
-  // adapter is the only spender we approve here, and it pulls the exact
-  // amounts the user signed via depositLiquidity — unbounded allowance does
-  // not enable over-pulling beyond what `deposit` requests.
-  const approveUsdc = () =>
+  const approveUsdc = (): Promise<boolean> =>
     guarded(() =>
       adapter.write({ kind: "approveErc20", token: HEDERA_TOKENS.USDC, spender: sy, amount: MAX_HTS_APPROVE }),
     );
-  const approveWhbar = () =>
+  const approveWhbar = (): Promise<boolean> =>
     guarded(() =>
       adapter.write({ kind: "approveErc20", token: HEDERA_TOKENS.WHBAR, spender: sy, amount: MAX_HTS_APPROVE }),
     );
-  const deposit = () => {
-    if (!user) return;
+  const deposit = (): Promise<boolean> => {
+    if (!user) return Promise.resolve(false);
     const a0Min = (usdcParsed * 95n) / 100n;
     const a1Min = (whbarParsed * 95n) / 100n;
     return guarded(() =>
@@ -509,10 +510,20 @@ function LegacyMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${strin
     );
   };
 
-  const nextStep = needsUsdcApprove
-    ? { label: "Approve USDC", fn: approveUsdc }
-    : needsWhbarApprove
-      ? { label: "Approve WHBAR", fn: approveWhbar }
+  // Chained mint: one CTA click walks through every required signature
+  // (USDC approve → WHBAR approve → deposit). Capture the predicates at
+  // click time so a stale closure can't double-prompt a step we just did.
+  const runMintFlow = async () => {
+    const doUsdc = needsUsdcApprove;
+    const doWhbar = needsWhbarApprove;
+    if (doUsdc && !(await approveUsdc())) return;
+    if (doWhbar && !(await approveWhbar())) return;
+    if (ready) await deposit();
+  };
+
+  const nextStep =
+    needsUsdcApprove || needsWhbarApprove
+      ? { label: "Approve & deposit", fn: runMintFlow }
       : ready
         ? { label: "Deposit & mint SY", fn: deposit }
         : null;
