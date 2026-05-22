@@ -51,13 +51,13 @@ export function SellYtForm({ market, detail, user }: Props) {
   const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
   const [usdStr, setUsdStr] = useState("");
   const [rawStr, setRawStr] = useState("");
-  // 150 bps (1.5%) default — the frontend's `ytToSyRate` is a simple-interest
-  // model that overestimates Sell-YT proceeds by ~1% vs the AMM's actual curve
-  // (asymmetric: PT-side rate model error is 0.02%, YT-side is 60× more
-  // sensitive because ytPrice is small). 0.5% default reverts as
-  // InsufficientOutput; 1.5% absorbs the model drift + leaves room for
-  // micro-impact during the trade itself.
-  const [slippageBps, setSlippageBps] = useState(150);
+  // 500 bps (5%) default — the AMM's Pendle V2 curve doesn't match the
+  // frontend's simple-interest `1 - ptRate` estimate; the gap is small but
+  // varies with pool state and ytPrice is small enough that any drift becomes
+  // a large relative miss. Combined with the 0.95 estimate buffer below this
+  // gives ~9.75% headroom under the model — enough to absorb pool drift
+  // between page-render and tx-submit at any practical depth.
+  const [slippageBps, setSlippageBps] = useState(500);
 
   const [flowState, setFlowState] = useState<FlowKind>({ kind: "idle" });
   const [lastTxHash, setLastTxHash] = useState<string | undefined>(undefined);
@@ -136,11 +136,12 @@ export function SellYtForm({ market, detail, user }: Props) {
 
   // Linear approximation: syOut ≈ ytIn × (1 - ptRate). The contract recomputes
   // the exact figure via the AMM curve and reverts if it falls below minSyOut.
-  // Pre-shrink the estimate by 1% to absorb the simple-interest vs AMM-curve
-  // model drift on the YT side (empirically the curve produces ~1% less SY
-  // than `1 - ptRate` predicts for small YT trades).
+  // Pre-shrink the estimate by 5% to absorb the simple-interest vs AMM-curve
+  // model drift on the YT side — empirical reverts at 1% buffer + 1.5%
+  // slippage showed the actual curve was ~0.16% below the form's minSyOut,
+  // so we lean harder on the buffer instead of trusting the linear model.
   const syEstimateNum =
-    parsedYt > 0n && ytPrice > 0 ? Number(parsedYt) * ytPrice * 0.99 : 0;
+    parsedYt > 0n && ytPrice > 0 ? Number(parsedYt) * ytPrice * 0.95 : 0;
   const syEstimate = syEstimateNum > 0 ? BigInt(Math.floor(syEstimateNum)) : 0n;
   const minSyOut = (syEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
