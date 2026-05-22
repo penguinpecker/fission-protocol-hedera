@@ -1,16 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useAccount, useChainId, useConnect } from "wagmi";
+import { useAccount, useChainId } from "wagmi";
 import { HEDERA_MAINNET_CHAIN_ID } from "@/lib/wagmi";
 import { LockIcon } from "@/components/Icons";
 import { diag } from "@/lib/diag";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
-import {
-  ensureHederaMainnet,
-  isInjectedWalletAvailable,
-} from "@/lib/hedera-wallet/connect-evm";
+import { WalletConnectModal } from "@/components/WalletConnectModal";
 
 /**
  * Wraps content that should only render when a wallet is connected. We
@@ -76,30 +73,10 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const wagmiConnect = useConnect();
-  const injectedAvailable = isInjectedWalletAvailable();
-  const [evmError, setEvmError] = useState<string | null>(null);
-
-  const onConnectHedera = async () => {
-    await hedera.connect();
-  };
-  const onConnectEvm = async () => {
-    setEvmError(null);
-    try {
-      const connector = wagmiConnect.connectors.find((c) => c.id === "injected");
-      if (!connector) throw new Error("No injected wallet connector available");
-      await wagmiConnect.connectAsync({ connector });
-      // After connecting, nudge the wallet to Hedera mainnet if it isn't
-      // already there. Doesn't throw if user rejects — they'll see the
-      // "wrong network" gate state and can switch manually.
-      await ensureHederaMainnet();
-    } catch (e) {
-      setEvmError(e instanceof Error ? e.message : String(e));
-    }
-  };
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
-    <section className="mx-auto flex min-h-[60vh] max-w-[640px] flex-col items-center px-6 py-20 text-center">
+    <section className="mx-auto flex min-h-[60vh] max-w-[560px] flex-col items-center px-6 py-20 text-center">
       <div className="mb-8 inline-flex size-14 items-center justify-center rounded-2xl border border-borderHover bg-white/[0.04]">
         <LockIcon className="size-7 text-text" />
       </div>
@@ -109,56 +86,30 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
       </h1>
 
       <p className="mt-4 text-[14.5px] leading-relaxed text-textSec">
-        Pick how you want to sign — Hedera-native (HashPack / Kabila / Blade, supports Ed25519 + ECDSA) or any EVM wallet (MetaMask / Rabby / OKX). Fission only operates on Hedera mainnet (chain {HEDERA_MAINNET_CHAIN_ID}).
+        The markets read live PT, YT, and LP balances and route trades through your wallet. Fission only operates on Hedera mainnet (chain {HEDERA_MAINNET_CHAIN_ID}).
       </p>
 
-      <div className="mt-8 grid w-full max-w-[520px] gap-3 sm:grid-cols-2">
-        <button
-          type="button"
-          onClick={onConnectHedera}
-          disabled={!hederaAvailable}
-          className="flex flex-col items-start gap-1 rounded-xl bg-white px-5 py-4 text-left text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <span className="text-[14px] font-semibold">
-            Hedera Wallet
-          </span>
-          <span className="text-[11px] font-normal opacity-70">
-            HashPack · Kabila · Blade
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={onConnectEvm}
-          disabled={!injectedAvailable || wagmiConnect.isPending}
-          className="flex flex-col items-start gap-1 rounded-xl border border-borderHover bg-white/[0.04] px-5 py-4 text-left text-text transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <span className="text-[14px] font-semibold">
-            {wagmiConnect.isPending ? "Opening…" : "EVM Wallet"}
-          </span>
-          <span className="text-[11px] font-normal text-textDim">
-            {injectedAvailable
-              ? "MetaMask · Rabby · OKX (ECDSA only)"
-              : "No browser wallet detected"}
-          </span>
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={() => setPickerOpen(true)}
+        disabled={!hederaAvailable}
+        className="mt-8 rounded-xl bg-white px-9 py-[14px] text-[14px] font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Connect wallet
+      </button>
 
       <p className="mt-4 text-[12px] text-textDim">
-        Hedera-native wallets sign via WalletConnect. EVM wallets sign directly through your browser extension; we&apos;ll request a switch to Hedera mainnet if needed.
+        Hedera-native (HashPack / Kabila / Blade) and EVM wallets (MetaMask / Rabby / OKX) both supported.
       </p>
 
       {hedera.error && (
         <div className="mt-6 max-w-[460px] rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-left text-[12px] leading-relaxed text-warning">
-          <div className="font-mono text-[10px] uppercase tracking-[1.5px]">Hedera connect failed</div>
+          <div className="font-mono text-[10px] uppercase tracking-[1.5px]">Connect failed</div>
           <div className="mt-1 break-words font-mono">{hedera.error}</div>
         </div>
       )}
-      {evmError && (
-        <div className="mt-3 max-w-[460px] rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-left text-[12px] leading-relaxed text-warning">
-          <div className="font-mono text-[10px] uppercase tracking-[1.5px]">EVM connect failed</div>
-          <div className="mt-1 break-words font-mono">{evmError}</div>
-        </div>
-      )}
+
+      <WalletConnectModal open={pickerOpen} onClose={() => setPickerOpen(false)} />
     </section>
   );
 }
