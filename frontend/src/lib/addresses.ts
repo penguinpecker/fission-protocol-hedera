@@ -29,12 +29,19 @@ export const ADDRESSES = {
 export const isDeployed = (addr: string): boolean =>
   addr.toLowerCase() !== ZERO && /^0x[0-9a-fA-F]{40}$/.test(addr);
 
-// MAX-uint approval: set once, never re-prompt. Standard DeFi pattern —
-// converts the 3-tx LP-add (approve SY → approve PT → addLiquidity) into a
-// 1-tx flow after the first interaction. Trust assumption (router can pull
-// unbounded SY/PT) is the same one already in place; router_v3 is audited
-// and the only spender we approve.
-export const MAX_UINT256 = (1n << 256n) - 1n;
+// "Effectively infinite" HTS approval: set once, never re-prompt. Standard
+// DeFi pattern — converts the 3-tx LP-add (approve SY → approve PT →
+// addLiquidity) into a 1-tx flow after the first interaction. Trust
+// assumption (router can pull unbounded amounts) is the same one already
+// in place; router_v3 is audited and the only spender we approve.
+//
+// HTS GOTCHA: Hedera HTS stores allowances as int64, NOT uint256. Passing
+// `type(uint256).max` overflows the int64 bound check in the HTS precompile
+// and reverts (CONTRACT_REVERT_EXECUTED, ~800k gas consumed). The correct
+// "practical infinity" on Hedera is `type(int64).max = 2^63 - 1` ≈ 9.22e18.
+// For all decimal regimes in this protocol (SY=6, USDC=6, WHBAR=8, LP=18),
+// this is comfortably larger than any real holding.
+export const MAX_HTS_APPROVE = (1n << 63n) - 1n;
 
 /**
  * SaucerSwap V2 + HTS token addresses on Hedera mainnet. These are

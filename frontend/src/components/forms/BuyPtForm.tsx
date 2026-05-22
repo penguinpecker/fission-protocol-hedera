@@ -31,7 +31,7 @@ import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate } from "@/components/MarketPositionCard";
 import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
-import { ADDRESSES, HEDERA_TOKENS, isDeployed, MAX_UINT256 } from "@/lib/addresses";
+import { ADDRESSES, HEDERA_TOKENS, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
@@ -345,7 +345,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
           token: detail.syShare,
           spender,
           // Set-once allowance: every future Buy PT skips the approve prompt.
-          amount: MAX_UINT256,
+          amount: MAX_HTS_APPROVE,
         });
         setLastTxHash(txHash);
         await allowanceRead.refetch();

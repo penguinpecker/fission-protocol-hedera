@@ -23,7 +23,7 @@ import {
   USDC_DECIMALS,
   WHBAR_DECIMALS,
   isDeployed,
-  MAX_UINT256,
+  MAX_HTS_APPROVE,
 } from "@/lib/addresses";
 import { AssociationGate } from "@/components/AssociationGate";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
@@ -484,11 +484,11 @@ function LegacyMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${strin
   // not enable over-pulling beyond what `deposit` requests.
   const approveUsdc = () =>
     guarded(() =>
-      adapter.write({ kind: "approveErc20", token: HEDERA_TOKENS.USDC, spender: sy, amount: MAX_UINT256 }),
+      adapter.write({ kind: "approveErc20", token: HEDERA_TOKENS.USDC, spender: sy, amount: MAX_HTS_APPROVE }),
     );
   const approveWhbar = () =>
     guarded(() =>
-      adapter.write({ kind: "approveErc20", token: HEDERA_TOKENS.WHBAR, spender: sy, amount: MAX_UINT256 }),
+      adapter.write({ kind: "approveErc20", token: HEDERA_TOKENS.WHBAR, spender: sy, amount: MAX_HTS_APPROVE }),
     );
   const deposit = () => {
     if (!user) return;
