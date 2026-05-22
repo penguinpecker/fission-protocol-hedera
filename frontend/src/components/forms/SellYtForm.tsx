@@ -51,7 +51,13 @@ export function SellYtForm({ market, detail, user }: Props) {
   const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
   const [usdStr, setUsdStr] = useState("");
   const [rawStr, setRawStr] = useState("");
-  const [slippageBps, setSlippageBps] = useState(50);
+  // 150 bps (1.5%) default — the frontend's `ytToSyRate` is a simple-interest
+  // model that overestimates Sell-YT proceeds by ~1% vs the AMM's actual curve
+  // (asymmetric: PT-side rate model error is 0.02%, YT-side is 60× more
+  // sensitive because ytPrice is small). 0.5% default reverts as
+  // InsufficientOutput; 1.5% absorbs the model drift + leaves room for
+  // micro-impact during the trade itself.
+  const [slippageBps, setSlippageBps] = useState(150);
 
   const [flowState, setFlowState] = useState<FlowKind>({ kind: "idle" });
   const [lastTxHash, setLastTxHash] = useState<string | undefined>(undefined);
@@ -130,8 +136,11 @@ export function SellYtForm({ market, detail, user }: Props) {
 
   // Linear approximation: syOut ≈ ytIn × (1 - ptRate). The contract recomputes
   // the exact figure via the AMM curve and reverts if it falls below minSyOut.
+  // Pre-shrink the estimate by 1% to absorb the simple-interest vs AMM-curve
+  // model drift on the YT side (empirically the curve produces ~1% less SY
+  // than `1 - ptRate` predicts for small YT trades).
   const syEstimateNum =
-    parsedYt > 0n && ytPrice > 0 ? Number(parsedYt) * ytPrice : 0;
+    parsedYt > 0n && ytPrice > 0 ? Number(parsedYt) * ytPrice * 0.99 : 0;
   const syEstimate = syEstimateNum > 0 ? BigInt(Math.floor(syEstimateNum)) : 0n;
   const minSyOut = (syEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
