@@ -9,6 +9,7 @@
  */
 
 import { useState, type ReactNode } from "react";
+import { formatUsd } from "@/hooks/useSyValueUsd";
 
 /* ─────────────────────────────────────────────────────── section divider */
 
@@ -272,9 +273,10 @@ export function MoneyInput({
 
   const setMaxUsd = () => {
     if (balanceUsd === undefined) return;
-    // Round down two decimals so we never exceed the user's actual balance.
-    const rounded = Math.floor(balanceUsd * 100) / 100;
-    setUsdStr(rounded.toFixed(2));
+    // Round down to 3 decimals so we never exceed the user's actual balance
+    // (3-dp matches the formatUsd display precision for small positions).
+    const rounded = Math.floor(balanceUsd * 1000) / 1000;
+    setUsdStr(rounded.toFixed(3));
   };
   const setMaxRaw = () => setRawStr(balance.toString());
 
@@ -350,7 +352,7 @@ export function MoneyInput({
           {effectiveMode === "usd" && parsedRaw > 0n && usdPerUnit !== undefined ? (
             <>≈ {formatRaw(parsedRaw)} {tokenSym}</>
           ) : effectiveMode === "raw" && parsedRaw > 0n && usdPerUnit !== undefined ? (
-            <>≈ ${(Number(parsedRaw) * usdPerUnit).toFixed(2)}</>
+            <>≈ {formatUsd(Number(parsedRaw) * usdPerUnit) ?? "—"}</>
           ) : usdPerUnit === undefined ? (
             <span className="text-textDim">price loading…</span>
           ) : (
@@ -360,7 +362,7 @@ export function MoneyInput({
         <span style={{ fontVariantNumeric: "tabular-nums" }}>
           Bal: {formatRaw(balance)}
           {balanceUsd !== undefined && balance > 0n && (
-            <span className="ml-1 text-textDim">(${balanceUsd.toFixed(2)})</span>
+            <span className="ml-1 text-textDim">({formatUsd(balanceUsd) ?? "—"})</span>
           )}
         </span>
       </div>

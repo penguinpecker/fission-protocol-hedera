@@ -96,6 +96,12 @@ export function SellYtForm({ market, detail, user }: Props) {
   });
   const ytBalance =
     ytRead.data?.[0]?.status === "success" ? (ytRead.data[0].result as bigint) : 0n;
+  // Detect a transient read failure (Hashio cache hiccup, RPC drop) so the
+  // form doesn't dead-lock with "Insufficient YT — you have 0" while the user
+  // actually holds a YT position. Same pattern as SellPtForm's Ed25519 guard.
+  const ytBalanceReadFailed =
+    ytRead.data?.[0]?.status === "failure" ||
+    (ytRead.isError && ytBalance === 0n);
 
   /* ─────────────────────────── parsed input */
 
@@ -113,7 +119,10 @@ export function SellYtForm({ market, detail, user }: Props) {
     return parseRawBigInt(rawStr);
   }, [inputMode, usdStr, rawStr, usdPerYt]);
 
-  const insufficient = parsedYt > ytBalance;
+  // Skip the local "insufficient" gate when the on-chain read failed — the
+  // contract's own `_ytBal[msg.sender] < ytIn` check will revert authoritatively
+  // if the user actually doesn't have enough YT.
+  const insufficient = !ytBalanceReadFailed && parsedYt > ytBalance;
   // Sell YT depletes the AMM's PT inventory (PT is burned) → limit on totalPt.
   const sizeLimit = computeSizeLimit(parsedYt, detail.totalPt, detail.totalSy);
 
@@ -294,6 +303,11 @@ export function SellYtForm({ market, detail, user }: Props) {
             insufficient ? (
               <span className="block font-mono text-[10px] font-medium text-error">
                 Insufficient YT — you have {formatCompact(ytBalance)}.
+              </span>
+            ) : ytBalanceReadFailed ? (
+              <span className="block font-mono text-[10px] font-medium text-warning">
+                YT balance read failed — your tx will revert on-chain if you
+                don&apos;t actually hold this YT.
               </span>
             ) : sizeLimit.message ? (
               <span className="block font-mono text-[10px] font-medium text-warning">
