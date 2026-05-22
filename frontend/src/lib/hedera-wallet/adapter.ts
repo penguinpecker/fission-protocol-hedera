@@ -264,10 +264,36 @@ export function useWalletAdapter(): AdapterAPI {
 
 /* ───────────────────────────────────────────────────────── EVM path */
 
+// Explicit gas limits on every EVM call. Required because Hashio's
+// `eth_estimateGas` is unreliable for Pendle V2 + HTS contract calls — the
+// estimate either fails outright (HTTP 4xx, manifesting as a generic
+// "RPC submit: HTTP client error") or comes back too low (silent revert
+// on submit). Values mirror the proven gas limits used in writeHedera
+// below; the only difference is `bigint` to satisfy viem's type. Keep
+// these in sync if the Hedera-path numbers change.
+const EVM_GAS_LIMIT: Record<WriteOp["kind"], bigint> = {
+  approveErc20: 800_000n,
+  split: 2_000_000n,
+  merge: 2_000_000n,
+  swapExactSyForPt: 3_500_000n,
+  swapExactPtForSy: 3_500_000n,
+  swapExactYtForSy: 4_500_000n,
+  buyYT: 4_000_000n,
+  zapHbarToSy: 14_500_000n,
+  depositLiquidity: 14_500_000n,
+  redeemAfterExpiry: 2_000_000n,
+  addLiquidity: 4_000_000n,
+  removeLiquidity: 4_000_000n,
+  zapHbarToPtMega: 15_000_000n,
+  zapHbarToYtMega: 15_000_000n,
+  zapHbarToLpMega: 15_000_000n,
+};
+
 async function writeEvm(
   op: WriteOp,
   writeContractAsync: ReturnType<typeof useWriteContract>["writeContractAsync"],
 ): Promise<{ txHash: string }> {
+  const gas = EVM_GAS_LIMIT[op.kind];
   switch (op.kind) {
     case "approveErc20":
       return {
@@ -276,6 +302,7 @@ async function writeEvm(
           address: op.token,
           functionName: "approve",
           args: [op.spender, op.amount],
+          gas,
         }),
       };
     case "split":
@@ -285,6 +312,7 @@ async function writeEvm(
           address: op.market,
           functionName: "split",
           args: [op.amount],
+          gas,
         }),
       };
     case "merge":
@@ -294,6 +322,7 @@ async function writeEvm(
           address: op.market,
           functionName: "merge",
           args: [op.amount],
+          gas,
         }),
       };
     case "swapExactSyForPt":
@@ -303,6 +332,7 @@ async function writeEvm(
           address: op.router,
           functionName: "swapExactSyForPt",
           args: [op.market, op.syIn, op.minPtOut, op.receiver, op.deadline],
+          gas,
         }),
       };
     case "buyYT":
@@ -312,6 +342,7 @@ async function writeEvm(
           address: op.router,
           functionName: "buyYT",
           args: [op.market, op.syBudget, op.minSyOut, op.receiver, op.deadline],
+          gas,
         }),
       };
     case "swapExactPtForSy":
@@ -321,6 +352,7 @@ async function writeEvm(
           address: op.router,
           functionName: "swapExactPtForSy",
           args: [op.market, op.ptIn, op.minSyOut, op.receiver, op.deadline],
+          gas,
         }),
       };
     case "swapExactYtForSy":
@@ -330,6 +362,7 @@ async function writeEvm(
           address: op.market,
           functionName: "swapExactYtForSy",
           args: [op.ytIn, op.minSyOut, op.receiver],
+          gas,
         }),
       };
     case "zapHbarToSy": {
@@ -342,6 +375,7 @@ async function writeEvm(
           functionName: "zapHbarToSy",
           args: [op.sy, 0n, 0n, 0n, 1n, op.receiver],
           value: parseEther(String(op.hbarIn + 5)), // +5 HBAR NPM
+          gas,
         }),
       };
     }
@@ -353,6 +387,7 @@ async function writeEvm(
           functionName: "depositLiquidity",
           args: [op.amount0, op.amount1, op.amount0Min, op.amount1Min, op.receiver, op.minShares],
           value: parseEther(String(op.npmHbar)),
+          gas,
         }),
       };
     case "redeemAfterExpiry":
@@ -362,6 +397,7 @@ async function writeEvm(
           address: op.market,
           functionName: "redeemAfterExpiry",
           args: [op.ptIn, op.ytIn, op.receiver],
+          gas,
         }),
       };
     case "addLiquidity":
@@ -376,6 +412,7 @@ async function writeEvm(
           address: op.router,
           functionName: "addLiquidityProportional",
           args: [op.market, op.syIn, op.ptIn, op.minLpOut, op.receiver, op.deadline],
+          gas,
         }),
       };
     case "removeLiquidity":
@@ -385,6 +422,7 @@ async function writeEvm(
           address: op.router,
           functionName: "removeLiquidityProportional",
           args: [op.market, op.lpIn, op.minSyOut, op.minPtOut, op.receiver, op.deadline],
+          gas,
         }),
       };
     case "zapHbarToPtMega":
@@ -395,6 +433,7 @@ async function writeEvm(
           functionName: "zapHbarToPt",
           args: [op.market, op.sy, op.minPtOut, op.receiver, op.deadline],
           value: parseEther(String(op.hbarIn + 5)), // +5 HBAR NPM fee
+          gas,
         }),
       };
     case "zapHbarToYtMega":
@@ -405,6 +444,7 @@ async function writeEvm(
           functionName: "zapHbarToYt",
           args: [op.market, op.sy, op.minSyOutFromPtSale, op.receiver, op.deadline],
           value: parseEther(String(op.hbarIn + 5)),
+          gas,
         }),
       };
     case "zapHbarToLpMega":
@@ -415,6 +455,7 @@ async function writeEvm(
           functionName: "zapHbarToLp",
           args: [op.market, op.sy, op.ptShareBps, op.minLpOut, op.receiver, op.deadline],
           value: parseEther(String(op.hbarIn + 5)),
+          gas,
         }),
       };
   }
