@@ -46,8 +46,8 @@ function YtTradeForm({
           onClick={() => setMode("buy")}
           className={`rounded-[6px] px-3 py-1.5 transition ${
             mode === "buy"
-              ? "bg-white/[0.08] text-text"
-              : "text-textDim hover:text-text"
+              ? "bg-success/[0.18] text-success ring-1 ring-success/40"
+              : "text-textDim hover:text-success"
           }`}
         >
           Buy YT
@@ -57,8 +57,8 @@ function YtTradeForm({
           onClick={() => setMode("sell")}
           className={`rounded-[6px] px-3 py-1.5 transition ${
             mode === "sell"
-              ? "bg-white/[0.08] text-text"
-              : "text-textDim hover:text-text"
+              ? "bg-error/[0.18] text-error ring-1 ring-error/40"
+              : "text-textDim hover:text-error"
           }`}
         >
           Sell YT
