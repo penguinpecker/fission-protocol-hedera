@@ -16,7 +16,7 @@
  * into the SY-half and PT-half by current pool ratio), slippage chips
  * everywhere, FlowOfFunds visualization above each tab.
  */
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
@@ -208,6 +208,16 @@ function AddLp({
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
+  // Hard re-entry guard. setIsSubmitting briefly toggles false between each
+  // leg of the chained flow (approve SY → approve PT → addLiquidity), so a
+  // user click landing during that gap would launch a second concurrent
+  // chain and produce a duplicate addLiquidity. Without this, after a
+  // successful add the user could double-click and the second click would
+  // skip approves (allowance already MAX) and submit a second addLiquidity
+  // that reverts on `safeTransferFrom(PT)` because TX1 already pulled all
+  // their PT. Use a ref so the check is synchronous and doesn't need a
+  // re-render to apply. Observed live: tx 0.0.10457309@1779479920.
+  const chainInFlight = useRef(false);
 
   const useWagmiReceipt = adapter.mode === "evm";
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
@@ -381,24 +391,51 @@ function AddLp({
   // signature prompt required to reach addLiquidity. Capture the
   // needsXxxApprove booleans at click time so a stale closure can't make us
   // re-prompt for an approve we just executed.
+  //
+  // `chainInFlight` is a re-entry guard that survives the brief
+  // `setIsSubmitting(false)` flicker between legs of the chain. Without it,
+  // a double-click (or stray re-trigger after a successful add) could launch
+  // a second concurrent chain that skips approves and submits a duplicate
+  // addLiquidity which reverts on `safeTransferFrom(PT)` because TX1 already
+  // pulled all the user's PT.
   const onPrimary = async () => {
-    if (effectiveSource === "hbar") {
-      // MegaZap path: no approvals needed (we pay HBAR directly).
-      onZapHbarToLp();
-      return;
-    }
-    const doSyApprove = needsSyApprove;
-    const doPtApprove = needsPtApprove;
+    if (chainInFlight.current) return;
+    chainInFlight.current = true;
+    try {
+      if (effectiveSource === "hbar") {
+        // MegaZap path: no approvals needed (we pay HBAR directly).
+        await onZapHbarToLp();
+        return;
+      }
+      const doSyApprove = needsSyApprove;
+      const doPtApprove = needsPtApprove;
 
-    if (doSyApprove) {
-      const ok = await onApproveSy();
-      if (!ok) return;
+      if (doSyApprove) {
+        const ok = await onApproveSy();
+        if (!ok) return;
+      }
+      if (doPtApprove) {
+        const ok = await onApprovePt();
+        if (!ok) return;
+      }
+      const addOk = await onAdd();
+      if (addOk) {
+        // Clear inputs so the form requires a fresh amount before another
+        // add — `noInput` flips true and the button is disabled. Belt for
+        // the chainInFlight braces: even if the guard somehow released
+        // mid-render, there's no parsed amount to submit.
+        setUsdStr("");
+        setSyRawStr("");
+        setPtOverrideStr("");
+        // Refresh balances + allowances so the next interaction reflects
+        // the post-add state (Hashio caches HTS reads per-block, so allow
+        // a short delay before refetch — but kick it off here so the UI
+        // catches up as soon as the cache turns over).
+        void refetchAllowances();
+      }
+    } finally {
+      chainInFlight.current = false;
     }
-    if (doPtApprove) {
-      const ok = await onApprovePt();
-      if (!ok) return;
-    }
-    await onAdd();
   };
 
   const ratioLabel =

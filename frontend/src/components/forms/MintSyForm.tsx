@@ -13,7 +13,7 @@
  * a CoinGecko price), FlowOfFunds visualization of the zap path (HBAR →
  * wrap half / swap half on SaucerSwap V2 → V3 LP NFT → SY mint).
  */
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import { parseUnits } from "viem";
 import { erc20Abi } from "@/lib/abis";
@@ -384,6 +384,11 @@ function LegacyMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${strin
   const [isPending, setIsPending] = useState(false);
   const [usdcAmt, setUsdcAmt] = useState("");
   const [whbarAmt, setWhbarAmt] = useState("");
+  // Re-entry guard for the chained approve→approve→deposit flow. Same
+  // rationale as ProvideLpForm: setIsPending briefly flickers false between
+  // legs and a double-click could otherwise launch a second concurrent
+  // chain.
+  const chainInFlight = useRef(false);
 
   const reads = useReadContracts({
     contracts: user
@@ -513,12 +518,26 @@ function LegacyMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${strin
   // Chained mint: one CTA click walks through every required signature
   // (USDC approve → WHBAR approve → deposit). Capture the predicates at
   // click time so a stale closure can't double-prompt a step we just did.
+  // Guarded against re-entry so a double-click can't submit two deposits.
   const runMintFlow = async () => {
-    const doUsdc = needsUsdcApprove;
-    const doWhbar = needsWhbarApprove;
-    if (doUsdc && !(await approveUsdc())) return;
-    if (doWhbar && !(await approveWhbar())) return;
-    if (ready) await deposit();
+    if (chainInFlight.current) return;
+    chainInFlight.current = true;
+    try {
+      const doUsdc = needsUsdcApprove;
+      const doWhbar = needsWhbarApprove;
+      if (doUsdc && !(await approveUsdc())) return;
+      if (doWhbar && !(await approveWhbar())) return;
+      if (ready) {
+        const ok = await deposit();
+        if (ok) {
+          setUsdcAmt("");
+          setWhbarAmt("");
+          void reads.refetch();
+        }
+      }
+    } finally {
+      chainInFlight.current = false;
+    }
   };
 
   const nextStep =
