@@ -516,10 +516,17 @@ export function shareBalanceToUsd(
 /** Format a USD amount with two-decimals precision, kept consistent across both UI sites. */
 export function formatUsd(n: number | undefined): string | null {
   if (n === undefined || !Number.isFinite(n)) return null;
-  if (n === 0) return "$0.00";
-  // Sub-cent: render four decimals so a tiny position doesn't read "≈ $0.00".
-  if (n > 0 && n < 0.01) return `$${n.toFixed(4)}`;
-  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (n === 0) return "$0.000";
+  const abs = Math.abs(n);
+  // Tiny positions: 4 decimals so $0.0001 yields are visible.
+  if (abs > 0 && abs < 0.001) return `${n < 0 ? "-" : ""}$${abs.toFixed(4)}`;
+  // Small-but-meaningful: 3 decimals. Small reward accruals (a few cents of
+  // SAUCE / WHBAR from V3 fees) need to show as $0.012 not "$0.01" rounded.
+  if (abs < 10) {
+    return `${n < 0 ? "-" : ""}$${abs.toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`;
+  }
+  // $10 and up: standard 2-decimal display so big numbers stay legible.
+  return `${n < 0 ? "-" : ""}$${abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /**

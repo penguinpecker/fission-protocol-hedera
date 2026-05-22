@@ -149,11 +149,13 @@ export function formatCompact(v: bigint): string {
 
   for (const t of TIERS) {
     if (abs >= t.threshold) {
-      // Scale to fixed-point with 2 fractional digits, then format.
-      const scaled = (abs * 100n) / t.divisor;
-      const whole = scaled / 100n;
-      const frac = scaled % 100n;
-      const fracStr = frac.toString().padStart(2, "0");
+      // Scale to fixed-point with 3 fractional digits so small yield accruals
+      // remain visible at the M/B suffix levels (e.g. 1.234B vs the prior 1.23B
+      // — the third digit catches sub-1% pool moves on a ~$700 pool).
+      const scaled = (abs * 1000n) / t.divisor;
+      const whole = scaled / 1000n;
+      const frac = scaled % 1000n;
+      const fracStr = frac.toString().padStart(3, "0");
       return `${neg ? "-" : ""}${whole}.${fracStr}${t.suffix}`;
     }
   }
