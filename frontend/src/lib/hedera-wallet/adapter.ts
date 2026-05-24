@@ -284,16 +284,16 @@ const EVM_GAS_LIMIT: Record<WriteOp["kind"], bigint> = {
   redeemAfterExpiry: 2_000_000n,
   addLiquidity: 4_000_000n,
   removeLiquidity: 4_000_000n,
-  // MegaZap gas limits are conservative for the contract logic (HBAR wrap +
-  // V2 swap + V3 mint + SY mint + Router buy/sell) but Hashio pre-charges
-  // gasLimit × gasPrice from the user's HBAR balance before the tx runs.
-  // 15M × ~37 tinybar/gas = ~5.5 HBAR pre-charge — combined with the
-  // `(hbarIn + 5)` value, Hashio rejects any zap >~31 HBAR even on a
-  // wallet holding 41+ HBAR. 8M is well above the ~3-4M actually consumed
-  // by a real zap and keeps the pre-charge under 3 HBAR.
-  zapHbarToPtMega: 8_000_000n,
-  zapHbarToYtMega: 8_000_000n,
-  zapHbarToLpMega: 8_000_000n,
+  // MegaZap gas: Hashio pre-charges gasLimit × gasPrice from HBAR balance,
+  // so a 15M limit (Hedera max) blocks any zap > ~31 HBAR even on wallets
+  // with plenty. But 8M was too tight — observed live: zapHbarToPt used
+  // 7.94M / 8M (99.2%) on a normal-sized buy (tx 0x4347cb1e), one V3 tick
+  // crossing from OOG. 12M is the safe middle: ~4 HBAR pre-charge (well
+  // under the 5.5 HBAR threshold that triggered Hashio rejection), with
+  // ~50% headroom above observed consumption.
+  zapHbarToPtMega: 12_000_000n,
+  zapHbarToYtMega: 12_000_000n,
+  zapHbarToLpMega: 12_000_000n,
 };
 
 async function writeEvm(
