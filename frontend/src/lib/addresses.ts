@@ -15,9 +15,15 @@ export const ADDRESSES = {
   router: (process.env.NEXT_PUBLIC_ROUTER_ADDRESS ?? ZERO) as `0x${string}`,
   fissionZap: (process.env.NEXT_PUBLIC_FISSION_ZAP_ADDRESS ?? ZERO) as `0x${string}`,
   // MegaZap collapses the HBAR-source chain (HBAR → SY → PT/YT/LP) into one
-  // signature. Optional — when not deployed in the current env, forms fall
-  // back to the legacy multi-step chain via FissionZap + Router.
-  megaZap: (process.env.NEXT_PUBLIC_MEGA_ZAP_ADDRESS ?? ZERO) as `0x${string}`,
+  // signature. Falls back to the deployed address from `deployments/295.json`
+  // when the env isn't set (or is set to empty string — which Vercel's
+  // `vercel env add` can produce from a stdin-piped value with a stripped
+  // newline). Without the fallback, HBAR-source buys go through the legacy
+  // 4-tx chain which burns ~10 HBAR per buy in gas. Lens uses the same
+  // hardcoded-fallback pattern below.
+  megaZap: ((process.env.NEXT_PUBLIC_MEGA_ZAP_ADDRESS && process.env.NEXT_PUBLIC_MEGA_ZAP_ADDRESS.length > 2)
+    ? process.env.NEXT_PUBLIC_MEGA_ZAP_ADDRESS
+    : "0x00000000000000000000000000000000009fdf8c") as `0x${string}`,
   // FissionLens — read-only swap-preview contract. Forms call it before
   // showing a quote so minSyOut/minPtOut are computed against the exact
   // Pendle V2 curve output instead of the dApp's simple-interest model.
