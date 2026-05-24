@@ -349,13 +349,13 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
 
   // MegaZap fast-path: HBAR → YT in a single tx.
   const runMegaZapYt = useCallback(
-    async (hbarIn: number) => {
-      if (!user) return;
+    async (hbarIn: number): Promise<{ ok: true } | { ok: false; fallback: boolean }> => {
+      if (!user) return { ok: false, fallback: false };
       setWriteError(null);
 
       const tokens: `0x${string}`[] = [detail.syShare, HEDERA_TOKENS.WHBAR, detail.yt];
       const okAssoc = await stepAssociate(tokens);
-      if (!okAssoc) return;
+      if (!okAssoc) return { ok: false, fallback: false };
 
       setStatus({ kind: "megaZapping", stepIdx: 0 });
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
@@ -376,10 +376,21 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         });
         setLastTxHash(txHash);
         setStatus({ kind: "done", finalTxHash: txHash });
+        return { ok: true as const };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        // MegaZap's child-record count sits right at Hedera's 50-children
+        // ceiling — one extra V3 tick crossing tips it into
+        // MAX_CHILD_RECORDS_EXCEEDED. Detect and return a fallback signal
+        // so the caller can invoke the legacy 4-tx chain (each tx has its
+        // own 50-record budget). Verified live 2026-05-24 across two
+        // independent attempts (smoke test + user HashPack zap).
+        if (/MAX_CHILD_RECORDS|CHILD_RECORDS_EXCEEDED/i.test(msg)) {
+          return { ok: false as const, fallback: true as const };
+        }
         setWriteError(msg);
         setStatus({ kind: "error", message: msg, failedAt: 0 });
+        return { ok: false as const, fallback: false as const };
       }
     },
     [adapter, apy, days, detail.sy, detail.syShare, detail.yt, estimatedSyFromHbar, market, setStatus, slippageBps, stepAssociate, user],
@@ -451,7 +462,14 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     if (!user) return;
     if (flowState.kind === "error") {
       if (effectiveSource === "hbar" && megaZapAvailable) {
-        void runMegaZapYt(hbarAmount);
+        const r = await runMegaZapYt(hbarAmount);
+        if (!r.ok && r.fallback) {
+          setWriteError(
+            "MegaZap fast-path unavailable at this size (Hedera child-record limit). " +
+            "Running the multi-tx chain — please sign each prompt."
+          );
+          await runHbarChainFromStep(1);
+        }
         return;
       }
       const carry = flowState.syAcquired;
@@ -461,7 +479,14 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     if (effectiveSource === "hbar") {
       if (hbarAmount <= 0 || !zapAvailable) return;
       if (megaZapAvailable) {
-        void runMegaZapYt(hbarAmount);
+        const r = await runMegaZapYt(hbarAmount);
+        if (!r.ok && r.fallback) {
+          setWriteError(
+            "MegaZap fast-path unavailable at this size (Hedera child-record limit). " +
+            "Running the multi-tx chain — please sign each prompt."
+          );
+          await runHbarChainFromStep(1);
+        }
       } else {
         void runHbarChainFromStep(1);
       }
