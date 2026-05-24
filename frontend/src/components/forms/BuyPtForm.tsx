@@ -575,16 +575,14 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     }
   }, [effectiveSource, flowState, hbarAmount, megaZapAvailable, runHbarChainFromStep, runMegaZapPt, runSyChain, user, zapAvailable]);
 
-  // After a successful chain, clear inputs so the form requires a fresh
-  // amount before another buy (the balance reads catch up via Hashio cache
-  // on their own cadence; this is the belt that prevents a second click
-  // from submitting before they do).
-  useEffect(() => {
-    if (flowState.kind === "done") {
-      setUsdStr("");
-      setRawStr("");
-    }
-  }, [flowState.kind]);
+  // Input-reset on done is handled inside the existing flowState-watcher
+  // effect below (setFlowState({ kind: "idle" }) once hbarAmount/parsedSy
+  // reaches zero). The earlier dedicated `if (kind === "done")` effect was
+  // removed because it triggered React #300 "Maximum update depth" — the
+  // combo of (a) this effect setting strings, (b) the existing watcher
+  // re-firing on hbarAmount=0, and (c) `useBalance` polling created a
+  // 3-effect oscillation. The chainInFlight ref above is sufficient on its
+  // own to block duplicate clicks.
 
   // Reset flow state when the user switches mode or clears their input — so
   // the "Retry from step N" button doesn't linger on a different trade.

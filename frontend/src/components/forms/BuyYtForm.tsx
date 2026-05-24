@@ -497,14 +497,10 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     }
   }, [effectiveSource, flowState, hbarAmount, megaZapAvailable, runHbarChainFromStep, runMegaZapYt, runSyChain, user, zapAvailable]);
 
-  // Clear inputs on successful done so a stale form state can't drive a
-  // duplicate buy after the chain reports complete.
-  useEffect(() => {
-    if (flowState.kind === "done") {
-      setUsdStr("");
-      setRawStr("");
-    }
-  }, [flowState.kind]);
+  // Input-reset on done removed — was causing React #300 "Maximum update
+  // depth" via a 3-effect oscillation with the existing flowState watcher
+  // below and useBalance polling. chainInFlight ref + the existing
+  // hbarAmount===0 → setFlowState({kind:"idle"}) path are sufficient.
 
   useEffect(() => {
     if (flowState.kind !== "done" && flowState.kind !== "error") return;
