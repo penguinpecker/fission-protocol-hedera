@@ -188,7 +188,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   // Total HBAR the user must hold: amount + 5 NPM fee + ~6 HBAR worst-case
   // gas safety. MegaZap path uses less gas (~2 HBAR) but we use the upper
   // bound so the gate is honest.
-  const hbarHeadroom = 11;
+  const hbarHeadroom = 14;
   const hbarTotalNeeded = effectiveSource === "hbar" ? hbarAmount + hbarHeadroom : 0;
   const insufficientHbar =
     effectiveSource === "hbar" &&
@@ -457,11 +457,27 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         setStatus({ kind: "done", finalTxHash: txHash });
         return { ok: true as const };
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        // Same MAX_CHILD_RECORDS fallback as BuyYt — MegaZap sits at
-        // Hedera's 50-children ceiling and can tip over on certain pool
-        // states. Surface the fallback signal to the caller.
-        if (/MAX_CHILD_RECORDS|CHILD_RECORDS_EXCEEDED/i.test(msg)) {
+        // Hedera SDK throws StatusError as a plain object with a `status`
+        // field, NOT a JS Error subclass — `.message` may be empty or
+        // generic. Serialize the whole thing so the fallback regex can
+        // see all error fields. Observed live 2026-05-25:
+        //   {"name":"StatusError","status":"MAX_CHILD_RECORDS_EXCEEDED",
+        //    "transactionId":"0.0.10457309@…","message":"receipt for…"}
+        const msg =
+          e instanceof Error
+            ? `${e.message} ${JSON.stringify({ name: e.name })}`
+            : typeof e === "object" && e !== null
+              ? JSON.stringify(e)
+              : String(e);
+        // Fall back to the legacy 4-tx chain for ANY MegaZap-side failure
+        // that's not user-cancellation. Legacy chain has smaller per-tx
+        // gas budgets so it survives the same pre-charge / child-record
+        // ceiling that breaks MegaZap.
+        const isUserCancel = /User rejected|User denied|user.*reject/i.test(msg);
+        const isRecoverable =
+          !isUserCancel &&
+          /MAX_CHILD_RECORDS|CHILD_RECORDS_EXCEEDED|HTTP client error|insufficient|OUT_OF_GAS|RPC submit/i.test(msg);
+        if (isRecoverable) {
           return { ok: false as const, fallback: true as const };
         }
         setWriteError(msg);

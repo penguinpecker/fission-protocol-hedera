@@ -145,7 +145,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   });
   const hbarBalanceWhole =
     hbarBalanceRead.data ? Number(hbarBalanceRead.data.value) / 1e18 : undefined;
-  const hbarHeadroom = 11;
+  const hbarHeadroom = 14;
   const hbarTotalNeeded = effectiveSource === "hbar" ? hbarAmount + hbarHeadroom : 0;
   const insufficientHbar =
     effectiveSource === "hbar" &&
@@ -395,14 +395,28 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         setStatus({ kind: "done", finalTxHash: txHash });
         return { ok: true as const };
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        // MegaZap's child-record count sits right at Hedera's 50-children
-        // ceiling — one extra V3 tick crossing tips it into
-        // MAX_CHILD_RECORDS_EXCEEDED. Detect and return a fallback signal
-        // so the caller can invoke the legacy 4-tx chain (each tx has its
-        // own 50-record budget). Verified live 2026-05-24 across two
-        // independent attempts (smoke test + user HashPack zap).
-        if (/MAX_CHILD_RECORDS|CHILD_RECORDS_EXCEEDED/i.test(msg)) {
+        // Hedera SDK throws StatusError as a plain object with `.status`,
+        // NOT a JS Error subclass — `.message` may be empty. Serialize
+        // the whole thing so the fallback regex sees `.status` too.
+        // Observed 2026-05-25: HashPack threw
+        //   {"name":"StatusError","status":"MAX_CHILD_RECORDS_EXCEEDED",
+        //    "transactionId":"0.0.10457309@…", …}
+        // which the prior `e instanceof Error ? e.message : ...` missed.
+        const msg =
+          e instanceof Error
+            ? `${e.message} ${JSON.stringify({ name: e.name })}`
+            : typeof e === "object" && e !== null
+              ? JSON.stringify(e)
+              : String(e);
+        // Fall back to the legacy 4-tx chain for ANY MegaZap failure that's
+        // not user-cancellation: child-records ceiling, Hashio "HTTP client
+        // error" / "RPC submit", insufficient, OOG. Legacy chain has
+        // smaller per-tx gas budgets so it survives the same pre-charge.
+        const isUserCancel = /User rejected|User denied|user.*reject/i.test(msg);
+        const isRecoverable =
+          !isUserCancel &&
+          /MAX_CHILD_RECORDS|CHILD_RECORDS_EXCEEDED|HTTP client error|insufficient|OUT_OF_GAS|RPC submit/i.test(msg);
+        if (isRecoverable) {
           return { ok: false as const, fallback: true as const };
         }
         setWriteError(msg);

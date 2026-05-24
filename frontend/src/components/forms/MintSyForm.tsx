@@ -131,7 +131,7 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
   });
   const hbarBalanceWhole =
     hbarBalanceRead.data ? Number(hbarBalanceRead.data.value) / 1e18 : undefined;
-  const hbarHeadroom = 11;
+  const hbarHeadroom = 14;
   const hbarTotalNeeded = hbarAmount + hbarHeadroom;
   const insufficientHbar =
     hbarBalanceWhole !== undefined && hbarAmount > 0 && hbarBalanceWhole < hbarTotalNeeded;
