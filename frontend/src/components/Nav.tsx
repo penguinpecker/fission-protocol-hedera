@@ -231,6 +231,7 @@ export function Nav() {
                 type="button"
                 onClick={() => setPickerOpen(true)}
                 disabled={isConnecting}
+                data-testid="nav-connect-wallet-btn"
                 className="rounded-[2px] border border-white bg-white px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isConnecting

@@ -72,6 +72,7 @@ export function WalletConnectModal({ open, onClose, onPicked }: WalletConnectMod
       role="dialog"
       aria-modal="true"
       aria-label="Connect wallet"
+      data-testid="wallet-connect-modal"
     >
       <div
         className="absolute inset-0 bg-black/70 backdrop-blur-sm"
@@ -178,11 +179,13 @@ function WalletRow({
   disabled?: boolean;
   onClick: () => void;
 }) {
+  const testid = `wallet-row-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")}`;
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
+      data-testid={testid}
       className="flex items-center gap-3 rounded-xl border border-border bg-white/[0.02] px-4 py-3 text-left transition hover:border-borderHover hover:bg-white/[0.05] disabled:cursor-not-allowed disabled:opacity-40"
     >
       <div className="flex size-9 flex-shrink-0 items-center justify-center rounded-lg bg-white/[0.06]">

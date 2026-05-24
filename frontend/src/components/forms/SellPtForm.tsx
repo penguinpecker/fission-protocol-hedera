@@ -449,13 +449,17 @@ export function SellPtForm({ market, detail, user }: Props) {
           type="button"
           disabled={buttonDisabled}
           onClick={() => void onPrimary()}
+          data-testid="sell-pt-action"
           className="w-full rounded-[10px] bg-white px-7 py-3.5 font-mono text-sm font-semibold uppercase tracking-[1px] text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {buttonLabel()}
         </button>
 
         {writeError && (
-          <div className="mt-2 rounded-lg border border-error/30 bg-error/10 px-3 py-2 font-mono text-[10px] leading-relaxed text-error">
+          <div
+            data-testid="sell-pt-error"
+            className="mt-2 rounded-lg border border-error/30 bg-error/10 px-3 py-2 font-mono text-[10px] leading-relaxed text-error"
+          >
             {flowState.kind === "error" && (
               <div className="mb-1 font-semibold uppercase tracking-[1.5px]">
                 {flowState.failedAt === "approve" ? "Approval failed" : "Swap failed"}
@@ -466,7 +470,10 @@ export function SellPtForm({ market, detail, user }: Props) {
         )}
 
         {flowState.kind === "done" && lastTxHash && (
-          <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-success">
+          <div
+            data-testid="sell-pt-success"
+            className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-success"
+          >
             <div className="font-semibold uppercase tracking-[1px]">PT sold for SY.</div>
             <div className="mt-1 break-all text-[10px] text-success/80">
               tx: {lastTxHash.slice(0, 18)}…{lastTxHash.slice(-8)}

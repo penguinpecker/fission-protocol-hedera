@@ -333,6 +333,7 @@ export function MoneyInput({
             effectiveMode === "usd" ? setUsdStr(e.target.value) : setRawStr(e.target.value)
           }
           placeholder={effectiveMode === "usd" ? "0.00" : "0"}
+          data-testid={`money-input-${effectiveMode}`}
           className="w-full bg-transparent px-3 py-3.5 font-mono text-base text-text outline-none"
           style={{ fontVariantNumeric: "tabular-nums" }}
         />
