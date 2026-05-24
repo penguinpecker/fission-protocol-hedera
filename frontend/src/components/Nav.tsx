@@ -8,7 +8,6 @@ import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { HEDERA_MAINNET_CHAIN_ID } from "@/lib/wagmi";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
-import { WalletConnectModal } from "@/components/WalletConnectModal";
 
 function shortAddr(addr: string): string {
   return addr.slice(0, 6) + "…" + addr.slice(-4);
@@ -61,7 +60,11 @@ export function Nav() {
   //     (with a still-valid cookie) doesn't bounce the user back to /markets.
   const autoSignAfterConnectRef = useRef(false);
   const redirectAfterAuthRef = useRef(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const handleConnect = async () => {
+    autoSignAfterConnectRef.current = true;
+    redirectAfterAuthRef.current = true;
+    await hedera.connect();
+  };
   const handleDisconnect = async () => {
     if (auth.status === "authenticated") await signOut();
     await adapter.disconnect();
@@ -106,12 +109,6 @@ export function Nav() {
   // no way to reach /whitepaper or /profile from the header. Toggle closes
   // automatically when the route changes.
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [accountOpen, setAccountOpen] = useState(false);
-  // Close the account dropdown automatically when the connection state
-  // changes (eg. after a successful disconnect).
-  useEffect(() => {
-    if (!adapter.isConnected) setAccountOpen(false);
-  }, [adapter.isConnected]);
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
@@ -148,7 +145,18 @@ export function Nav() {
             </span>
 
             {adapter.isConnected && adapter.address ? (
-              auth.status === "loading" ? (
+              auth.status === "authenticated" ? (
+                <button
+                  type="button"
+                  onClick={handleDisconnect}
+                  className="inline-flex items-center gap-1.5 rounded-[2px] border border-borderHover bg-white/[0.04] px-3.5 py-2 font-mono text-[12px] text-text transition hover:bg-white/[0.06]"
+                >
+                  <span className="size-[5px] rounded-full bg-success" />
+                  {adapter.mode === "hedera" && adapter.accountId
+                    ? adapter.accountId
+                    : shortAddr(adapter.address)}
+                </button>
+              ) : auth.status === "loading" ? (
                 <button
                   type="button"
                   disabled
@@ -157,81 +165,41 @@ export function Nav() {
                   Signing…
                 </button>
               ) : (
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setAccountOpen((v) => !v)}
-                    className="inline-flex items-center gap-1.5 rounded-[2px] border border-borderHover bg-white/[0.04] px-3.5 py-2 font-mono text-[12px] text-text transition hover:bg-white/[0.06]"
-                  >
-                    <span
-                      className={`size-[5px] rounded-full ${
-                        auth.status === "authenticated" ? "bg-success" : "bg-warning"
-                      }`}
-                    />
+                <div className="flex items-center gap-2">
+                  <span className="hidden font-mono text-[11px] text-textSec sm:inline">
                     {adapter.mode === "hedera" && adapter.accountId
                       ? adapter.accountId
                       : shortAddr(adapter.address)}
-                    <svg viewBox="0 0 24 24" className="size-3 opacity-60" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="6 9 12 15 18 9" />
-                    </svg>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Arm the post-auth redirect ref so the "Sign In" path
+                      // (wallet already connected, just signing) lands on
+                      // /markets like the combined Connect & Sign path does.
+                      // Without this, only handleConnect would trigger the
+                      // redirect and the standalone Sign In click silently
+                      // stayed on whatever page the user was on.
+                      redirectAfterAuthRef.current = true;
+                      void signIn();
+                    }}
+                    disabled={onWrongChain}
+                    className="rounded-[2px] border border-white bg-white px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85 disabled:opacity-50"
+                  >
+                    {auth.status === "error" ? "Try again" : "Sign In"}
                   </button>
-                  {accountOpen && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-40"
-                        onClick={() => setAccountOpen(false)}
-                      />
-                      <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-[260px] overflow-hidden rounded-md border border-borderHover bg-bgCard shadow-lg">
-                        <div className="border-b border-border px-4 py-3">
-                          <div className="text-[10px] uppercase tracking-[1.5px] text-textDim">
-                            {adapter.mode === "hedera" ? "Hedera-native" : "EVM"} wallet
-                          </div>
-                          <div className="mt-1 break-all font-mono text-[11px] text-text">
-                            {adapter.mode === "hedera" && adapter.accountId
-                              ? adapter.accountId
-                              : adapter.address}
-                          </div>
-                          {adapter.mode === "hedera" && (
-                            <div className="mt-0.5 break-all font-mono text-[10px] text-textDim">
-                              {shortAddr(adapter.address)}
-                            </div>
-                          )}
-                        </div>
-                        {auth.status !== "authenticated" && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAccountOpen(false);
-                              redirectAfterAuthRef.current = true;
-                              void signIn();
-                            }}
-                            disabled={onWrongChain}
-                            className="block w-full px-4 py-2.5 text-left text-[12px] font-semibold text-text transition hover:bg-white/[0.06] disabled:opacity-50"
-                          >
-                            {auth.status === "error" ? "Try sign-in again" : "Sign In"}
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            setAccountOpen(false);
-                            await handleDisconnect();
-                          }}
-                          className="block w-full border-t border-border px-4 py-2.5 text-left text-[12px] font-semibold text-error transition hover:bg-error/10"
-                        >
-                          Disconnect
-                        </button>
-                      </div>
-                    </>
-                  )}
                 </div>
               )
             ) : (
               <button
                 type="button"
-                onClick={() => setPickerOpen(true)}
-                disabled={isConnecting}
-                data-testid="nav-connect-wallet-btn"
+                onClick={handleConnect}
+                disabled={isConnecting || !hederaAvailable}
+                title={
+                  !hederaAvailable
+                    ? "WalletConnect not configured (NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID missing)"
+                    : "Two HashPack popups, back-to-back: 1) connect, 2) sign in. Then we land you on /markets."
+                }
                 className="rounded-[2px] border border-white bg-white px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isConnecting
@@ -297,17 +265,6 @@ export function Nav() {
           Connect failed: {connectErrorMsg.slice(0, 160)}
         </div>
       )}
-
-      <WalletConnectModal
-        open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        onPicked={() => {
-          // Arm the post-connect SIWE auto-trigger + redirect. The modal
-          // handles the actual wagmi/hedera connect call itself.
-          autoSignAfterConnectRef.current = true;
-          redirectAfterAuthRef.current = true;
-        }}
-      />
     </>
   );
 }

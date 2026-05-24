@@ -12,7 +12,7 @@
  * Post-expiry, prefer `redeemAfterExpiry` (1:1) over swap — the AMM curve
  * pays slightly less than par. The form auto-disables in that case.
  */
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
@@ -214,53 +214,29 @@ export function SellPtForm({ market, detail, user }: Props) {
     }
   }, [adapter, market, minSyOut, parsedPt, user]);
 
-  // Re-entry guard against double-click after a successful sell (stale
-  // form state would re-submit the same parsedPt before the balance read
-  // refreshes). Synchronous via ref so it survives setIsPending flicker.
-  const chainInFlight = useRef(false);
   const onPrimary = useCallback(async () => {
-    if (chainInFlight.current) return;
     if (!user || parsedPt === 0n || !routerDeployed || expired) return;
     if (insufficient || sizeLimit.exceeded) return;
-    chainInFlight.current = true;
     setWriteError(null);
-    try {
-      if (flowState.kind === "error") {
-        // Resume from the failed step.
-        if (flowState.failedAt === "approve") {
-          const ok = await runApprove();
-          if (!ok) return;
-          const sellOk = await runSell();
-          if (sellOk) {
-            setUsdStr("");
-            setRawStr("");
-            void ptRead.refetch();
-          }
-        } else {
-          const sellOk = await runSell();
-          if (sellOk) {
-            setUsdStr("");
-            setRawStr("");
-            void ptRead.refetch();
-          }
-        }
-        return;
-      }
 
-      if (needsApprove) {
+    if (flowState.kind === "error") {
+      // Resume from the failed step.
+      if (flowState.failedAt === "approve") {
         const ok = await runApprove();
         if (!ok) return;
+        await runSell();
+      } else {
+        await runSell();
       }
-      const sellOk = await runSell();
-      if (sellOk) {
-        setUsdStr("");
-        setRawStr("");
-        void ptRead.refetch();
-      }
-    } finally {
-      chainInFlight.current = false;
+      return;
     }
-  }, [user, parsedPt, routerDeployed, expired, insufficient, sizeLimit.exceeded, flowState, needsApprove, runApprove, runSell, ptRead]);
+
+    if (needsApprove) {
+      const ok = await runApprove();
+      if (!ok) return;
+    }
+    await runSell();
+  }, [user, parsedPt, routerDeployed, expired, insufficient, sizeLimit.exceeded, flowState, needsApprove, runApprove, runSell]);
 
   const isPending =
     adapter.isWritePending ||
@@ -449,17 +425,13 @@ export function SellPtForm({ market, detail, user }: Props) {
           type="button"
           disabled={buttonDisabled}
           onClick={() => void onPrimary()}
-          data-testid="sell-pt-action"
           className="w-full rounded-[10px] bg-white px-7 py-3.5 font-mono text-sm font-semibold uppercase tracking-[1px] text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {buttonLabel()}
         </button>
 
         {writeError && (
-          <div
-            data-testid="sell-pt-error"
-            className="mt-2 rounded-lg border border-error/30 bg-error/10 px-3 py-2 font-mono text-[10px] leading-relaxed text-error"
-          >
+          <div className="mt-2 rounded-lg border border-error/30 bg-error/10 px-3 py-2 font-mono text-[10px] leading-relaxed text-error">
             {flowState.kind === "error" && (
               <div className="mb-1 font-semibold uppercase tracking-[1.5px]">
                 {flowState.failedAt === "approve" ? "Approval failed" : "Swap failed"}
@@ -470,10 +442,7 @@ export function SellPtForm({ market, detail, user }: Props) {
         )}
 
         {flowState.kind === "done" && lastTxHash && (
-          <div
-            data-testid="sell-pt-success"
-            className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-success"
-          >
+          <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-success">
             <div className="font-semibold uppercase tracking-[1px]">PT sold for SY.</div>
             <div className="mt-1 break-all text-[10px] text-success/80">
               tx: {lastTxHash.slice(0, 18)}…{lastTxHash.slice(-8)}

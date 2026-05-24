@@ -14,8 +14,8 @@
  * Post-zap SY-balance reads are Hashio-lag-aware (5× 1s retries) so the
  * approve + buy use the chain-observed delta, not the UI estimate.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useBalance, useReadContracts, useWaitForTransactionReceipt } from "wagmi";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate, ytToSyRate } from "@/components/MarketPositionCard";
@@ -135,23 +135,6 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   const insufficient = effectiveSource === "sy" && parsedSy > syBalance;
   const needsSy = effectiveSource === "sy" && syBalance === 0n;
   const sizeLimit = computeSizeLimit(syForSwap, detail.totalSy, detail.totalPt);
-
-  // HBAR-source gate — see note in BuyPtForm.tsx. Wallet would otherwise
-  // reject the tx with an opaque insufficient/HTTP error instead of
-  // showing the user the real number upfront.
-  const hbarBalanceRead = useBalance({
-    address: user,
-    query: { enabled: !!user && effectiveSource === "hbar" },
-  });
-  const hbarBalanceWhole =
-    hbarBalanceRead.data ? Number(hbarBalanceRead.data.value) / 1e18 : undefined;
-  const hbarHeadroom = 14;
-  const hbarTotalNeeded = effectiveSource === "hbar" ? hbarAmount + hbarHeadroom : 0;
-  const insufficientHbar =
-    effectiveSource === "hbar" &&
-    hbarBalanceWhole !== undefined &&
-    hbarAmount > 0 &&
-    hbarBalanceWhole < hbarTotalNeeded;
 
   /* ─────────────────────────── YT estimate */
 
@@ -366,13 +349,13 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
 
   // MegaZap fast-path: HBAR → YT in a single tx.
   const runMegaZapYt = useCallback(
-    async (hbarIn: number): Promise<{ ok: true } | { ok: false; fallback: boolean }> => {
-      if (!user) return { ok: false, fallback: false };
+    async (hbarIn: number) => {
+      if (!user) return;
       setWriteError(null);
 
       const tokens: `0x${string}`[] = [detail.syShare, HEDERA_TOKENS.WHBAR, detail.yt];
       const okAssoc = await stepAssociate(tokens);
-      if (!okAssoc) return { ok: false, fallback: false };
+      if (!okAssoc) return;
 
       setStatus({ kind: "megaZapping", stepIdx: 0 });
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
@@ -393,35 +376,10 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         });
         setLastTxHash(txHash);
         setStatus({ kind: "done", finalTxHash: txHash });
-        return { ok: true as const };
       } catch (e) {
-        // Hedera SDK throws StatusError as a plain object with `.status`,
-        // NOT a JS Error subclass — `.message` may be empty. Serialize
-        // the whole thing so the fallback regex sees `.status` too.
-        // Observed 2026-05-25: HashPack threw
-        //   {"name":"StatusError","status":"MAX_CHILD_RECORDS_EXCEEDED",
-        //    "transactionId":"0.0.10457309@…", …}
-        // which the prior `e instanceof Error ? e.message : ...` missed.
-        const msg =
-          e instanceof Error
-            ? `${e.message} ${JSON.stringify({ name: e.name })}`
-            : typeof e === "object" && e !== null
-              ? JSON.stringify(e)
-              : String(e);
-        // Fall back to the legacy 4-tx chain for ANY MegaZap failure that's
-        // not user-cancellation: child-records ceiling, Hashio "HTTP client
-        // error" / "RPC submit", insufficient, OOG. Legacy chain has
-        // smaller per-tx gas budgets so it survives the same pre-charge.
-        const isUserCancel = /User rejected|User denied|user.*reject/i.test(msg);
-        const isRecoverable =
-          !isUserCancel &&
-          /MAX_CHILD_RECORDS|CHILD_RECORDS_EXCEEDED|HTTP client error|insufficient|OUT_OF_GAS|RPC submit/i.test(msg);
-        if (isRecoverable) {
-          return { ok: false as const, fallback: true as const };
-        }
+        const msg = e instanceof Error ? e.message : String(e);
         setWriteError(msg);
         setStatus({ kind: "error", message: msg, failedAt: 0 });
-        return { ok: false as const, fallback: false as const };
       }
     },
     [adapter, apy, days, detail.sy, detail.syShare, detail.yt, estimatedSyFromHbar, market, setStatus, slippageBps, stepAssociate, user],
@@ -489,53 +447,28 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     await stepBuyYt(parsedSy);
   }, [adapter.mode, adapter.accountId, detail.yt, hedera, needsApprove, parsedSy, routerDeployed, setStatus, stepApprove, stepBuyYt, syBalance, user]);
 
-  // Re-entry guard — see BuyPtForm note for rationale. Without this, a
-  // double-click during the brief isPending flicker between legs would
-  // launch a second concurrent chain.
-  const chainInFlight = useRef(false);
   const onPrimary = useCallback(async () => {
-    if (chainInFlight.current) return;
     if (!user) return;
-    chainInFlight.current = true;
-    try {
-      if (flowState.kind === "error") {
-        if (effectiveSource === "hbar" && megaZapAvailable) {
-          await runMegaZapYt(hbarAmount);
-          return;
-        }
-        const carry = flowState.syAcquired;
-        await runHbarChainFromStep(flowState.failedAt, carry);
+    if (flowState.kind === "error") {
+      if (effectiveSource === "hbar" && megaZapAvailable) {
+        void runMegaZapYt(hbarAmount);
         return;
       }
-      if (effectiveSource === "hbar") {
-        if (hbarAmount <= 0 || !zapAvailable) return;
-        if (megaZapAvailable) {
-          const r = await runMegaZapYt(hbarAmount);
-          if (!r.ok && r.fallback) {
-            // MegaZap hit MAX_CHILD_RECORDS_EXCEEDED. Walk the legacy
-            // 4-tx chain (each tx has its own 50-record budget). Surface
-            // a notice so the user understands the extra prompts.
-            setWriteError(
-              "MegaZap fast-path unavailable at this size (Hedera child-record limit). " +
-              "Running the multi-tx chain — please sign each prompt."
-            );
-            await runHbarChainFromStep(1);
-          }
-        } else {
-          await runHbarChainFromStep(1);
-        }
+      const carry = flowState.syAcquired;
+      void runHbarChainFromStep(flowState.failedAt, carry);
+      return;
+    }
+    if (effectiveSource === "hbar") {
+      if (hbarAmount <= 0 || !zapAvailable) return;
+      if (megaZapAvailable) {
+        void runMegaZapYt(hbarAmount);
       } else {
-        await runSyChain();
+        void runHbarChainFromStep(1);
       }
-    } finally {
-      chainInFlight.current = false;
+    } else {
+      void runSyChain();
     }
   }, [effectiveSource, flowState, hbarAmount, megaZapAvailable, runHbarChainFromStep, runMegaZapYt, runSyChain, user, zapAvailable]);
-
-  // Input-reset on done removed — was causing React #300 "Maximum update
-  // depth" via a 3-effect oscillation with the existing flowState watcher
-  // below and useBalance polling. chainInFlight ref + the existing
-  // hbarAmount===0 → setFlowState({kind:"idle"}) path are sufficient.
 
   useEffect(() => {
     if (flowState.kind !== "done" && flowState.kind !== "error") return;
@@ -731,10 +664,6 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     if (effectiveSource === "hbar") {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
-      if (insufficientHbar) {
-        const have = hbarBalanceWhole?.toFixed(2) ?? "?";
-        return `Need ${hbarTotalNeeded.toFixed(1)} HBAR (have ${have})`;
-      }
       if (megaZapAvailable) {
         if (flowState.kind === "error") return "Retry MegaZap";
         if (flowState.kind === "associating") return "Associating tokens…";
@@ -775,7 +704,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     isConfirmingFinal ||
     !routerDeployed ||
     (effectiveSource === "hbar"
-      ? hbarAmount === 0 || !zapAvailable || insufficientHbar
+      ? hbarAmount === 0 || !zapAvailable
       : parsedSy === 0n || insufficient || sizeLimit.exceeded);
 
   return (

@@ -8,9 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit",
-    "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@hashgraph/hedera-wallet-connect": "^2.1.3",
@@ -31,7 +29,6 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0",
     "@types/node": "22.10.5",
     "@types/react": "19.0.2",
     "@types/react-dom": "19.0.2",

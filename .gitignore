@@ -60,7 +60,3 @@ audits/mutation/run.log
 deployments/handoff/
 deployments/safe-handoff/
 .vercel
-test-results/
-playwright-report/
-frontend/test-results/
-frontend/playwright-report/

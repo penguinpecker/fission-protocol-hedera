@@ -16,8 +16,7 @@ import { useRouter } from "next/navigation";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
-import { useEffect, useRef, useState } from "react";
-import { WalletConnectModal } from "@/components/WalletConnectModal";
+import { useEffect, useRef } from "react";
 
 export function HeroCta() {
   const adapter = useWalletAdapter();
@@ -81,38 +80,19 @@ export function HeroCta() {
     );
   }
 
-  // Fully disconnected → open the wallet picker modal.
-  return <DisconnectedCta
-    baseClass={baseClass}
-    armRefs={() => {
-      autoSignAfterConnectRef.current = true;
-      redirectAfterAuthRef.current = true;
-    }}
-    hederaPending={hedera.status === "connecting"}
-  />;
-}
-
-function DisconnectedCta({
-  baseClass,
-  armRefs,
-  hederaPending,
-}: {
-  baseClass: string;
-  armRefs: () => void;
-  hederaPending: boolean;
-}) {
-  const [open, setOpen] = useState(false);
+  // Fully disconnected → kick off the combined Connect & Sign chain.
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        disabled={hederaPending}
-        className={baseClass}
-      >
-        {hederaPending ? "Opening…" : "Connect Wallet"}
-      </button>
-      <WalletConnectModal open={open} onClose={() => setOpen(false)} onPicked={armRefs} />
-    </>
+    <button
+      type="button"
+      onClick={async () => {
+        autoSignAfterConnectRef.current = true;
+        redirectAfterAuthRef.current = true;
+        await hedera.connect();
+      }}
+      disabled={hedera.status === "connecting"}
+      className={baseClass}
+    >
+      {hedera.status === "connecting" ? "Opening…" : "Connect Wallet"}
+    </button>
   );
 }

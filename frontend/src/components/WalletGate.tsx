@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useAccount, useChainId } from "wagmi";
 import { HEDERA_MAINNET_CHAIN_ID } from "@/lib/wagmi";
 import { LockIcon } from "@/components/Icons";
 import { diag } from "@/lib/diag";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
-import { WalletConnectModal } from "@/components/WalletConnectModal";
 
 /**
  * Wraps content that should only render when a wallet is connected. We
@@ -73,7 +72,9 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const onConnect = async () => {
+    await hedera.connect();
+  };
 
   return (
     <section className="mx-auto flex min-h-[60vh] max-w-[560px] flex-col items-center px-6 py-20 text-center">
@@ -91,7 +92,7 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
 
       <button
         type="button"
-        onClick={() => setPickerOpen(true)}
+        onClick={onConnect}
         disabled={!hederaAvailable}
         className="mt-8 rounded-xl bg-white px-9 py-[14px] text-[14px] font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
       >
@@ -99,7 +100,7 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
       </button>
 
       <p className="mt-4 text-[12px] text-textDim">
-        Hedera-native (HashPack / Kabila / Blade) and EVM wallets (MetaMask / Rabby / OKX) both supported.
+        Opens a WalletConnect modal. Pick HashPack, Kabila, Blade, or any other Hedera wallet — Ed25519 and ECDSA accounts both work.
       </p>
 
       {hedera.error && (
@@ -108,8 +109,6 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
           <div className="mt-1 break-words font-mono">{hedera.error}</div>
         </div>
       )}
-
-      <WalletConnectModal open={pickerOpen} onClose={() => setPickerOpen(false)} />
     </section>
   );
 }

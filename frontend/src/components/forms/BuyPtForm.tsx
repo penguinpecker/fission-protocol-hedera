@@ -25,8 +25,8 @@
  * lag receipts by 1-2s sometimes, so we poll-refetch up to 5× at 1s
  * intervals until we see the delta materialize.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useBalance, useReadContracts, useWaitForTransactionReceipt } from "wagmi";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate } from "@/components/MarketPositionCard";
@@ -172,29 +172,6 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   const insufficient = effectiveSource === "sy" && parsedSy > syBalance;
   const needsSy = effectiveSource === "sy" && syBalance === 0n;
   const sizeLimit = computeSizeLimit(syForSwap, detail.totalSy, detail.totalPt);
-
-  // HBAR-source forms route through the FissionZap (legacy 4-tx chain) or
-  // MegaZap (1-tx fast-path). Either way the user pays `hbarIn + 5 HBAR
-  // NPM` as value, plus gas. On the legacy chain, gas alone can hit 5-6
-  // HBAR for the heavy zap step (V3 NFT mint). Without a frontend gate,
-  // the wallet rejects the tx with an opaque "insufficient HBAR" or
-  // "HTTP client error" depending on path. Surface the real number here.
-  const hbarBalanceRead = useBalance({
-    address: user,
-    query: { enabled: !!user && effectiveSource === "hbar" },
-  });
-  const hbarBalanceWhole =
-    hbarBalanceRead.data ? Number(hbarBalanceRead.data.value) / 1e18 : undefined;
-  // Total HBAR the user must hold: amount + 5 NPM fee + ~6 HBAR worst-case
-  // gas safety. MegaZap path uses less gas (~2 HBAR) but we use the upper
-  // bound so the gate is honest.
-  const hbarHeadroom = 14;
-  const hbarTotalNeeded = effectiveSource === "hbar" ? hbarAmount + hbarHeadroom : 0;
-  const insufficientHbar =
-    effectiveSource === "hbar" &&
-    hbarBalanceWhole !== undefined &&
-    hbarAmount > 0 &&
-    hbarBalanceWhole < hbarTotalNeeded;
 
   /* ─────────────────────────── PT estimate + slippage floor */
 
@@ -427,14 +404,14 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   // that the MegaZap might emit dust against) — association is a wallet
   // operation, not a contract one, so it can't be folded into the same tx.
   const runMegaZapPt = useCallback(
-    async (hbarIn: number): Promise<{ ok: true } | { ok: false; fallback: boolean }> => {
-      if (!user) return { ok: false, fallback: false };
+    async (hbarIn: number) => {
+      if (!user) return;
       setWriteError(null);
 
       // Step 0 (off-chain): associate destination tokens if needed.
       const tokens: `0x${string}`[] = [detail.syShare, HEDERA_TOKENS.WHBAR, detail.pt];
       const okAssoc = await stepAssociate(tokens);
-      if (!okAssoc) return { ok: false, fallback: false };
+      if (!okAssoc) return;
 
       setStatus({ kind: "megaZapping", stepIdx: 0 });
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
@@ -455,34 +432,10 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         });
         setLastTxHash(txHash);
         setStatus({ kind: "done", finalTxHash: txHash });
-        return { ok: true as const };
       } catch (e) {
-        // Hedera SDK throws StatusError as a plain object with a `status`
-        // field, NOT a JS Error subclass — `.message` may be empty or
-        // generic. Serialize the whole thing so the fallback regex can
-        // see all error fields. Observed live 2026-05-25:
-        //   {"name":"StatusError","status":"MAX_CHILD_RECORDS_EXCEEDED",
-        //    "transactionId":"0.0.10457309@…","message":"receipt for…"}
-        const msg =
-          e instanceof Error
-            ? `${e.message} ${JSON.stringify({ name: e.name })}`
-            : typeof e === "object" && e !== null
-              ? JSON.stringify(e)
-              : String(e);
-        // Fall back to the legacy 4-tx chain for ANY MegaZap-side failure
-        // that's not user-cancellation. Legacy chain has smaller per-tx
-        // gas budgets so it survives the same pre-charge / child-record
-        // ceiling that breaks MegaZap.
-        const isUserCancel = /User rejected|User denied|user.*reject/i.test(msg);
-        const isRecoverable =
-          !isUserCancel &&
-          /MAX_CHILD_RECORDS|CHILD_RECORDS_EXCEEDED|HTTP client error|insufficient|OUT_OF_GAS|RPC submit/i.test(msg);
-        if (isRecoverable) {
-          return { ok: false as const, fallback: true as const };
-        }
+        const msg = e instanceof Error ? e.message : String(e);
         setWriteError(msg);
         setStatus({ kind: "error", message: msg, failedAt: 0 });
-        return { ok: false as const, fallback: false as const };
       }
     },
     [adapter, detail.pt, detail.sy, detail.syShare, market, ptEstimate, setStatus, slippageBps, stepAssociate, user],
@@ -562,66 +515,30 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
 
   /* ─────────────────────────── primary handler */
 
-  // Re-entry guard: blocks duplicate chains from a double-click. The chain
-  // orchestrators (runMegaZapPt / runHbarChainFromStep / runSyChain) call
-  // setStatus internally so isPending flickers — without a synchronous ref
-  // guard, a click landing during that gap launches a second concurrent
-  // chain and submits two on-chain txs.
-  const chainInFlight = useRef(false);
   const onPrimary = useCallback(async () => {
-    if (chainInFlight.current) return;
     if (!user) return;
-    chainInFlight.current = true;
-    try {
-      if (flowState.kind === "error") {
-        // Retry. MegaZap path: retry the single-tx fast-path; if it hits
-        // the child-records ceiling, transparently fall back to the
-        // legacy chain. Legacy chain: resume from the failed step.
-        if (effectiveSource === "hbar" && megaZapAvailable) {
-          const r = await runMegaZapPt(hbarAmount);
-          if (!r.ok && r.fallback) {
-            setWriteError(
-              "MegaZap fast-path unavailable at this size (Hedera child-record limit). " +
-              "Running the multi-tx chain — please sign each prompt."
-            );
-            await runHbarChainFromStep(1);
-          }
-          return;
-        }
-        const carry = flowState.syAcquired;
-        await runHbarChainFromStep(flowState.failedAt, carry);
+    if (flowState.kind === "error") {
+      // Retry. MegaZap path: retry the single-tx fast-path. Legacy chain:
+      // resume from the failed step (so a successful zap doesn't re-run).
+      if (effectiveSource === "hbar" && megaZapAvailable) {
+        void runMegaZapPt(hbarAmount);
         return;
       }
-      if (effectiveSource === "hbar") {
-        if (hbarAmount <= 0 || !zapAvailable) return;
-        if (megaZapAvailable) {
-          const r = await runMegaZapPt(hbarAmount);
-          if (!r.ok && r.fallback) {
-            setWriteError(
-              "MegaZap fast-path unavailable at this size (Hedera child-record limit). " +
-              "Running the multi-tx chain — please sign each prompt."
-            );
-            await runHbarChainFromStep(1);
-          }
-        } else {
-          await runHbarChainFromStep(1);
-        }
+      const carry = flowState.syAcquired;
+      void runHbarChainFromStep(flowState.failedAt, carry);
+      return;
+    }
+    if (effectiveSource === "hbar") {
+      if (hbarAmount <= 0 || !zapAvailable) return;
+      if (megaZapAvailable) {
+        void runMegaZapPt(hbarAmount);
       } else {
-        await runSyChain();
+        void runHbarChainFromStep(1);
       }
-    } finally {
-      chainInFlight.current = false;
+    } else {
+      void runSyChain();
     }
   }, [effectiveSource, flowState, hbarAmount, megaZapAvailable, runHbarChainFromStep, runMegaZapPt, runSyChain, user, zapAvailable]);
-
-  // Input-reset on done is handled inside the existing flowState-watcher
-  // effect below (setFlowState({ kind: "idle" }) once hbarAmount/parsedSy
-  // reaches zero). The earlier dedicated `if (kind === "done")` effect was
-  // removed because it triggered React #300 "Maximum update depth" — the
-  // combo of (a) this effect setting strings, (b) the existing watcher
-  // re-firing on hbarAmount=0, and (c) `useBalance` polling created a
-  // 3-effect oscillation. The chainInFlight ref above is sufficient on its
-  // own to block duplicate clicks.
 
   // Reset flow state when the user switches mode or clears their input — so
   // the "Retry from step N" button doesn't linger on a different trade.
@@ -826,10 +743,6 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     if (effectiveSource === "hbar") {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
-      if (insufficientHbar) {
-        const have = hbarBalanceWhole?.toFixed(2) ?? "?";
-        return `Need ${hbarTotalNeeded.toFixed(1)} HBAR (have ${have})`;
-      }
       if (megaZapAvailable) {
         // Fast path. The MegaZap is a single contract call — at most one
         // associate popup beforehand on Hedera mode.
@@ -873,7 +786,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     isConfirmingFinal ||
     !routerDeployed ||
     (effectiveSource === "hbar"
-      ? hbarAmount === 0 || !zapAvailable || insufficientHbar
+      ? hbarAmount === 0 || !zapAvailable
       : parsedSy === 0n || insufficient || sizeLimit.exceeded);
 
   return (

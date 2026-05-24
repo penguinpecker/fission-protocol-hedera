@@ -13,7 +13,7 @@
  * so the form auto-disables and points users to the residual-rewards-claim
  * path.
  */
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
@@ -167,14 +167,9 @@ export function SellYtForm({ market, detail, user }: Props) {
 
   /* ─────────────────────────── primary handler */
 
-  // Re-entry guard — synchronous to the click so a double-click can't
-  // submit two concurrent swapExactYtForSy with the same parsed YT amount.
-  const chainInFlight = useRef(false);
   const onPrimary = useCallback(async () => {
-    if (chainInFlight.current) return;
     if (!user || parsedYt === 0n || expired) return;
     if (insufficient || sizeLimit.exceeded) return;
-    chainInFlight.current = true;
     setWriteError(null);
     setFlowState({ kind: "selling" });
     try {
@@ -187,18 +182,12 @@ export function SellYtForm({ market, detail, user }: Props) {
       });
       setLastTxHash(txHash);
       setFlowState({ kind: "done", finalTxHash: txHash });
-      // Clear input so a stale form state can't drive a duplicate sell.
-      setUsdStr("");
-      setRawStr("");
-      void ytRead.refetch();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setWriteError(msg);
       setFlowState({ kind: "error", message: msg });
-    } finally {
-      chainInFlight.current = false;
     }
-  }, [adapter, expired, insufficient, market, minSyOut, parsedYt, sizeLimit.exceeded, user, ytRead]);
+  }, [adapter, expired, insufficient, market, minSyOut, parsedYt, sizeLimit.exceeded, user]);
 
   const isPending = adapter.isWritePending || flowState.kind === "selling";
   const isDoneFinal = flowState.kind === "done";
