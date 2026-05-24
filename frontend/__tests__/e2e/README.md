@@ -21,10 +21,11 @@ E2E_BASE_URL=https://fission-protocol-XYZ-penguinpeckers-projects.vercel.app npm
 
 ## What's tested today
 
-| File | What it covers |
-|---|---|
-| `wallet-connect.spec.ts` | EIP-6963 + injected detection, modal open, MetaMask click, account chip render — zero React-fatal errors |
-| `routes-smoke.spec.ts` | Every page (`/`, `/markets`, market overview, PT/YT/LP strategies, `/profile`) renders without React #300 / hooks-order violations |
+| File | Status | What it covers |
+|---|---|---|
+| `wallet-connect.spec.ts` | ✓ passes 1.6s against prod | EIP-6963 + injected detection, modal open, MetaMask click, account chip render — zero React-fatal errors |
+| `routes-smoke.spec.ts` | ✓ passes 38s against prod | Every page (`/`, `/markets`, market overview, PT/YT/LP strategies, `/profile`) renders without React #300 / hooks-order violations |
+| `sell-pt.spec.ts` | template — needs local validation | Connect → navigate to PT page → Sell tab → enter amount → click → assert success state. Tests REAL on-chain submission via mock-signed walletClient. |
 
 **These two specs alone would have caught:**
 - React #300 from the WalletConnectModal hooks-order regression
@@ -72,16 +73,31 @@ Two-tier error model in `helpers/connect.ts`:
 Tests use `strictMode: true` for the per-route assertions so cosmetic
 console noise doesn't break CI.
 
-## What's NOT tested (deliberate scope cuts)
+## What's NOT yet tested (templates exist; need validation against
+   preview deploy)
 
-### 1. Strategy transactions with real on-chain execution
+### 1. Strategy transactions — `sell-pt.spec.ts` is the template
 
-Tests like "Buy YT submits a tx + assert success state" would burn real
-HBAR on every CI run (~$0.05-0.50 per test, multiplied by frequency).
+The pattern is established but needs iterative debug against the
+preview deploy (where the new `data-testid` attrs exist):
 
-**To add:** extend `evm-mock.ts` with a `dryRun` mode that returns a fake
-tx hash without forwarding to Hashio. Then write strategy specs that drive
-the form, mock the receipt response, and assert the UI handles done state.
+1. `cd frontend && E2E_BASE_URL=https://<preview-url> npm run test:e2e:headed -- sell-pt.spec.ts`
+2. Watch the browser. The failure is in one of:
+   - WalletGate gating sub-pages (wagmi reconnect timing across navigation)
+   - Tab button selector mismatch
+   - MoneyInput testid placement
+   - Action button state (disabled because of size-limit gate, allowance gate, etc.)
+3. Adjust selectors / waits / amounts until green.
+
+Once `sell-pt.spec.ts` passes, the same pattern duplicates for
+`sell-yt.spec.ts`, `buy-pt.spec.ts`, etc. ~30 min each.
+
+### Cost when fully wired
+~$0.05-0.50 per strategy test in HBAR gas. Mitigation paths:
+- Run on a dedicated test wallet with a small budget
+- Cap concurrent runs in CI
+- Add a `dryRun` mode to `evm-mock.ts` that returns a fake hash without
+  forwarding to Hashio (UI-only assertions, no chain state)
 
 ### 2. Hedera-mode (HashPack-equivalent) mock
 
