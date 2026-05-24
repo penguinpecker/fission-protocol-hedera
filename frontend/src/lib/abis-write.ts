@@ -217,6 +217,50 @@ export const megaZapAbi = [
   },
 ] as const;
 
+// FissionUnzap (2026-05-25). Mirror of FissionZap; takes a position token
+// (PT or LP) or SY shares and delivers native HBAR. Composes router_v3
+// + sy.redeemLiquidity + SaucerSwap V2 USDC→WHBAR + WHBAR.withdraw.
+export const fissionUnzapAbi = [
+  {
+    type: "function",
+    name: "sellPtForHbar",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "ptIn", type: "uint256" },
+      { name: "minHbarOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "hbarOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "unzapSy",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "sy", type: "address" },
+      { name: "sharesIn", type: "uint256" },
+      { name: "minHbarOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+    ],
+    outputs: [{ name: "hbarOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "sellLpForHbar",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "lpIn", type: "uint256" },
+      { name: "minHbarOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "hbarOut", type: "uint256" }],
+  },
+] as const;
+
 export const syWriteAbi = [
   {
     type: "function",
