@@ -427,14 +427,14 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   // that the MegaZap might emit dust against) — association is a wallet
   // operation, not a contract one, so it can't be folded into the same tx.
   const runMegaZapPt = useCallback(
-    async (hbarIn: number) => {
-      if (!user) return;
+    async (hbarIn: number): Promise<{ ok: true } | { ok: false; fallback: boolean }> => {
+      if (!user) return { ok: false, fallback: false };
       setWriteError(null);
 
       // Step 0 (off-chain): associate destination tokens if needed.
       const tokens: `0x${string}`[] = [detail.syShare, HEDERA_TOKENS.WHBAR, detail.pt];
       const okAssoc = await stepAssociate(tokens);
-      if (!okAssoc) return;
+      if (!okAssoc) return { ok: false, fallback: false };
 
       setStatus({ kind: "megaZapping", stepIdx: 0 });
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
@@ -455,10 +455,18 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         });
         setLastTxHash(txHash);
         setStatus({ kind: "done", finalTxHash: txHash });
+        return { ok: true as const };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        // Same MAX_CHILD_RECORDS fallback as BuyYt — MegaZap sits at
+        // Hedera's 50-children ceiling and can tip over on certain pool
+        // states. Surface the fallback signal to the caller.
+        if (/MAX_CHILD_RECORDS|CHILD_RECORDS_EXCEEDED/i.test(msg)) {
+          return { ok: false as const, fallback: true as const };
+        }
         setWriteError(msg);
         setStatus({ kind: "error", message: msg, failedAt: 0 });
+        return { ok: false as const, fallback: false as const };
       }
     },
     [adapter, detail.pt, detail.sy, detail.syShare, market, ptEstimate, setStatus, slippageBps, stepAssociate, user],
@@ -550,10 +558,18 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     chainInFlight.current = true;
     try {
       if (flowState.kind === "error") {
-        // Retry. MegaZap path: retry the single-tx fast-path. Legacy chain:
-        // resume from the failed step (so a successful zap doesn't re-run).
+        // Retry. MegaZap path: retry the single-tx fast-path; if it hits
+        // the child-records ceiling, transparently fall back to the
+        // legacy chain. Legacy chain: resume from the failed step.
         if (effectiveSource === "hbar" && megaZapAvailable) {
-          await runMegaZapPt(hbarAmount);
+          const r = await runMegaZapPt(hbarAmount);
+          if (!r.ok && r.fallback) {
+            setWriteError(
+              "MegaZap fast-path unavailable at this size (Hedera child-record limit). " +
+              "Running the multi-tx chain — please sign each prompt."
+            );
+            await runHbarChainFromStep(1);
+          }
           return;
         }
         const carry = flowState.syAcquired;
@@ -563,7 +579,14 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
       if (effectiveSource === "hbar") {
         if (hbarAmount <= 0 || !zapAvailable) return;
         if (megaZapAvailable) {
-          await runMegaZapPt(hbarAmount);
+          const r = await runMegaZapPt(hbarAmount);
+          if (!r.ok && r.fallback) {
+            setWriteError(
+              "MegaZap fast-path unavailable at this size (Hedera child-record limit). " +
+              "Running the multi-tx chain — please sign each prompt."
+            );
+            await runHbarChainFromStep(1);
+          }
         } else {
           await runHbarChainFromStep(1);
         }
