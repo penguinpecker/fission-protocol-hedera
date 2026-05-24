@@ -27,6 +27,7 @@ import {
   syWriteAbi,
   fissionZapAbi,
   megaZapAbi,
+  fissionUnzapAbi,
 } from "@/lib/abis-write";
 
 export type WriteOp =
@@ -148,6 +149,33 @@ export type WriteOp =
       receiver: `0x${string}`;
       deadline: bigint;
       hbarIn: number;
+    }
+  // FissionUnzap ops: 1-tx PT/LP/SY → native HBAR.
+  | {
+      kind: "sellPtForHbar";
+      unzap: `0x${string}`;
+      market: `0x${string}`;
+      ptIn: bigint;
+      minHbarOut: bigint;
+      receiver: `0x${string}`;
+      deadline: bigint;
+    }
+  | {
+      kind: "unzapSy";
+      unzap: `0x${string}`;
+      sy: `0x${string}`;
+      sharesIn: bigint;
+      minHbarOut: bigint;
+      receiver: `0x${string}`;
+    }
+  | {
+      kind: "sellLpForHbar";
+      unzap: `0x${string}`;
+      market: `0x${string}`;
+      lpIn: bigint;
+      minHbarOut: bigint;
+      receiver: `0x${string}`;
+      deadline: bigint;
     };
 
 interface AdapterState {
@@ -417,6 +445,33 @@ async function writeEvm(
           value: parseEther(String(op.hbarIn + 5)),
         }),
       };
+    case "sellPtForHbar":
+      return {
+        txHash: await writeContractAsync({
+          abi: fissionUnzapAbi,
+          address: op.unzap,
+          functionName: "sellPtForHbar",
+          args: [op.market, op.ptIn, op.minHbarOut, op.receiver, op.deadline],
+        }),
+      };
+    case "unzapSy":
+      return {
+        txHash: await writeContractAsync({
+          abi: fissionUnzapAbi,
+          address: op.unzap,
+          functionName: "unzapSy",
+          args: [op.sy, op.sharesIn, op.minHbarOut, op.receiver],
+        }),
+      };
+    case "sellLpForHbar":
+      return {
+        txHash: await writeContractAsync({
+          abi: fissionUnzapAbi,
+          address: op.unzap,
+          functionName: "sellLpForHbar",
+          args: [op.market, op.lpIn, op.minHbarOut, op.receiver, op.deadline],
+        }),
+      };
   }
 }
 
@@ -678,6 +733,46 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
           .addUint256(toBN(op.deadline)),
         op.hbarIn + 5,
         15_000_000,
+      );
+    case "sellPtForHbar":
+      // 8M gas — observed smoke used ~3M with ~30 child records out of 50.
+      // Headroom for V3 tick crossings during volatile state.
+      return exec(
+        op.unzap,
+        "sellPtForHbar",
+        new ContractFunctionParameters()
+          .addAddress(op.market)
+          .addUint256(toBN(op.ptIn))
+          .addUint256(toBN(op.minHbarOut))
+          .addAddress(op.receiver)
+          .addUint256(toBN(op.deadline)),
+        0,
+        8_000_000,
+      );
+    case "unzapSy":
+      return exec(
+        op.unzap,
+        "unzapSy",
+        new ContractFunctionParameters()
+          .addAddress(op.sy)
+          .addUint256(toBN(op.sharesIn))
+          .addUint256(toBN(op.minHbarOut))
+          .addAddress(op.receiver),
+        0,
+        6_000_000,
+      );
+    case "sellLpForHbar":
+      return exec(
+        op.unzap,
+        "sellLpForHbar",
+        new ContractFunctionParameters()
+          .addAddress(op.market)
+          .addUint256(toBN(op.lpIn))
+          .addUint256(toBN(op.minHbarOut))
+          .addAddress(op.receiver)
+          .addUint256(toBN(op.deadline)),
+        0,
+        10_000_000,
       );
   }
 }

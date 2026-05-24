@@ -962,6 +962,14 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
   const [writeError, setWriteError] = useState<string | null>(null);
   // Re-entry guard for chained approve→remove flow (see AddLp's note).
   const chainInFlight = useRef(false);
+  // Output destination toggle. SY-mode returns SY shares + PT (default,
+  // matches the existing chained removeLiquidityProportional). HBAR-mode
+  // routes through FissionUnzap.sellLpForHbar — burns LP, swaps both
+  // halves to SY, redeems to USDC+WHBAR, swaps USDC→WHBAR, unwraps to
+  // native HBAR. Single signature after one-time LP approve to unzap.
+  const unzapAvailable = isDeployed(ADDRESSES.fissionUnzap);
+  const [outputMode, setOutputMode] = useState<"sy_pt" | "hbar">("sy_pt");
+  const effectiveOutputMode = unzapAvailable ? outputMode : "sy_pt";
 
   const useWagmiReceipt = adapter.mode === "evm";
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
@@ -988,6 +996,10 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
     return (syPerLp + ptPerLp * ptRate) * usdPerShare;
   }, [usdPerShare, detail.totalSy, detail.totalPt, detail.lpSupply, ptRate]);
 
+  // The LP-allowance spender depends on output mode — router for SY+PT
+  // removal, FissionUnzap for the HBAR-output one-shot.
+  const lpSpender: `0x${string}` =
+    effectiveOutputMode === "hbar" ? ADDRESSES.fissionUnzap : ADDRESSES.router;
   const allowanceRead = useReadContracts({
     contracts: user
       ? [
@@ -1006,7 +1018,7 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
             ] as const,
             address: detail.lp,
             functionName: "allowance",
-            args: [user, ADDRESSES.router],
+            args: [user, lpSpender],
           } as const,
         ]
       : [],
@@ -1058,7 +1070,7 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
         adapter.write({
           kind: "approveErc20",
           token: detail.lp,
-          spender: ADDRESSES.router,
+          spender: lpSpender, // router for SY+PT removal, unzap for HBAR
           amount: MAX_HTS_APPROVE,
         }),
       );
@@ -1074,18 +1086,28 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
     if (!user || parsedLp === 0n || !routerDeployed || insufficientLp) return false;
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     try {
-      const { txHash: hash } = await wrap(() =>
-        adapter.write({
-          kind: "removeLiquidity",
-          router: ADDRESSES.router,
-          market,
-          lpIn: parsedLp,
-          minSyOut,
-          minPtOut,
-          receiver: user,
-          deadline,
-        }),
-      );
+      const writeOp =
+        effectiveOutputMode === "hbar"
+          ? {
+              kind: "sellLpForHbar" as const,
+              unzap: ADDRESSES.fissionUnzap,
+              market,
+              lpIn: parsedLp,
+              minHbarOut: 1n, // permissive floor; unzap-aware lens preview is future work
+              receiver: user,
+              deadline,
+            }
+          : {
+              kind: "removeLiquidity" as const,
+              router: ADDRESSES.router,
+              market,
+              lpIn: parsedLp,
+              minSyOut,
+              minPtOut,
+              receiver: user,
+              deadline,
+            };
+      const { txHash: hash } = await wrap(() => adapter.write(writeOp));
       setTxHash(hash as `0x${string}`);
       return true;
     } catch {
@@ -1184,6 +1206,41 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
             </>
           }
         />
+
+        {unzapAvailable && (
+          <>
+            <SectionDivider label="Receive as" />
+            <div className="flex gap-1 rounded-lg border border-border bg-bgInput p-0.5">
+              <button
+                type="button"
+                onClick={() => setOutputMode("sy_pt")}
+                className={`flex-1 rounded-md px-3 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition ${
+                  effectiveOutputMode === "sy_pt"
+                    ? "bg-white/[0.08] text-text"
+                    : "text-textDim hover:text-text"
+                }`}
+              >
+                SY + PT (default)
+              </button>
+              <button
+                type="button"
+                onClick={() => setOutputMode("hbar")}
+                className={`flex-1 rounded-md px-3 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition ${
+                  effectiveOutputMode === "hbar"
+                    ? "bg-white/[0.08] text-text"
+                    : "text-textDim hover:text-text"
+                }`}
+              >
+                HBAR
+              </button>
+            </div>
+            <p className="-mt-1 font-mono text-[10px] text-textDim">
+              {effectiveOutputMode === "hbar"
+                ? "1 tx: burn LP, swap PT side to SY, redeem to USDC+WHBAR, unwrap. HBAR lands in wallet."
+                : "Receive both sides separately (SY shares + PT). Default flow."}
+            </p>
+          </>
+        )}
 
         <SectionDivider label="Input" />
 
