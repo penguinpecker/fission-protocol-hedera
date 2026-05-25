@@ -116,11 +116,16 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!lastTxHash;
   const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
   const routerDeployed = isDeployed(ADDRESSES.router);
+  // `isPending` must include the inter-step states (`zapped`, `approved`)
+  // so the button stays disabled BETWEEN wallet popups in the chain.
+  // Otherwise the user can double-press and fire a parallel chain.
   const isPending =
     adapter.isWritePending ||
     flowState.kind === "associating" ||
     flowState.kind === "zapping" ||
+    flowState.kind === "zapped" ||
     flowState.kind === "approving" ||
+    flowState.kind === "approved" ||
     flowState.kind === "buying" ||
     flowState.kind === "megaZapping";
 
@@ -788,10 +793,12 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         const stepName = ["", "association", "zap", "approve", "buy"][flowState.failedAt] ?? "step";
         return `Retry from ${stepName}`;
       }
-      if (flowState.kind === "associating") return "Associating tokens…";
-      if (flowState.kind === "zapping") return "Minting SY from HBAR…";
+      if (flowState.kind === "associating") return "1/2 · Associating tokens…";
+      if (flowState.kind === "zapping") return "1/2 · Minting SY from HBAR…";
+      if (flowState.kind === "zapped") return "1/2 done · preparing approve…";
       if (flowState.kind === "approving") return "Approving SY for Router…";
-      if (flowState.kind === "buying") return "Buying PT…";
+      if (flowState.kind === "approved") return "2/2 · preparing Buy PT…";
+      if (flowState.kind === "buying") return "2/2 · Buying PT…";
       if (flowState.kind === "done") return "✓ Done";
       return `Buy PT via Zap`;
     }

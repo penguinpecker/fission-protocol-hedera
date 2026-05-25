@@ -100,11 +100,19 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!lastTxHash;
   const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
   const routerDeployed = isDeployed(ADDRESSES.router);
+  // `isPending` controls button-disable + spinner labels. CRITICAL: this
+  // must also be true during the SHORT inter-step states (`zapped`,
+  // `approved`) — those are the transitions BETWEEN wallet popups in the
+  // 2/4-step chain. Without them the button reverts to the idle label and
+  // a user re-press fires a second parallel chain. Live capture
+  // 1779723347→1779723377: user double-bought YT for exactly that reason.
   const isPending =
     adapter.isWritePending ||
     flowState.kind === "associating" ||
     flowState.kind === "zapping" ||
+    flowState.kind === "zapped" ||
     flowState.kind === "approving" ||
+    flowState.kind === "approved" ||
     flowState.kind === "buying" ||
     flowState.kind === "megaZapping";
 
@@ -730,10 +738,12 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         const stepName = ["", "association", "zap", "approve", "buy"][flowState.failedAt] ?? "step";
         return `Retry from ${stepName}`;
       }
-      if (flowState.kind === "associating") return "Associating tokens…";
-      if (flowState.kind === "zapping") return "Minting SY from HBAR…";
+      if (flowState.kind === "associating") return "1/2 · Associating tokens…";
+      if (flowState.kind === "zapping") return "1/2 · Minting SY from HBAR…";
+      if (flowState.kind === "zapped") return "1/2 done · preparing approve…";
       if (flowState.kind === "approving") return "Approving SY for Router…";
-      if (flowState.kind === "buying") return "Buying YT…";
+      if (flowState.kind === "approved") return "2/2 · preparing Buy YT…";
+      if (flowState.kind === "buying") return "2/2 · Buying YT…";
       if (flowState.kind === "done") return "✓ Done";
       return `Buy YT via Zap`;
     }
