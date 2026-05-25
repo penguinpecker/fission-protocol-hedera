@@ -115,7 +115,11 @@ function SellSyForm({ market, detail, user }: FormProps) {
   const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
   const [usdStr, setUsdStr] = useState("");
   const [rawStr, setRawStr] = useState("");
-  const [slippageBps, setSlippageBps] = useState(50);
+  // Default 2% (200 bps) — the unzap pipeline has ~0.5-1% baked-in cost
+  // from the V2 USDC→WHBAR swap fee + curve impact, so 0.5% defaults
+  // reverted in live use (tx 0.0.10457309-1779736762-016232190). 2%
+  // keeps small trades safe; user can tighten via the chips.
+  const [slippageBps, setSlippageBps] = useState(200);
 
   const [flowState, setFlowState] = useState<FlowKind>({ kind: "idle" });
   const [lastTxHash, setLastTxHash] = useState<string | undefined>(undefined);
@@ -129,7 +133,7 @@ function SellSyForm({ market, detail, user }: FormProps) {
   const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!lastTxHash;
   const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
 
-  const unzapDeployed = isDeployed(ADDRESSES.fissionUnzap);
+  const unzapDeployed = isDeployed(ADDRESSES.fissionGateway);
 
   // SY balance + allowance to the unzap.
   const reads = useReadContracts({
@@ -164,7 +168,7 @@ function SellSyForm({ market, detail, user }: FormProps) {
             ] as const,
             address: detail.syShare,
             functionName: "allowance",
-            args: [user, ADDRESSES.fissionUnzap],
+            args: [user, ADDRESSES.fissionGateway],
           } as const,
         ]
       : [],
@@ -217,7 +221,7 @@ function SellSyForm({ market, detail, user }: FormProps) {
         const aResp = await adapter.write({
           kind: "approveErc20",
           token: detail.syShare,
-          spender: ADDRESSES.fissionUnzap,
+          spender: ADDRESSES.fissionGateway,
           amount: MAX_HTS_APPROVE,
         });
         setLastTxHash(aResp.txHash);
@@ -226,10 +230,14 @@ function SellSyForm({ market, detail, user }: FormProps) {
       }
 
       setFlowState({ kind: "selling" });
+      // Gateway v2: `sy` is the SY ADAPTER address (not the share token).
+      // The gateway resolves shareToken from the adapter internally — this
+      // is the v1 bug fix. `unzap` field is preserved for backward compat
+      // but ignored by the adapter (routes through ADDRESSES.fissionGateway).
       const uResp = await adapter.write({
         kind: "unzapSy",
-        unzap: ADDRESSES.fissionUnzap,
-        sy: detail.syShare,
+        unzap: ADDRESSES.fissionGateway,
+        sy: detail.sy,
         sharesIn: parsedSy,
         minHbarOut: minHbarOutTinybar,
         receiver: user,

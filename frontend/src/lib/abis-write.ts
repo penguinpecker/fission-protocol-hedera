@@ -261,6 +261,107 @@ export const fissionUnzapAbi = [
   },
 ] as const;
 
+// FissionGateway v2 (2026-05-26) — unified periphery replacing MegaZap +
+// FissionUnzap. Single contract for every HBAR↔PT/YT/LP/SY user action.
+// Takes only the market address per function (resolves token addresses
+// internally). FIXES the v1 unzapSy dual-address bug by deriving the HTS
+// share token from the SY adapter via `shareToken()`.
+export const fissionGatewayAbi = [
+  {
+    type: "function",
+    name: "zapHbarToPt",
+    stateMutability: "payable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "minPtOut", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "ptOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "zapHbarToYt",
+    stateMutability: "payable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "minSyOutFromPtSale", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [
+      { name: "ytOut", type: "uint256" },
+      { name: "syRefund", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "zapHbarToLp",
+    stateMutability: "payable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "ptShareBps", type: "uint16" },
+      { name: "minLpOut", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "lpOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "zapHbarToSy",
+    stateMutability: "payable",
+    inputs: [
+      { name: "syAdapter", type: "address" },
+      { name: "receiver", type: "address" },
+    ],
+    outputs: [{ name: "shares", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "sellPtForHbar",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "ptIn", type: "uint256" },
+      { name: "minHbarOut", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "hbarOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "sellLpForHbar",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "lpIn", type: "uint256" },
+      { name: "minHbarOut", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "hbarOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "unzapSyForHbar",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "syAdapter", type: "address" },
+      { name: "sharesIn", type: "uint256" },
+      { name: "minHbarOut", type: "uint256" },
+    ],
+    outputs: [{ name: "hbarOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "sweepAllToHbar",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "minHbarOut", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "hbarOut", type: "uint256" }],
+  },
+] as const;
+
 export const syWriteAbi = [
   {
     type: "function",

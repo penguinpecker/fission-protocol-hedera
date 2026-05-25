@@ -25,10 +25,9 @@ import {
   routerAbi,
   marketWriteAbi,
   syWriteAbi,
-  fissionZapAbi,
-  megaZapAbi,
-  fissionUnzapAbi,
+  fissionGatewayAbi,
 } from "@/lib/abis-write";
+import { ADDRESSES } from "@/lib/addresses";
 
 export type WriteOp =
   | { kind: "approveErc20"; token: `0x${string}`; spender: `0x${string}`; amount: bigint }
@@ -361,15 +360,16 @@ async function writeEvm(
         }),
       };
     case "zapHbarToSy": {
-      // Hashio takes wei (1 HBAR = 1e18); Hashio divides by 1e10 before the
-      // contract, which then sees tinybars. parseEther = wei.
+      // Routed through the v2 Gateway. The Gateway forwards msg.value to
+      // FissionZap internally and delivers SY shares to `receiver`. +5
+      // HBAR NPM buffer same as before. Hashio takes wei (1 HBAR = 1e18).
       return {
         txHash: await writeContractAsync({
-          abi: fissionZapAbi,
-          address: op.zap,
+          abi: fissionGatewayAbi,
+          address: ADDRESSES.fissionGateway,
           functionName: "zapHbarToSy",
-          args: [op.sy, 0n, 0n, 0n, 1n, op.receiver],
-          value: parseEther(String(op.hbarIn + 5)), // +5 HBAR NPM
+          args: [op.sy, op.receiver],
+          value: parseEther(String(op.hbarIn + 5)),
         }),
       };
     }
@@ -415,61 +415,69 @@ async function writeEvm(
           args: [op.market, op.lpIn, op.minSyOut, op.minPtOut, op.receiver, op.deadline],
         }),
       };
+    // All HBAR-in / *ForHbar-out paths route through FissionGateway v2.
+    // The op fields keep their original names for backward compat; the
+    // unused ones (op.megaZap, op.unzap, op.sy where it was the share
+    // token, op.receiver) are silently ignored — the gateway resolves
+    // everything from the market address internally and delivers to msg.sender.
     case "zapHbarToPtMega":
       return {
         txHash: await writeContractAsync({
-          abi: megaZapAbi,
-          address: op.megaZap,
+          abi: fissionGatewayAbi,
+          address: ADDRESSES.fissionGateway,
           functionName: "zapHbarToPt",
-          args: [op.market, op.sy, op.minPtOut, op.receiver, op.deadline],
-          value: parseEther(String(op.hbarIn + 5)), // +5 HBAR NPM fee
+          args: [op.market, op.minPtOut, op.deadline],
+          value: parseEther(String(op.hbarIn + 5)), // +5 HBAR NPM buffer
         }),
       };
     case "zapHbarToYtMega":
       return {
         txHash: await writeContractAsync({
-          abi: megaZapAbi,
-          address: op.megaZap,
+          abi: fissionGatewayAbi,
+          address: ADDRESSES.fissionGateway,
           functionName: "zapHbarToYt",
-          args: [op.market, op.sy, op.minSyOutFromPtSale, op.receiver, op.deadline],
+          args: [op.market, op.minSyOutFromPtSale, op.deadline],
           value: parseEther(String(op.hbarIn + 5)),
         }),
       };
     case "zapHbarToLpMega":
       return {
         txHash: await writeContractAsync({
-          abi: megaZapAbi,
-          address: op.megaZap,
+          abi: fissionGatewayAbi,
+          address: ADDRESSES.fissionGateway,
           functionName: "zapHbarToLp",
-          args: [op.market, op.sy, op.ptShareBps, op.minLpOut, op.receiver, op.deadline],
+          args: [op.market, op.ptShareBps, op.minLpOut, op.deadline],
           value: parseEther(String(op.hbarIn + 5)),
         }),
       };
     case "sellPtForHbar":
       return {
         txHash: await writeContractAsync({
-          abi: fissionUnzapAbi,
-          address: op.unzap,
+          abi: fissionGatewayAbi,
+          address: ADDRESSES.fissionGateway,
           functionName: "sellPtForHbar",
-          args: [op.market, op.ptIn, op.minHbarOut, op.receiver, op.deadline],
+          args: [op.market, op.ptIn, op.minHbarOut, op.deadline],
         }),
       };
     case "unzapSy":
+      // NOTE: `op.sy` is now expected to be the SY ADAPTER address (not the
+      // share token). Form callers updated accordingly. Gateway derives the
+      // HTS share token via adapter.shareToken() internally — the bug fix.
       return {
         txHash: await writeContractAsync({
-          abi: fissionUnzapAbi,
-          address: op.unzap,
-          functionName: "unzapSy",
-          args: [op.sy, op.sharesIn, op.minHbarOut, op.receiver],
+          abi: fissionGatewayAbi,
+          address: ADDRESSES.fissionGateway,
+          functionName: "unzapSyForHbar",
+          args: [op.sy, op.sharesIn, op.minHbarOut],
         }),
       };
     case "sellLpForHbar":
       return {
         txHash: await writeContractAsync({
-          abi: fissionUnzapAbi,
-          address: op.unzap,
+          abi: fissionGatewayAbi,
+          address: ADDRESSES.fissionGateway,
           functionName: "sellLpForHbar",
-          args: [op.market, op.lpIn, op.minHbarOut, op.receiver, op.deadline],
+          args: [op.market, op.lpIn, op.minHbarOut, op.deadline],
         }),
       };
   }
@@ -625,17 +633,17 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
         4_500_000,
       );
     case "zapHbarToSy":
+      // Routed through FissionGateway v2. Gateway internally forwards
+      // msg.value to FissionZap with the right NPM-fee handling. The
+      // op.zap field is preserved on WriteOp for backward compat but
+      // ignored here — we always go through ADDRESSES.fissionGateway.
       return exec(
-        op.zap,
+        ADDRESSES.fissionGateway,
         "zapHbarToSy",
         new ContractFunctionParameters()
           .addAddress(op.sy)
-          .addUint256(toBN(0n))
-          .addUint256(toBN(0n))
-          .addUint256(toBN(0n))
-          .addUint128(toBN(1n))
           .addAddress(op.receiver),
-        op.hbarIn + 5, // user input + 5 HBAR NPM fee, in whole HBAR
+        op.hbarIn + 5, // user input + 5 HBAR NPM buffer
         14_500_000,
       );
     case "depositLiquidity":
@@ -694,82 +702,80 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
         0,
         4_000_000,
       );
+    // All HBAR-in / *ForHbar-out paths route through FissionGateway v2.
+    // The op.megaZap / op.unzap fields stay on WriteOp for backward compat
+    // but are ignored — we always go through ADDRESSES.fissionGateway. The
+    // gateway resolves token addresses internally from the market arg, so
+    // op.sy / op.receiver are no longer passed to the contract (gateway
+    // delivers to msg.sender).
     case "zapHbarToPtMega":
       return exec(
-        op.megaZap,
+        ADDRESSES.fissionGateway,
         "zapHbarToPt",
         new ContractFunctionParameters()
           .addAddress(op.market)
-          .addAddress(op.sy)
           .addUint256(toBN(op.minPtOut))
-          .addAddress(op.receiver)
           .addUint256(toBN(op.deadline)),
-        op.hbarIn + 5, // user input + 5 HBAR NPM fee
+        op.hbarIn + 5, // +5 HBAR NPM buffer
         15_000_000,
       );
     case "zapHbarToYtMega":
       return exec(
-        op.megaZap,
+        ADDRESSES.fissionGateway,
         "zapHbarToYt",
         new ContractFunctionParameters()
           .addAddress(op.market)
-          .addAddress(op.sy)
           .addUint256(toBN(op.minSyOutFromPtSale))
-          .addAddress(op.receiver)
           .addUint256(toBN(op.deadline)),
         op.hbarIn + 5,
         15_000_000,
       );
     case "zapHbarToLpMega":
       return exec(
-        op.megaZap,
+        ADDRESSES.fissionGateway,
         "zapHbarToLp",
         new ContractFunctionParameters()
           .addAddress(op.market)
-          .addAddress(op.sy)
-          .addUint16(op.ptShareBps) // matches contract's uint16
+          .addUint32(op.ptShareBps)  // SDK ContractFunctionParameters has addUint32 (no addUint16)
           .addUint256(toBN(op.minLpOut))
-          .addAddress(op.receiver)
           .addUint256(toBN(op.deadline)),
         op.hbarIn + 5,
         15_000_000,
       );
     case "sellPtForHbar":
-      // 8M gas — observed smoke used ~3M with ~30 child records out of 50.
-      // Headroom for V3 tick crossings during volatile state.
       return exec(
-        op.unzap,
+        ADDRESSES.fissionGateway,
         "sellPtForHbar",
         new ContractFunctionParameters()
           .addAddress(op.market)
           .addUint256(toBN(op.ptIn))
           .addUint256(toBN(op.minHbarOut))
-          .addAddress(op.receiver)
           .addUint256(toBN(op.deadline)),
         0,
         8_000_000,
       );
     case "unzapSy":
+      // NOTE: `op.sy` is now expected to be the SY ADAPTER address (not the
+      // share token). The gateway derives the HTS share token via
+      // `adapter.shareToken()` internally — this is the v1 bug fix.
       return exec(
-        op.unzap,
-        "unzapSy",
+        ADDRESSES.fissionGateway,
+        "unzapSyForHbar",
         new ContractFunctionParameters()
           .addAddress(op.sy)
           .addUint256(toBN(op.sharesIn))
-          .addUint256(toBN(op.minHbarOut))
-          .addAddress(op.receiver),
+          .addUint256(toBN(op.minHbarOut)),
         0,
         6_000_000,
       );
     case "sellLpForHbar":
       return exec(
-        op.unzap,
+        ADDRESSES.fissionGateway,
         "sellLpForHbar",
         new ContractFunctionParameters()
           .addAddress(op.market)
           .addUint256(toBN(op.lpIn))
           .addUint256(toBN(op.minHbarOut))
-          .addAddress(op.receiver)
           .addUint256(toBN(op.deadline)),
         0,
         10_000_000,

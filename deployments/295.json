@@ -194,5 +194,19 @@
       "router_v3": "0x00000000000000000000000000000000009fdf89"
     },
     "notes": "One-tx PT/SY/LP → native HBAR. Mirror of FissionZap; uses sy.redeemLiquidity → V2 swap USDC→WHBAR → unwrap WHBAR."
+  },
+  "fission_gateway": {
+    "id": "0.0.10493916",
+    "evm": "0x0000000000000000000000000000000000a01fdc",
+    "deployed_at": "2026-05-25T22:24:17.247Z",
+    "constructor": {
+      "whbar_contract": "0x0000000000000000000000000000000000163b59",
+      "whbar": "0x0000000000000000000000000000000000163b5a",
+      "usdc": "0x000000000000000000000000000000000006f89a",
+      "saucer_v2_router": "0x00000000000000000000000000000000003c437a",
+      "router_v3": "0x00000000000000000000000000000000009fdf89",
+      "fission_zap": "0x00000000000000000000000000000000009fd984"
+    },
+    "notes": "v2 unified periphery — replaces FissionMegaZap + FissionUnzap. Atomic 1-tx for 6 of 7 user flows (Sell YT → HBAR is 2-tx forced by market wipe-on-msg.sender). Lazy int64.max approvals via _ensureApproval drop child-records ~5-9 per call."
   }
 }

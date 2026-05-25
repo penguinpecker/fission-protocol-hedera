@@ -24,17 +24,30 @@ export const ADDRESSES = {
   // Without the lens, Sell YT in particular needs 5%+ slippage tolerance
   // because the linear model drifts ~1.8% high vs the actual logit curve.
   lens: (process.env.NEXT_PUBLIC_LENS_ADDRESS ?? "0x0000000000000000000000000000000000a00fde") as `0x${string}`,
-  // FissionUnzap — 1-tx PT/SY/LP → native HBAR. Mirror of FissionZap. The
-  // user sells their position and HBAR lands in the wallet directly,
-  // skipping the SY → USDC+WHBAR → unwrap chain users would otherwise
-  // need to do manually. Hardcoded fallback per the same pattern as
-  // lens since the address is in committed deployments/295.json.
-  // Deployed 2026-05-25 at 0.0.10492515.
+  // FissionUnzap v1 — 1-tx PT/SY/LP → native HBAR. SUPERSEDED by gateway.
+  // Kept for one cycle so any in-flight allowances users granted to it can
+  // still be exercised; new code paths should call the gateway instead.
   fissionUnzap: (
     process.env.NEXT_PUBLIC_FISSION_UNZAP_ADDRESS &&
     process.env.NEXT_PUBLIC_FISSION_UNZAP_ADDRESS.length > 2
       ? process.env.NEXT_PUBLIC_FISSION_UNZAP_ADDRESS
       : "0x0000000000000000000000000000000000a01a63"
+  ) as `0x${string}`,
+  // FissionGateway — v2 unified periphery (2026-05-26 deploy at 0.0.10493916).
+  // Replaces MegaZap + FissionUnzap with a single contract:
+  //   - takes only market addr per function (resolves PT/YT/LP/SY internally)
+  //   - FIXED unzapSy bug (derives shareToken from adapter via shareToken())
+  //   - lazy int64.max approvals → 4-9 fewer child records per call
+  //   - custom errors with values (SlippageTooHigh, etc.) — no more empty 0x
+  //   - sweep + quote + 2-step ownership + rescueToken
+  // 7 user actions: zapHbarToPt/Yt/Lp/Sy + sellPtForHbar + sellLpForHbar +
+  // unzapSyForHbar (atomic 1-tx each; Buy YT in degenerate pool may fall
+  // back to 2-tx chain — frontend handles the routing).
+  fissionGateway: (
+    process.env.NEXT_PUBLIC_FISSION_GATEWAY_ADDRESS &&
+    process.env.NEXT_PUBLIC_FISSION_GATEWAY_ADDRESS.length > 2
+      ? process.env.NEXT_PUBLIC_FISSION_GATEWAY_ADDRESS
+      : "0x0000000000000000000000000000000000a01fdc"
   ) as `0x${string}`,
 } as const;
 

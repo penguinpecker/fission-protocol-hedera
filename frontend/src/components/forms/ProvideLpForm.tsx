@@ -995,7 +995,7 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
 
   // LP allowance always goes to the FissionUnzap (HBAR-out is the only
   // path this form offers now).
-  const lpSpender: `0x${string}` = ADDRESSES.fissionUnzap;
+  const lpSpender: `0x${string}` = ADDRESSES.fissionGateway;
   const allowanceRead = useReadContracts({
     contracts: user
       ? [
@@ -1085,7 +1085,7 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
       const { txHash: hash } = await wrap(() =>
         adapter.write({
           kind: "sellLpForHbar",
-          unzap: ADDRESSES.fissionUnzap,
+          unzap: ADDRESSES.fissionGateway,
           market,
           lpIn: parsedLp,
           minHbarOut: 1n, // permissive floor; unzap-aware lens preview future work

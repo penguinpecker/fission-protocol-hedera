@@ -95,7 +95,7 @@ export function SellYtForm({ market, detail, user }: Props) {
             ] as const,
             address: detail.syShare,
             functionName: "allowance",
-            args: [user, ADDRESSES.fissionUnzap],
+            args: [user, ADDRESSES.fissionGateway],
           } as const,
         ]
       : [],
@@ -244,7 +244,7 @@ export function SellYtForm({ market, detail, user }: Props) {
         const aResp = await adapter.write({
           kind: "approveErc20",
           token: detail.syShare,
-          spender: ADDRESSES.fissionUnzap,
+          spender: ADDRESSES.fissionGateway,
           amount: MAX_HTS_APPROVE,
         });
         setLastTxHash(aResp.txHash);
@@ -256,8 +256,8 @@ export function SellYtForm({ market, detail, user }: Props) {
       setFlowState({ kind: "unzapping" });
       const uResp = await adapter.write({
         kind: "unzapSy",
-        unzap: ADDRESSES.fissionUnzap,
-        sy: detail.syShare,
+        unzap: ADDRESSES.fissionGateway,
+        sy: detail.sy,
         sharesIn: minSyOut,
         minHbarOut: 1n,
         receiver: user,

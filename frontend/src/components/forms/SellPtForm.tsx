@@ -76,7 +76,7 @@ export function SellPtForm({ market, detail, user }: Props) {
   // composition was deemed worth it for the UX win of HBAR-in-wallet).
   // Approval goes to the unzap; underlying router.swapExactPtForSy is
   // still called by the unzap internally on behalf of the user.
-  const spender: `0x${string}` = ADDRESSES.fissionUnzap;
+  const spender: `0x${string}` = ADDRESSES.fissionGateway;
   const ptRead = useReadContracts({
     contracts: user
       ? [
@@ -201,7 +201,7 @@ export function SellPtForm({ market, detail, user }: Props) {
     try {
       const { txHash } = await adapter.write({
         kind: "sellPtForHbar",
-        unzap: ADDRESSES.fissionUnzap,
+        unzap: ADDRESSES.fissionGateway,
         market,
         ptIn: parsedPt,
         // FissionUnzap converts SY → USDC+WHBAR → HBAR through the V3 pool +
