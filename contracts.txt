@@ -1,0 +1,67 @@
+Fission Protocol — Hedera Mainnet (chain 295)
+Source: deployments/295.json   Last refreshed: 2026-05-25
+
+────────────────────────────────────────────────────────────────────────────
+ Live contracts (current set — Ed25519-fixed redeploy 2026-05-22)
+────────────────────────────────────────────────────────────────────────────
+
+Core
+- Factory                 0.0.10488654   https://hashscan.io/mainnet/contract/0.0.10488654
+- StandardDeployer        0.0.10488646   https://hashscan.io/mainnet/contract/0.0.10488646
+- RewardsDeployer         0.0.10488651   https://hashscan.io/mainnet/contract/0.0.10488651
+- ActionRouter v3         0.0.10477449   https://hashscan.io/mainnet/contract/0.0.10477449
+
+Zaps  (HBAR ⇄ protocol — one-tx UX)
+- FissionZap   HBAR→SY    0.0.10475908   https://hashscan.io/mainnet/contract/0.0.10475908
+- MegaZap      HBAR→PT/YT/LP  0.0.10477452  https://hashscan.io/mainnet/contract/0.0.10477452
+- FissionUnzap PT/SY/LP→HBAR  0.0.10492515  https://hashscan.io/mainnet/contract/0.0.10492515
+
+Lens / read-helper
+- FissionLens             0.0.10489822   https://hashscan.io/mainnet/contract/0.0.10489822
+
+SY adapters  (reused across redeploys)
+- SY SaucerSwap V2 LP     evm  0x00000000000000000000000000000000009fb089
+- SY HBARX                evm  0x80728fbad79974e428c50dc548853ff858d9430c
+
+Market 0 — SaucerSwap V2 LP, 90D-FIX (expiry 2026-08-19T22:25:40Z)
+- Market                  0.0.10488661   evm  0x36ed8f34c9bfc0004f107153b1a16099f8910b58
+- PT  fPT-SS-V2-90D-FIX   0.0.10488662   evm  0x0000000000000000000000000000000000a00b56
+- YT  fYT-SS-V2-90D-FIX   0.0.10488663   evm  0x0000000000000000000000000000000000a00b57
+- LP  fLP-SS-V2-90D-FIX   0.0.10488664   evm  0x0000000000000000000000000000000000a00b58
+
+Governance  (operator-keyed today; multisig handoff at the very end)
+- ThresholdAccount (2/2)  0.0.10469822   evm  0x00000000000000000000000000000000009fc1be
+- TimelockController      0.0.10469824   evm  0x00000000000000000000000000000000009fc1c0
+- Operator (deployer)     0.0.10463169   evm  0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90
+- Cosigner (ed25519)      0.0.10457309   evm  0x00000000000000000000000000000000009f90dd
+
+────────────────────────────────────────────────────────────────────────────
+ Abandoned but on-chain  (positions still withdrawable; new mints disabled)
+────────────────────────────────────────────────────────────────────────────
+
+Old market (Ed25519 reward-accrual bug — see audits/internal/SECURITY_REVIEW_ED25519_BAL_2026-05-22.md)
+- Market 0 (v1)           evm  0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d
+- Other discarded markets — see deployments/295.json `abandoned.old_markets`
+
+Older zaps / routers
+- ActionRouter v1         evm  0x00000000000000000000000000000000009fad96   (max_auto=0 bug)
+- FissionZap v1           evm  0x00000000000000000000000000000000009fd97e   (wei vs tinybar bug)
+
+────────────────────────────────────────────────────────────────────────────
+ Off-chain services
+────────────────────────────────────────────────────────────────────────────
+
+- Frontend                https://www.fissionp.com   (Vercel: penguinpeckers-projects/fission-protocol)
+- Vercel cron             /api/markets/refresh @ 00:00 UTC daily
+- Railway cron-indexer    polls Mirror Node every 60s → Supabase activity_log
+- Supabase project        atjsjwebftwbaellnuuy.supabase.co (ap-south-1)
+
+────────────────────────────────────────────────────────────────────────────
+ Notes
+────────────────────────────────────────────────────────────────────────────
+
+- Operator's positions on the old market remain fully withdrawable.
+- Sourcify verification: simple contracts verify; deployer-pattern + embedded-
+  bytecode contracts must use HashScan UI or disable via_ir.
+- All HTS allowance approvals use int64.max = 2^63-1 (not uint256.max).
+- FissionUnzap is permissionless and stateless — no admin, no upgrade key.

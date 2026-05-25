@@ -76,14 +76,14 @@ export async function POST(req: NextRequest) {
   }
 
   if (mode === "hedera") {
-    return verifyHedera(body as HederaBody);
+    return verifyHedera(body as HederaBody, req);
   }
-  return verifyEip191(body as Eip191Body, originHost);
+  return verifyEip191(body as Eip191Body, originHost, req);
 }
 
 /* ───────────────────────────────────────────────── EIP-191 / SIWE path */
 
-async function verifyEip191(body: Eip191Body, originHost: string) {
+async function verifyEip191(body: Eip191Body, originHost: string, req: NextRequest) {
   const { message, signature } = body;
   if (typeof message !== "string" || typeof signature !== "string") {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
@@ -116,7 +116,7 @@ async function verifyEip191(body: Eip191Body, originHost: string) {
   }
 
   const lower = siwe.address.toLowerCase();
-  return consumeNonceAndIssueCookie(lower, siwe.nonce);
+  return consumeNonceAndIssueCookie(lower, siwe.nonce, req, siwe.chainId);
 }
 
 /* ─────────────────────────────────────────────── Hedera-native sig path */
@@ -130,7 +130,7 @@ function longZeroFromAccountId(accountId: string): string {
   return "0x" + num.toString(16).padStart(40, "0");
 }
 
-async function verifyHedera(body: HederaBody) {
+async function verifyHedera(body: HederaBody, req: NextRequest) {
   const { accountId, message, signatureMap } = body;
   if (typeof accountId !== "string" || typeof message !== "string" || typeof signatureMap !== "string") {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
@@ -196,12 +196,17 @@ async function verifyHedera(body: HederaBody) {
   //    Hedera account ID — same column as ECDSA users so all downstream
   //    code (RLS, watchlists, profile) stays identical.
   const address = longZeroFromAccountId(accountId).toLowerCase();
-  return consumeNonceAndIssueCookie(address, nonce);
+  return consumeNonceAndIssueCookie(address, nonce, req, EXPECTED_CHAIN_ID);
 }
 
 /* ────────────────────────────────────────── shared nonce + session step */
 
-async function consumeNonceAndIssueCookie(lowerAddress: string, nonce: string) {
+async function consumeNonceAndIssueCookie(
+  lowerAddress: string,
+  nonce: string,
+  req: NextRequest,
+  chainId: number,
+) {
   if (!/^0x[a-f0-9]{40}$/.test(lowerAddress)) {
     return NextResponse.json({ error: "bad_address_normalized" }, { status: 500 });
   }
@@ -219,13 +224,43 @@ async function consumeNonceAndIssueCookie(lowerAddress: string, nonce: string) {
     return NextResponse.json({ error: "invalid_or_expired_nonce" }, { status: 401 });
   }
 
-  await supa.from("users").upsert(
-    { address: lowerAddress },
-    { onConflict: "address", ignoreDuplicates: true },
-  );
+  // Atomic upsert + sign-in-count increment via the record_sign_in RPC
+  // (added in 20260525000000_track_session_metadata.sql). No IP collection —
+  // only an anonymized "browser/os" summary. Failure here is non-fatal: the
+  // nonce is already consumed and the session cookie still issues.
+  const uaSummary = summarizeUserAgent(req.headers.get("user-agent"));
+  const { error: rpcErr } = await supa.rpc("record_sign_in", {
+    p_address: lowerAddress,
+    p_user_agent_summary: uaSummary,
+    p_chain_id: chainId,
+  });
+  if (rpcErr) {
+    console.error("record_sign_in failed", rpcErr.message);
+  }
 
   const token = await signSession(lowerAddress);
   const res = NextResponse.json({ ok: true, address: lowerAddress });
   attachSessionCookie(res, token);
   return res;
+}
+
+// Reduce a full user-agent string to "Browser / OS" — no version flood, no
+// full UA storage. Returns null for missing / unparseable input.
+function summarizeUserAgent(ua: string | null): string | null {
+  if (!ua) return null;
+  const browser =
+    /edg\//i.test(ua) ? "Edge"
+    : /opera|opr\//i.test(ua) ? "Opera"
+    : /chrome\//i.test(ua) ? "Chrome"
+    : /firefox\//i.test(ua) ? "Firefox"
+    : /safari\//i.test(ua) ? "Safari"
+    : "Other";
+  const os =
+    /windows nt/i.test(ua) ? "Windows"
+    : /android/i.test(ua) ? "Android"
+    : /iphone|ipad|ipod/i.test(ua) ? "iOS"
+    : /mac os x/i.test(ua) ? "macOS"
+    : /linux/i.test(ua) ? "Linux"
+    : "Other";
+  return `${browser} / ${os}`;
 }

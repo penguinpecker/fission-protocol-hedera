@@ -173,15 +173,18 @@ export default function WhitepaperPage() {
 
         <Section title="High-level architecture">
           <p>
-            Six contracts on Hedera mainnet, plus the AMM math:
+            Nine contracts on Hedera mainnet, plus the AMM math:
           </p>
           <Arch
             rows={[
               ["FissionFactory", "Whitelists yield sources, deploys new markets per maturity date."],
               ["FissionZap", "One-tx HBAR → SY. Handles the WHBAR wrap + USDC swap + V3 deposit."],
+              ["MegaZap", "One-tx HBAR → PT / YT / LP. Wraps the FissionZap + ActionRouter atomically."],
+              ["FissionUnzap", "One-tx PT / SY / LP → native HBAR. The exit counterpart of MegaZap."],
               ["SY adapter", "Wraps the underlying yield source (V3 LP NFT). Mints share tokens."],
               ["Market", "The logit-curve AMM where PT/YT/LP get minted and traded."],
-              ["ActionRouter", "Single entry point for swap / mint LP / redeem flows."],
+              ["ActionRouter v3", "Single entry point for swap / mint LP / redeem flows."],
+              ["FissionLens", "Read-only helper for batched on-chain reads (positions, market state)."],
               ["Timelock + Threshold", "2-of-2 keys, 48-hour delay, govern any protocol changes."],
             ]}
           />

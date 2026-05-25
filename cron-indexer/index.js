@@ -1,8 +1,19 @@
 #!/usr/bin/env node
-// Fission indexer. Polls Hedera Mirror Node for recent contract calls on the
-// six Fission contracts (factory, SY adapter, market, router v3, two zaps),
-// decodes the function selector to a human name, and upserts each unique
-// (chain_id, tx_hash) into Supabase `activity_log`. Idempotent on tx_hash.
+// Fission indexer. Polls Hedera Mirror Node for recent contract calls on
+// every Fission contract (live + abandoned-but-still-on-chain), decodes the
+// function selector to a canonical event_type, and upserts each unique
+// (chain_id, tx_hash, event_type, address) into Supabase `activity_log`.
+// Idempotent on the composite key.
+//
+// 2026-05-25 rewrite: watch list is sourced from ../deployments/295.json so
+// the indexer never drifts from the deployed truth. New contracts (factory,
+// markets, FissionUnzap, lens, deployers) are picked up automatically on
+// restart. Abandoned contracts remain in the list so historical positions
+// keep indexing (still-redeemable on-chain).
+
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -16,29 +27,66 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   process.exit(1);
 }
 
-// Fission contracts to monitor. The `market_address` column we write into
-// activity_log gets the market addr when relevant, otherwise the contract
-// itself so we always have a non-null grouping key.
-const CONTRACTS = [
-  { evm: "0x00000000000000000000000000000000009fb0b3", name: "Factory" },
-  { evm: "0x00000000000000000000000000000000009fb089", name: "SY_SaucerSwapV2LP" },
-  { evm: "0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d", name: "Market0", market: true },
-  { evm: "0x00000000000000000000000000000000009fdf89", name: "ActionRouterV3" },
-  { evm: "0x00000000000000000000000000000000009fd984", name: "FissionZap" },
-  { evm: "0x00000000000000000000000000000000009fdf8c", name: "MegaZap" },
-];
+// ─── Watch list, sourced from deployments JSON ──────────────────────────────
 
-// Selector → canonical event_type (enum-constrained in activity_log).
-// Selectors not in this map (approve, transfer, HTS helpers, etc.) are
-// skipped — they aren't protocol events. All selectors below verified
-// via keccak256 of the live signatures on 2026-05-15; the previous list
-// had several phantom selectors (notably 0xe6f5b25a for addLiquidity)
-// that silently dropped real router calls.
+const REPO_ROOT = dirname(fileURLToPath(import.meta.url)).replace(/\/cron-indexer$/, "");
+const DEPLOYMENTS_PATH = process.env.DEPLOYMENTS_PATH
+  ?? join(REPO_ROOT, "deployments", "295.json");
+
+function loadContractsFromDeployments() {
+  const d = JSON.parse(readFileSync(DEPLOYMENTS_PATH, "utf8"));
+  const list = [];
+  const push = (evm, name, market = false) => {
+    if (!evm || evm === "(reused)" || typeof evm !== "string" || !evm.startsWith("0x")) return;
+    list.push({ evm: evm.toLowerCase(), name, market });
+  };
+
+  // Live core
+  push(d.factory?.evm, "Factory");
+  push(d.router?.evm, "ActionRouter");
+  push(d.router_v3?.evm, "ActionRouterV3");
+  push(d.fission_zap?.evm, "FissionZap");
+  push(d.mega_zap?.evm, "MegaZap");
+  push(d.fission_unzap?.evm, "FissionUnzap");
+  push(d.lens?.evm_address, "Lens");
+  push(d.standard_deployer?.evm, "StandardDeployer");
+  push(d.rewards_deployer?.evm, "RewardsDeployer");
+  push(d.sy_hbarx?.evm, "SY_HBARX");
+  push(d.sy_saucer_v2_lp?.evm, "SY_SaucerSwapV2LP");
+
+  // Live markets — `market: true` so activity_log gets the market addr,
+  // not the contract itself, as the grouping key.
+  for (const m of d.markets ?? []) push(m.evm, `Market_${m.suffix ?? m.id}`, true);
+
+  // Abandoned-but-still-on-chain. Users with positions there can still
+  // redeem/withdraw, so we keep indexing them. Marked with `archived:true`
+  // (just a label — does not affect indexing semantics).
+  for (const evm of d.abandoned?.old_factories ?? []) push(evm, "Factory_archived");
+  for (const evm of d.abandoned?.old_markets ?? []) push(evm, "Market_archived", true);
+  push(d.abandoned_router_v1?.evm, "ActionRouter_v1_archived");
+  push(d.abandoned_zap_v1?.evm, "FissionZap_v1_archived");
+  for (const evm of d.abandoned?.old_sy_v2_lp ?? []) push(evm, "SY_v1_archived");
+  for (const evm of d.abandoned?.old_deployers ?? []) push(evm, "Deployer_archived");
+
+  // Dedup by evm.
+  const seen = new Set();
+  return list.filter((c) => {
+    if (seen.has(c.evm)) return false;
+    seen.add(c.evm);
+    return true;
+  });
+}
+
+const CONTRACTS = loadContractsFromDeployments();
+
+// Selector → canonical event_type (constrained by activity_log enum).
+// Each top-level user-facing call maps to the protocol-level event that
+// best describes what the user just did.
 const SELECTOR_TO_EVENT = {
-  // ActionRouter v3 — IFissionMarketCommon encodes as address
+  // ActionRouter v2/v3 — IFissionMarketCommon arg encoded as address
   "0xbf35db06": "swap_sy_for_pt",     // swapExactSyForPt(address,uint256,uint256,address,uint256)
   "0x690b343f": "swap_pt_for_sy",     // swapExactPtForSy(address,uint256,uint256,address,uint256)
-  "0xc158091f": "swap_pt_for_sy",     // buyYT (composite, but a swap_pt_for_sy fires inside)
+  "0xc158091f": "swap_pt_for_sy",     // buyYT(address,uint256,uint256,address,uint256) — composite, fires swap_pt_for_sy
   "0x15ee88c3": "add_liquidity",      // addLiquidityProportional(address,uint256,uint256,uint256,address,uint256)
   "0xcff15d64": "remove_liquidity",   // removeLiquidityProportional(address,uint256,uint256,uint256,address,uint256)
   "0xd1e04b89": "split",              // depositAndSplit(address,uint256,address,address,uint256)
@@ -59,15 +107,23 @@ const SELECTOR_TO_EVENT = {
   "0x675e3a96": "redeem",             // redeemLiquidity(uint128,uint256,uint256,address)
   "0x4641257d": "claim_rewards",      // harvest()
   "0x4e71d92d": "claim_yield",        // claim()
-  // FissionZap / MegaZap (HBAR → SY entry; treat as deposit at the protocol level)
+  // FissionZap — HBAR → SY entry point
   "0xe056955f": "deposit",            // zapHbarToSy(address,uint256,uint256,uint256,uint128,address)
+  // MegaZap — HBAR → PT/YT/LP one-shots (selectors verified on-chain 2026-05-25)
+  "0x2704fe5e": "swap_sy_for_pt",     // zapHbarToPt(address,address,uint256,address,uint256)
+  "0x56cb65ef": "swap_pt_for_sy",     // zapHbarToYt — buyYT-equivalent, fires swap_pt_for_sy
+  "0x38307f7b": "add_liquidity",      // zapHbarToLp(address,address,uint16,uint256,address,uint256)
+  // FissionUnzap — PT/SY/LP → HBAR one-shots
+  "0x151bf8f1": "swap_pt_for_sy",     // sellPtForHbar(address,uint256,uint256,address,uint256)
+  "0x05b74d3d": "redeem",             // unzapSy(address,uint256,uint256,address)
+  "0x485eb750": "remove_liquidity",   // sellLpForHbar(address,uint256,uint256,address,uint256)
 };
-
-const MARKET0 = "0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d";
 
 function decodeSelector(callData) {
   if (!callData) return { selector: null, event: null };
-  const sel = callData.startsWith("0x") ? callData.slice(0, 10).toLowerCase() : `0x${callData.slice(0, 8).toLowerCase()}`;
+  const sel = callData.startsWith("0x")
+    ? callData.slice(0, 10).toLowerCase()
+    : `0x${callData.slice(0, 8).toLowerCase()}`;
   return { selector: sel, event: SELECTOR_TO_EVENT[sel] ?? null };
 }
 
@@ -142,7 +198,7 @@ async function pollContract(c) {
   const results = j.results ?? [];
   let skipped = 0;
   const candidates = results.map((res) => {
-    const { event } = decodeSelector(res.function_parameters);
+    const { selector, event } = decodeSelector(res.function_parameters);
     if (!event) {
       skipped++;
       return null;
@@ -152,10 +208,13 @@ async function pollContract(c) {
       chain_id: CHAIN_ID,
       tx_hash: res.hash,
       event_type: event,
-      market_address: c.market ? c.evm : MARKET0,
+      // When called via the market itself, log against that market;
+      // otherwise log against the calling contract for grouping.
+      market_address: c.market ? c.evm : c.evm,
       payload: {
         contract: c.name,
         contract_evm: c.evm,
+        selector,
         to: res.to,
         amount_tinybars: res.amount,
         gas_used: res.gas_used,
@@ -195,6 +254,12 @@ async function tick() {
   console.log(JSON.stringify({ t: new Date().toISOString(), fetched: totalFetched, inserted: totalInserted, skipped: totalSkipped, ms }));
 }
 
-console.log(JSON.stringify({ t: new Date().toISOString(), msg: "indexer_started", intervalMs: INTERVAL_MS, contracts: CONTRACTS.length }));
+console.log(JSON.stringify({
+  t: new Date().toISOString(),
+  msg: "indexer_started",
+  intervalMs: INTERVAL_MS,
+  contracts: CONTRACTS.length,
+  watchlist: CONTRACTS.map((c) => `${c.name}@${c.evm}`),
+}));
 await tick();
 setInterval(tick, INTERVAL_MS);

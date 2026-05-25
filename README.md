@@ -90,8 +90,11 @@ All deployments tracked in [`deployments/295.json`](deployments/295.json). HashS
 | Contract | EVM | Hedera ID | HashScan |
 |---|---|---|---|
 | **FissionFactory** *(2026-05-22 Ed25519 fix)* | `0x...a00b4e` | `0.0.10488654` | [view](https://hashscan.io/mainnet/contract/0.0.10488654) |
-| **ActionRouter v3** | `0x...009fd993` | `0.0.10475923` | [view](https://hashscan.io/mainnet/contract/0.0.10475923) |
+| **ActionRouter v3** | `0x...009fdf89` | `0.0.10477449` | [view](https://hashscan.io/mainnet/contract/0.0.10477449) |
 | **FissionZap** (HBAR→SY) | `0x...009fd984` | `0.0.10475908` | [view](https://hashscan.io/mainnet/contract/0.0.10475908) |
+| **MegaZap** (HBAR→PT/YT/LP) | `0x...009fdf8c` | `0.0.10477452` | [view](https://hashscan.io/mainnet/contract/0.0.10477452) |
+| **FissionUnzap** (PT/SY/LP→HBAR) *(new 2026-05-24)* | `0x...a01a63` | `0.0.10492515` | [view](https://hashscan.io/mainnet/contract/0.0.10492515) |
+| **FissionLens** (read-helper) | `0x...a00fde` | `0.0.10489822` | [view](https://hashscan.io/mainnet/contract/0.0.10489822) |
 | **SY_SaucerSwapV2LP** | `0x...009fb089` | `0.0.10465417` | [view](https://hashscan.io/mainnet/contract/0.0.10465417) |
 | **Market 0 — `SS-V2-90D-FIX`** | `0x36ed8f34c9bfc0004f107153b1a16099f8910b58` | `0.0.10488661` | [view](https://hashscan.io/mainnet/contract/0.0.10488661) |
 | StandardMarketDeployer | `0x...a00b46` | `0.0.10488646` | [view](https://hashscan.io/mainnet/contract/0.0.10488646) |
@@ -128,11 +131,17 @@ All four are HTS-native fungibles with 18 decimals. YT is frozen post-receive so
 
 | Action | Where | Notes |
 |---|---|---|
-| Buy PT | `ActionRouter.swapExactSyForPt(market, syIn, ptOut, …)` | Or via `FissionZap.zapHbarToSy` → router |
-| **Sell PT** *(new UI)* | `ActionRouter.swapExactPtForSy(market, ptIn, minSyOut, …)` | Contract path always existed; UI shipped 2026-05-22 |
-| Buy YT | `ActionRouter.buyYT(market, syBudget, …)` | Splits then sells PT internally |
-| **Sell YT** *(new — contract + UI)* | `Market.swapExactYtForSy(ytIn, minSyOut, receiver)` | Direct on Market, no router proxy — YT is frozen-by-default so the Market uses its WIPE key to consume YT in-place + burns paired PT from the AMM pool. Pays user `ytIn − syOwed` SY where `syOwed` follows the same curve as `swapExactSyForPt(ptOut=ytIn)` |
-| Add/Remove LP | `ActionRouter.addLiquidityProportional` / `removeLiquidityProportional` | |
+| Buy PT (HBAR-in, 1 tx) | `MegaZap.zapHbarToPt(market, sy, minPtOut, receiver, deadline)` | Auto-falls back to legacy 4-tx chain on Hedera `MAX_CHILD_RECORDS_EXCEEDED` |
+| Buy PT (SY-in) | `ActionRouter.swapExactSyForPt(market, syIn, ptOut, …)` | |
+| **Sell PT → HBAR (1 tx)** *(new 2026-05-24)* | `FissionUnzap.sellPtForHbar(market, ptIn, minHbarOut, receiver, deadline)` | Router swap PT→SY → `sy.redeemLiquidity` → V2 swap USDC→WHBAR → unwrap |
+| Sell PT → SY | `ActionRouter.swapExactPtForSy(market, ptIn, minSyOut, …)` | |
+| Buy YT (HBAR-in, 1 tx) | `MegaZap.zapHbarToYt(market, sy, minSyOutFromPtSale, receiver, deadline)` | Auto-falls back to legacy 4-tx chain on `MAX_CHILD_RECORDS_EXCEEDED` |
+| Buy YT (SY-in) | `ActionRouter.buyYT(market, syBudget, …)` | Splits then sells PT internally |
+| **Sell YT → HBAR (3 tx)** *(new 2026-05-24)* | `Market.swapExactYtForSy` → `FissionUnzap.unzapSy(sy, sharesIn, minHbarOut, receiver)` | YT freeze forces 3-step UX: market wipes YT in-place, then SY → HBAR via unzap |
+| Sell YT → SY | `Market.swapExactYtForSy(ytIn, minSyOut, receiver)` | Direct on Market, no router proxy — YT is frozen-by-default so the Market uses its WIPE key to consume YT in-place + burns paired PT from the AMM pool |
+| Add LP (HBAR-in, 1 tx) | `MegaZap.zapHbarToLp(market, sy, ptShareBps, minLpOut, receiver, deadline)` | |
+| **Remove LP → HBAR (1 tx)** *(new 2026-05-24)* | `FissionUnzap.sellLpForHbar(market, lpIn, minHbarOut, receiver, deadline)` | |
+| Add/Remove LP (SY-in) | `ActionRouter.addLiquidityProportional` / `removeLiquidityProportional` | |
 | Redeem after expiry | `Market.redeemAfterExpiry(ptIn, ytIn, receiver)` | Rewards-type market: PT-only (1:1 to SY); standard market: both PT and YT |
 
 ---
