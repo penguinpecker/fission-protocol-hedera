@@ -81,13 +81,15 @@ const APP_METADATA = {
 };
 
 export function HederaWalletProvider({ children }: { children: ReactNode }) {
-  // Lazy initialiser — runs once on first render, BEFORE any paint. Reads
-  // localStorage to decide whether to start in "connecting" (gate shows
-  // skeleton) or "idle" (gate shows Connect). Eliminates the one-frame
-  // flash that this session has been ping-ponging back to.
-  const [state, setState] = useState<HederaWalletState>(() =>
-    probeHasStoredWcSession() ? { ...INITIAL, status: "connecting" } : INITIAL,
-  );
+  // Always start in "connecting" — the rehydrate useEffect below always
+  // initializes the SignClient on mount and drops to INITIAL only if no
+  // live session is found. The brief "connecting" skeleton (1-3s on cold
+  // page) is better UX than flashing a misleading "Connect Wallet"
+  // prompt while the session restore is in flight.
+  const [state, setState] = useState<HederaWalletState>(() => ({
+    ...INITIAL,
+    status: "connecting",
+  }));
   const connectorRef = useRef<{ disconnectAll: () => Promise<void>; signers: unknown[] } | null>(null);
 
   /**
@@ -217,32 +219,17 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     (async () => {
       if (typeof window === "undefined") return;
-      // Scan ALL wc@2 session-shaped keys, not a single hardcoded
-      // `wc@2:client:0.3//session`. Different WC client builds store the
-      // session under different version segments (e.g. `wc@2:client:0.4`),
-      // and HashPack-side updates can rotate that path without notice. A
-      // narrow check skips a perfectly-good session, leaving the user
-      // staring at a "Sign In" button despite having an active wallet
-      // connection and valid SIWE cookie.
-      let hasStoredSession = false;
-      for (let i = 0; i < window.localStorage.length; i++) {
-        const k = window.localStorage.key(i);
-        if (!k) continue;
-        if (k.startsWith("wc@2:") && k.includes("session")) {
-          const v = window.localStorage.getItem(k);
-          if (v && v !== "[]" && v !== "{}" && v !== "null") {
-            hasStoredSession = true;
-            break;
-          }
-        }
-      }
-      console.log("[fission-rehydrate] hasStoredSession =", hasStoredSession, "(wc@2:* keys present in localStorage)");
-      if (!hasStoredSession) return;
-
-      // TEMP DEBUG: surface rehydrate decisions in the user's browser
-      // console so we can pinpoint why the live-session restore isn't
-      // landing. Remove after the next round of validation.
-      console.log("[fission-rehydrate] storedSession found, status→connecting");
+      // No localStorage probe — different WC builds (and HashPack
+      // browser-extension variants) persist session metadata under
+      // different keys (`wc@2:client:0.3//session`, `wc@2:client:0.4`,
+      // HashConnect-legacy paths). A targeted probe drops valid
+      // sessions stored under any unknown prefix and the user sees
+      // "Connect Wallet" on every refresh despite an active wallet
+      // connection. Trade-off: always pay the 1-3s SDK load on mount
+      // even for users who never connected. The UI shows a skeleton
+      // during that window so it doesn't flash a misleading Connect
+      // prompt.
+      console.log("[fission-rehydrate] always-init mode, status→connecting");
       setState((s) => ({ ...s, status: "connecting" }));
       try {
         const connector = await getOrInit();
