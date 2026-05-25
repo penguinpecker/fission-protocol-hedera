@@ -88,10 +88,20 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   // Source toggle. Default HBAR for the common "I only have HBAR" case.
   const [source, setSource] = useState<Source>("hbar");
   const zapAvailable = isDeployed(ADDRESSES.fissionZap);
-  // MegaZap collapses HBAR-source into ONE tx (vs 2-4 with the legacy
-  // FissionZap + Router chain). When deployed, the HBAR path skips the
-  // intermediate `FlowState` machine entirely.
-  const megaZapAvailable = isDeployed(ADDRESSES.megaZap);
+  // MegaZap was riding the cliff of Hedera's 50-child consensus limit for
+  // Buy PT (51 records — parent + 50 children). As the V3 NFT crosses more
+  // ticks (pool state drifts with every swap) the child count tips past
+  // the limit. Live capture 2026-05-25: 7 of the last 8 PT MegaZap calls
+  // failed with MAX_CHILD_RECORDS_EXCEEDED.
+  //
+  // Same fix as Buy YT: route HBAR-source through the 2-tx chain
+  // (FissionZap.zapHbarToSy → Router.swapExactSyForPt). 2 popups steady-
+  // state, 3-4 first-time. Deterministic, no failed retries.
+  //
+  // For a real atomic 1-tx Buy PT we'd need MegaZap v2 with constructor-
+  // baked int64.max approvals — drops the 9 runtime CRYPTOAPPROVEALLOWANCE
+  // children. That's a contract redeploy.
+  const megaZapAvailable = false;
   // If the zap contract isn't deployed in this env, force SY mode silently.
   const effectiveSource: Source = zapAvailable ? source : "sy";
 
