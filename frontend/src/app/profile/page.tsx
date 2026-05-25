@@ -41,7 +41,7 @@ export default function ProfilePage() {
   );
 }
 
-type PosKind = "PT" | "YT" | "LP";
+type PosKind = "SY" | "PT" | "YT" | "LP";
 
 interface PortfolioRow {
   market: `0x${string}`;
@@ -280,7 +280,7 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub: string 
 /* ─────────────────────────────────────────────────────── positions table */
 
 function PositionsSection({ rows }: { rows: PortfolioRow[] }) {
-  const [tab, setTab] = useState<"All" | "PT" | "YT" | "LP" | "History">("All");
+  const [tab, setTab] = useState<"All" | "SY" | "PT" | "YT" | "LP" | "History">("All");
   const filtered =
     tab === "All"
       ? rows
@@ -291,7 +291,7 @@ function PositionsSection({ rows }: { rows: PortfolioRow[] }) {
   return (
     <div>
       <div className="flex w-fit max-w-full gap-px overflow-x-auto border border-border bg-border">
-        {(["All", "PT", "YT", "LP", "History"] as const).map((t) => (
+        {(["All", "SY", "PT", "YT", "LP", "History"] as const).map((t) => (
           <button
             key={t}
             type="button"
@@ -355,20 +355,25 @@ function PositionRow({ row }: { row: PortfolioRow }) {
     disabled?: boolean;
   }
   const actions: RowAction[] =
-    row.kind === "PT"
+    row.kind === "SY"
       ? [
-          { label: "Sell", href: `${base}/pt` },
-          { label: "Redeem", href: base, pri: true, disabled: !row.expired },
+          // Sell SY → HBAR via FissionUnzap.unzapSy. The /sy page wraps it.
+          { label: "Sell to HBAR", href: `${base}/sy`, pri: true },
         ]
-      : row.kind === "YT"
+      : row.kind === "PT"
         ? [
-            { label: "Sell", href: `${base}/yt` },
-            { label: "Claim", href: base, pri: true },
+            { label: "Sell", href: `${base}/pt` },
+            { label: "Redeem", href: base, pri: true, disabled: !row.expired },
           ]
-        : [
-            { label: "Add", href: `${base}/lp` },
-            { label: "Remove", href: `${base}/lp`, pri: true },
-          ];
+        : row.kind === "YT"
+          ? [
+              { label: "Sell", href: `${base}/yt` },
+              { label: "Claim", href: base, pri: true },
+            ]
+          : [
+              { label: "Add", href: `${base}/lp` },
+              { label: "Remove", href: `${base}/lp`, pri: true },
+            ];
 
   const unrealisedColor =
     row.unrealisedSy > 0 ? "text-white" : row.unrealisedSy < 0 ? "text-error" : "text-textSec";
@@ -773,6 +778,25 @@ function buildRows(
   const div = 10 ** dec;
 
   const rows: PortfolioRow[] = [];
+
+  // SY row — loose SY balance in wallet (not in LP, not split into PT/YT).
+  // Value 1:1 in SY by definition. Surfaced so users can see + redeem to
+  // HBAR (or use as input to Buy PT / YT / LP) instead of leaving it dust.
+  if (position.sy > 0n) {
+    const sySy = Number(position.sy) / div;
+    rows.push({
+      market,
+      symbol,
+      kind: "SY",
+      amountRaw: position.sy,
+      decimals: dec,
+      costBasisSy: sySy,
+      currentValueSy: sySy,
+      unrealisedSy: 0,
+      maturity: { days: 0, never: true },
+      expired,
+    });
+  }
 
   // PT row — mark-to-AMM today vs. par at maturity (1 PT → 1 SY).
   if (position.pt > 0n) {
