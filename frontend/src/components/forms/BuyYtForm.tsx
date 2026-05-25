@@ -65,9 +65,22 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
 
   const [source, setSource] = useState<Source>("hbar");
   const zapAvailable = isDeployed(ADDRESSES.fissionZap);
-  // MegaZap collapses HBAR → SY → YT into a single tx (vs. 2-4 with the
-  // legacy chain). When deployed we skip the multi-step FlowState entirely.
-  const megaZapAvailable = isDeployed(ADDRESSES.megaZap);
+  // MegaZap.zapHbarToYt is STRUCTURALLY over Hedera's 50-child consensus
+  // limit: the YT path adds split-mint-PT/YT + YT freeze + extra AMM
+  // transfers over the PT path, pushing total child records past 50 every
+  // time (live capture 1779722382: hit exactly 50 + MAX_CHILD_RECORDS).
+  // Buy PT lands at 50 children and is fine; Buy YT cannot fit.
+  //
+  // So Buy YT always uses the chain: zap HBAR → SY (FissionZap),
+  // then SY → YT (Router.buyYT). 2 popups in steady state (3 first-time
+  // if infinite SY allowance hasn't been granted yet). Deterministic, no
+  // failed retries.
+  //
+  // For a real atomic 1-tx Buy YT we'd need MegaZap v2 with constructor-
+  // baked int64.max approvals to the Router + SY + V2 SwapRouter, which
+  // drops ~5-7 runtime CRYPTOAPPROVEALLOWANCE children. That's a contract
+  // redeploy — track separately.
+  const megaZapAvailable = false;
   const effectiveSource: Source = zapAvailable ? source : "sy";
 
   const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
