@@ -469,7 +469,7 @@ export function SellYtForm({ market, detail, user }: Props) {
 
         {flowState.kind === "done" && lastTxHash && (
           <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-success">
-            <div className="font-semibold uppercase tracking-[1px]">YT sold for SY.</div>
+            <div className="font-semibold uppercase tracking-[1px]">YT sold for HBAR.</div>
             <div className="mt-1 break-all text-[10px] text-success/80">
               tx: {lastTxHash.slice(0, 18)}…{lastTxHash.slice(-8)}
             </div>

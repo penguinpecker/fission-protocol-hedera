@@ -903,7 +903,7 @@ function AddLp({
 
         {isConfirmedFinal && txHash && (
           <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-success">
-            <div className="font-semibold uppercase tracking-[1px]">Transaction confirmed.</div>
+            <div className="font-semibold uppercase tracking-[1px]">Liquidity added.</div>
             <div className="mt-1 break-all text-[10px] text-success/80">
               tx: {txHash.slice(0, 18)}…{txHash.slice(-8)}
             </div>
@@ -1273,7 +1273,7 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
 
         {isConfirmedFinal && txHash && (
           <div className="mt-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-success">
-            <div className="font-semibold uppercase tracking-[1px]">Transaction confirmed.</div>
+            <div className="font-semibold uppercase tracking-[1px]">LP burned for HBAR.</div>
             <div className="mt-1 break-all text-[10px] text-success/80">
               tx: {txHash.slice(0, 18)}…{txHash.slice(-8)}
             </div>
