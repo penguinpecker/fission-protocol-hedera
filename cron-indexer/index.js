@@ -11,7 +11,7 @@
 // restart. Abandoned contracts remain in the list so historical positions
 // keep indexing (still-redeemable on-chain).
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,9 +29,18 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
 
 // ─── Watch list, sourced from deployments JSON ──────────────────────────────
 
-const REPO_ROOT = dirname(fileURLToPath(import.meta.url)).replace(/\/cron-indexer$/, "");
+// Resolve deployments/295.json. Railway builds with cron-indexer/ as the
+// build context, so the parent repo's deployments/ directory is NOT shipped
+// — we keep an in-tree copy at cron-indexer/deployments/295.json. Local dev
+// can still point at the canonical file via DEPLOYMENTS_PATH or the
+// auto-detected sibling-dir path. Keep the two copies in sync (CI / pre-commit
+// or just re-run the deploy step).
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = SCRIPT_DIR.replace(/\/cron-indexer$/, "");
+const LOCAL_BUNDLED = join(SCRIPT_DIR, "deployments", "295.json");
+const PARENT_REPO = join(REPO_ROOT, "deployments", "295.json");
 const DEPLOYMENTS_PATH = process.env.DEPLOYMENTS_PATH
-  ?? join(REPO_ROOT, "deployments", "295.json");
+  ?? (existsSync(LOCAL_BUNDLED) ? LOCAL_BUNDLED : PARENT_REPO);
 
 function loadContractsFromDeployments() {
   const d = JSON.parse(readFileSync(DEPLOYMENTS_PATH, "utf8"));
