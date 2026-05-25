@@ -241,17 +241,31 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
       setState((s) => ({ ...s, status: "connecting" }));
       try {
         const connector = await getOrInit();
-        const signers = connector.signers ?? [];
         if (cancelled) return;
-        if (signers.length === 0) {
-          // Persisted store said we had a session, but the connector found no
-          // signers (session expired / wallet-side disconnect). Drop back to
-          // idle so the connect button works.
+
+        // Read the persisted session directly from the underlying
+        // SignClient — it's populated synchronously by the time init()
+        // resolves. Don't depend on `connector.signers` (which may
+        // lazy-instantiate signer wrappers on first access).
+        const client = connector.walletConnectClient;
+        const sessions: WcSession[] = client?.session?.getAll?.() ?? [];
+        const now = Math.floor(Date.now() / 1000);
+        const live = sessions.find((s) => s.expiry > now);
+        if (!live) {
+          // No live session (none stored, all expired, or wallet-side
+          // disconnected before refresh). Stale storage is cleared
+          // lazily by clearStaleWcStorage if init also threw earlier.
           setState(INITIAL);
           return;
         }
-        const signer = signers[0] as { getAccountId(): { toString(): string } };
-        const accountId = signer.getAccountId().toString();
+
+        const accountId = accountIdFromSession(live);
+        if (!accountId) {
+          // Session exists but Hedera namespace missing — shouldn't
+          // happen with our DAppConnector config but bail cleanly.
+          setState(INITIAL);
+          return;
+        }
         const num = Number(accountId.split(".")[2]);
         const evmAddress = ("0x" + num.toString(16).padStart(40, "0")) as `0x${string}`;
         setState({ status: "connected", accountId, evmAddress, error: null });
@@ -263,6 +277,49 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [getOrInit]);
+
+  // Subscribe to WC v2 lifecycle events so wallet-side actions (user
+  // taps "Disconnect" in HashPack, session expires, dApp namespace
+  // updates) propagate back to our state instead of leaving the UI
+  // stuck on "connected" with a dead session underneath.
+  useEffect(() => {
+    let client: WcSignClient | undefined;
+    let cancelled = false;
+    const handleDelete = () => {
+      // Wallet-initiated disconnect — drop state regardless of which
+      // session triggered (we only support one at a time).
+      setState(INITIAL);
+    };
+    const handleExpire = handleDelete;
+    (async () => {
+      // Wait for the connector to exist (it may not at first mount if
+      // no stored session — that's fine, no events to listen for).
+      // If a session DOES get added later via connect(), we'll catch
+      // events for it because `client.on` is sticky across sessions.
+      if (!connectorRef.current) {
+        // Best effort — if probe says we should rehydrate, getOrInit
+        // is already in flight from the effect above; wait a tick.
+        if (probeHasStoredWcSession()) {
+          for (let i = 0; i < 20 && !connectorRef.current; i++) {
+            await new Promise((r) => setTimeout(r, 100));
+            if (cancelled) return;
+          }
+        } else {
+          return;
+        }
+      }
+      const c = connectorRef.current as unknown as HederaConnectorShim | null;
+      client = c?.walletConnectClient;
+      if (!client) return;
+      client.on("session_delete", handleDelete);
+      client.on("session_expire", handleExpire);
+    })();
+    return () => {
+      cancelled = true;
+      client?.off?.("session_delete", handleDelete);
+      client?.off?.("session_expire", handleExpire);
+    };
+  }, []);
 
   const api = useMemo<HederaWalletAPI>(
     () => ({ ...state, connect, disconnect, getConnector }),
@@ -288,6 +345,40 @@ interface HederaConnectorShim {
   openModal(): Promise<unknown>;
   disconnectAll(): Promise<void>;
   signers: unknown[];
+  /** Underlying @walletconnect/sign-client. Populated after init(); used
+   *  to read persisted sessions synchronously and subscribe to lifecycle
+   *  events (session_delete / session_expire). */
+  walletConnectClient?: WcSignClient;
+}
+
+/** Minimal slice of the @walletconnect/sign-client v2 surface we need.
+ *  WC's full session shape is huge; we read accounts + topic + expiry. */
+interface WcSession {
+  topic: string;
+  expiry: number; // unix seconds
+  namespaces: Record<string, { accounts: string[]; chains?: string[] }>;
+}
+interface WcSignClient {
+  session: {
+    getAll(): WcSession[];
+    get(topic: string): WcSession | undefined;
+  };
+  on(event: string, handler: (data: { topic: string }) => void): void;
+  off(event: string, handler: (data: { topic: string }) => void): void;
+}
+
+/** Extract the Hedera accountId (`0.0.X`) from a WC session's namespaces.
+ *  WC v2 stores accounts in CAIP-10 format: `hedera:mainnet:0.0.123`. */
+function accountIdFromSession(session: WcSession): string | null {
+  for (const ns of Object.values(session.namespaces)) {
+    for (const acct of ns.accounts ?? []) {
+      // Expected: "hedera:mainnet:0.0.X" → split off the trailing Hedera ID.
+      const parts = acct.split(":");
+      const id = parts[parts.length - 1];
+      if (id && /^\d+\.\d+\.\d+$/.test(id)) return id;
+    }
+  }
+  return null;
 }
 
 /**
