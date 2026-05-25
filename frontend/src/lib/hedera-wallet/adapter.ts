@@ -509,6 +509,27 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
     : [];
   mainnetClient.close();
 
+  // Dynamic gas-price for maxTransactionFee. Hedera's tinybar-per-gas rate
+  // drifts with the HBAR/USD exchange rate (typically ~95 tinybar/gas, but
+  // can spike after a rate update). We query mirror node once per adapter
+  // build and cache. Falling back to a conservative 200 tinybar/gas if the
+  // endpoint fails — still safe but maxFee will be slightly bloated.
+  //
+  // Without explicit setMaxTransactionFee, HashPack applies its own
+  // heuristic that has been observed to exceed user balance even when the
+  // actual cost would fit (live capture 2026-05-25: code 10
+  // INSUFFICIENT_PAYER_BALANCE on a Buy YT step the user had plenty of
+  // HBAR for). Setting it explicitly forces deterministic pre-charge.
+  let tinybarPerGas = 200; // safe default
+  try {
+    const r = await fetch("https://mainnet-public.mirrornode.hedera.com/api/v1/network/fees");
+    const j = (await r.json()) as { fees?: { gas: number; transaction_type: string }[] };
+    const ccFee = j.fees?.find((f) => f.transaction_type === "ContractCall");
+    if (ccFee?.gas && ccFee.gas > 0) tinybarPerGas = ccFee.gas;
+  } catch {
+    /* keep fallback */
+  }
+
   const cid = (addr: `0x${string}`) => ContractId.fromEvmAddress(0, 0, addr);
   const exec = async (
     contractAddress: `0x${string}`,
@@ -517,9 +538,17 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
     payableHbar: number,
     gas: number,
   ): Promise<{ txHash: string }> => {
+    // maxTransactionFee = gasLimit × current network gas-rate × 1.3 buffer.
+    // The buffer absorbs short-window rate spikes between our query and
+    // the wallet's own check. If the actual gas-used × rate exceeds this
+    // ceiling the tx fails with INSUFFICIENT_TX_FEE (clear failure mode
+    // we can show to the user), instead of the confusing wallet-side
+    // INSUFFICIENT_PAYER_BALANCE that masquerades as "no funds".
+    const maxFeeTinybar = BigInt(Math.ceil(gas * tinybarPerGas * 1.3));
     const tx = new ContractExecuteTransaction()
       .setContractId(cid(contractAddress))
       .setGas(gas)
+      .setMaxTransactionFee(Hbar.fromTinybars(maxFeeTinybar.toString()))
       .setFunction(functionName, params);
     if (payableHbar > 0) {
       // `new Hbar(n)` rejects floats with "Hbar in tinybars contains decimals".
