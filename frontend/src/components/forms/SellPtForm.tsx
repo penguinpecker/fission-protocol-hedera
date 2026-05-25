@@ -53,13 +53,6 @@ export function SellPtForm({ market, detail, user }: Props) {
   const [usdStr, setUsdStr] = useState("");
   const [rawStr, setRawStr] = useState("");
   const [slippageBps, setSlippageBps] = useState(50);
-  // Output destination: receive SY shares (default, native protocol token)
-  // or native HBAR (one-tx FissionUnzap composition). HBAR mode swaps SY
-  // → USDC+WHBAR → all-WHBAR → unwrap, delivered to the user's wallet.
-  // Disabled if the unzap contract isn't deployed in this env.
-  const unzapAvailable = isDeployed(ADDRESSES.fissionUnzap);
-  const [outputMode, setOutputMode] = useState<"sy" | "hbar">("sy");
-  const effectiveOutputMode = unzapAvailable ? outputMode : "sy";
 
   const [flowState, setFlowState] = useState<FlowKind>({ kind: "idle" });
   const [lastTxHash, setLastTxHash] = useState<string | undefined>(undefined);
@@ -78,13 +71,12 @@ export function SellPtForm({ market, detail, user }: Props) {
 
   /* ─────────────────────────── PT balance + allowance reads */
 
-  // Spender depends on output mode:
-  //   - SY mode:  approve PT to router (router.swapExactPtForSy pulls PT)
-  //   - HBAR mode: approve PT to unzap (unzap.sellPtForHbar pulls PT)
-  // Switching modes mid-form swaps the allowance target — set-once approve
-  // means each spender path needs its own first-time prompt.
-  const spender: `0x${string}` =
-    effectiveOutputMode === "hbar" ? ADDRESSES.fissionUnzap : ADDRESSES.router;
+  // Output is always native HBAR via FissionUnzap (router-direct SY-output
+  // path removed from this form on user request — gas overhead of unzap
+  // composition was deemed worth it for the UX win of HBAR-in-wallet).
+  // Approval goes to the unzap; underlying router.swapExactPtForSy is
+  // still called by the unzap internally on behalf of the user.
+  const spender: `0x${string}` = ADDRESSES.fissionUnzap;
   const ptRead = useReadContracts({
     contracts: user
       ? [
@@ -207,31 +199,19 @@ export function SellPtForm({ market, detail, user }: Props) {
     setFlowState({ kind: "selling" });
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     try {
-      const writeOp =
-        effectiveOutputMode === "hbar"
-          ? {
-              kind: "sellPtForHbar" as const,
-              unzap: ADDRESSES.fissionUnzap,
-              market,
-              ptIn: parsedPt,
-              // FissionUnzap converts SY → USDC+WHBAR → HBAR through the V3
-              // pool + V2 swap, so the final HBAR amount isn't a tight
-              // function of minSyOut. Use 1 as a permissive floor for now;
-              // a tighter quote would require an unzap-aware lens preview.
-              minHbarOut: 1n,
-              receiver: user,
-              deadline,
-            }
-          : {
-              kind: "swapExactPtForSy" as const,
-              router: ADDRESSES.router,
-              market,
-              ptIn: parsedPt,
-              minSyOut,
-              receiver: user,
-              deadline,
-            };
-      const { txHash } = await adapter.write(writeOp);
+      const { txHash } = await adapter.write({
+        kind: "sellPtForHbar",
+        unzap: ADDRESSES.fissionUnzap,
+        market,
+        ptIn: parsedPt,
+        // FissionUnzap converts SY → USDC+WHBAR → HBAR through the V3 pool +
+        // V2 swap, so the final HBAR amount isn't a tight function of any
+        // single intermediate. Permissive `1` floor until an unzap-aware
+        // preview lens is built.
+        minHbarOut: 1n,
+        receiver: user,
+        deadline,
+      });
       setLastTxHash(txHash);
       setFlowState({ kind: "done", finalTxHash: txHash });
       return true;
@@ -241,7 +221,7 @@ export function SellPtForm({ market, detail, user }: Props) {
       setFlowState({ kind: "error", message: msg, failedAt: "sell" });
       return false;
     }
-  }, [adapter, effectiveOutputMode, market, minSyOut, parsedPt, user]);
+  }, [adapter, market, parsedPt, user]);
 
   const onPrimary = useCallback(async () => {
     if (!user || parsedPt === 0n || !routerDeployed || expired) return;
@@ -383,41 +363,6 @@ export function SellPtForm({ market, detail, user }: Props) {
             position page for 1:1 PT→SY. Selling on the AMM post-expiry pays less
             than par.
           </div>
-        )}
-
-        {unzapAvailable && (
-          <>
-            <SectionDivider label="Receive as" />
-            <div className="flex gap-1 rounded-lg border border-border bg-bgInput p-0.5">
-              <button
-                type="button"
-                onClick={() => setOutputMode("sy")}
-                className={`flex-1 rounded-md px-3 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition ${
-                  effectiveOutputMode === "sy"
-                    ? "bg-white/[0.08] text-text"
-                    : "text-textDim hover:text-text"
-                }`}
-              >
-                SY (default)
-              </button>
-              <button
-                type="button"
-                onClick={() => setOutputMode("hbar")}
-                className={`flex-1 rounded-md px-3 py-1.5 font-mono text-[11px] uppercase tracking-[1.5px] transition ${
-                  effectiveOutputMode === "hbar"
-                    ? "bg-white/[0.08] text-text"
-                    : "text-textDim hover:text-text"
-                }`}
-              >
-                HBAR
-              </button>
-            </div>
-            <p className="-mt-1 font-mono text-[10px] text-textDim">
-              {effectiveOutputMode === "hbar"
-                ? "1 tx: PT → SY → USDC+WHBAR → unwrap. HBAR lands in wallet."
-                : "Receive SY shares (default). Redeem to underlying later."}
-            </p>
-          </>
         )}
 
         <SectionDivider label="Input" />
