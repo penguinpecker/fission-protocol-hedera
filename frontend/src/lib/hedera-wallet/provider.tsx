@@ -236,40 +236,45 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
           }
         }
       }
+      console.log("[fission-rehydrate] hasStoredSession =", hasStoredSession, "(wc@2:* keys present in localStorage)");
       if (!hasStoredSession) return;
 
+      // TEMP DEBUG: surface rehydrate decisions in the user's browser
+      // console so we can pinpoint why the live-session restore isn't
+      // landing. Remove after the next round of validation.
+      console.log("[fission-rehydrate] storedSession found, status→connecting");
       setState((s) => ({ ...s, status: "connecting" }));
       try {
         const connector = await getOrInit();
         if (cancelled) return;
+        console.log("[fission-rehydrate] connector init resolved");
 
-        // Read the persisted session directly from the underlying
-        // SignClient — it's populated synchronously by the time init()
-        // resolves. Don't depend on `connector.signers` (which may
-        // lazy-instantiate signer wrappers on first access).
         const client = connector.walletConnectClient;
+        console.log("[fission-rehydrate] walletConnectClient present:", !!client);
         const sessions: WcSession[] = client?.session?.getAll?.() ?? [];
+        console.log("[fission-rehydrate] sessions count:", sessions.length, sessions);
         const now = Math.floor(Date.now() / 1000);
         const live = sessions.find((s) => s.expiry > now);
+        console.log("[fission-rehydrate] live session?:", !!live, live ? { topic: live.topic, expiry: live.expiry, namespaces: Object.keys(live.namespaces) } : null);
         if (!live) {
-          // No live session (none stored, all expired, or wallet-side
-          // disconnected before refresh). Stale storage is cleared
-          // lazily by clearStaleWcStorage if init also threw earlier.
+          console.log("[fission-rehydrate] dropping to INITIAL — no live session");
           setState(INITIAL);
           return;
         }
 
         const accountId = accountIdFromSession(live);
+        console.log("[fission-rehydrate] extracted accountId:", accountId);
         if (!accountId) {
-          // Session exists but Hedera namespace missing — shouldn't
-          // happen with our DAppConnector config but bail cleanly.
+          console.log("[fission-rehydrate] dropping to INITIAL — accountId extract failed", live.namespaces);
           setState(INITIAL);
           return;
         }
         const num = Number(accountId.split(".")[2]);
         const evmAddress = ("0x" + num.toString(16).padStart(40, "0")) as `0x${string}`;
+        console.log("[fission-rehydrate] CONNECTED", { accountId, evmAddress });
         setState({ status: "connected", accountId, evmAddress, error: null });
-      } catch {
+      } catch (e) {
+        console.log("[fission-rehydrate] threw, dropping to INITIAL", e);
         if (!cancelled) setState(INITIAL);
       }
     })();
