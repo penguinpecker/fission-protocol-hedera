@@ -13,7 +13,7 @@
  * so the form auto-disables and points users to the residual-rewards-claim
  * path.
  */
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
@@ -22,7 +22,7 @@ import { useSyValueUsd } from "@/hooks/useSyValueUsd";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
-import { ADDRESSES, isDeployed } from "@/lib/addresses";
+import { ADDRESSES, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
 import { lensAbi } from "@/lib/abis";
 import {
   FormHeaderStrip,
@@ -42,7 +42,9 @@ interface Props {
 
 type FlowKind =
   | { kind: "idle" }
-  | { kind: "selling" }
+  | { kind: "selling" } // step 1: market.swapExactYtForSy → user holds SY
+  | { kind: "approving" } // step 2: approve SY → unzap (once per wallet)
+  | { kind: "unzapping" } // step 3: unzap.unzapSy → user holds HBAR
   | { kind: "done"; finalTxHash: string }
   | { kind: "error"; message: string };
 
@@ -71,6 +73,39 @@ export function SellYtForm({ market, detail, user }: Props) {
   const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
 
   const expired = Date.now() / 1000 >= Number(detail.expiry);
+
+  // SY allowance toward the FissionUnzap — needed because the second leg
+  // of Sell YT → HBAR is `unzap.unzapSy(sharesIn)` which pulls SY via
+  // transferFrom. Set-once MAX allowance per wallet.
+  const syAllowanceRead = useReadContracts({
+    contracts: user
+      ? [
+          {
+            abi: [
+              {
+                type: "function",
+                name: "allowance",
+                stateMutability: "view",
+                inputs: [
+                  { name: "owner", type: "address" },
+                  { name: "spender", type: "address" },
+                ],
+                outputs: [{ type: "uint256" }],
+              },
+            ] as const,
+            address: detail.syShare,
+            functionName: "allowance",
+            args: [user, ADDRESSES.fissionUnzap],
+          } as const,
+        ]
+      : [],
+    query: { enabled: !!user },
+    allowFailure: true,
+  });
+  const syAllowance =
+    syAllowanceRead.data?.[0]?.status === "success"
+      ? (syAllowanceRead.data[0].result as bigint)
+      : 0n;
 
   /* ─────────────────────────── YT balance via contract-tracked view */
 
@@ -165,31 +200,84 @@ export function SellYtForm({ market, detail, user }: Props) {
   const syEstimate = lensSyOut ?? linearEstimate;
   const minSyOut = (syEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
-  /* ─────────────────────────── primary handler */
+  /* ─────────────────────────── primary handler (3-step YT → HBAR chain) */
 
+  // YT → HBAR requires THREE user signatures (vs PT/LP's one) because YT is
+  // HTS-frozen and can only be wiped by the market when msg.sender holds
+  // the YT. The unzap can't proxy that wipe, so the user must call
+  // market.swapExactYtForSy themselves first; only then can the unzap
+  // pull their SY for the unwrap leg.
+  //
+  // Chain:
+  //   1. market.swapExactYtForSy(receiver=user)         → user holds SY
+  //   2. IERC20(SY).approve(unzap, MAX)  (once-ever)    → set permission
+  //   3. unzap.unzapSy(sy, minSyOut, 1, receiver=user)  → HBAR in wallet
+  //
+  // After step 1 ships, the user has `≥minSyOut` SY but we don't read
+  // the exact delta — we pull `minSyOut` (guaranteed lower bound) so any
+  // surplus stays in their wallet. Future improvement: an unzap-aware
+  // lens preview that quotes HBAR-out directly.
+  const chainInFlight = useRef(false);
   const onPrimary = useCallback(async () => {
+    if (chainInFlight.current) return;
     if (!user || parsedYt === 0n || expired) return;
     if (insufficient || sizeLimit.exceeded) return;
+    chainInFlight.current = true;
     setWriteError(null);
-    setFlowState({ kind: "selling" });
     try {
-      const { txHash } = await adapter.write({
+      // Step 1: sell YT for SY (user is receiver).
+      setFlowState({ kind: "selling" });
+      const sellResp = await adapter.write({
         kind: "swapExactYtForSy",
         market,
         ytIn: parsedYt,
         minSyOut,
         receiver: user,
       });
-      setLastTxHash(txHash);
-      setFlowState({ kind: "done", finalTxHash: txHash });
+      setLastTxHash(sellResp.txHash);
+
+      // Step 2: approve SY → unzap if allowance is below what we plan to pull.
+      // The Hedera path waits for receipt internally; on EVM mode we wait
+      // ~3s mirror-lag so the next call sees the updated allowance.
+      if (syAllowance < minSyOut) {
+        setFlowState({ kind: "approving" });
+        const aResp = await adapter.write({
+          kind: "approveErc20",
+          token: detail.syShare,
+          spender: ADDRESSES.fissionUnzap,
+          amount: MAX_HTS_APPROVE,
+        });
+        setLastTxHash(aResp.txHash);
+        await new Promise((r) => setTimeout(r, adapter.mode === "evm" ? 3500 : 1500));
+        await syAllowanceRead.refetch();
+      }
+
+      // Step 3: unzap SY → HBAR.
+      setFlowState({ kind: "unzapping" });
+      const uResp = await adapter.write({
+        kind: "unzapSy",
+        unzap: ADDRESSES.fissionUnzap,
+        sy: detail.syShare,
+        sharesIn: minSyOut,
+        minHbarOut: 1n,
+        receiver: user,
+      });
+      setLastTxHash(uResp.txHash);
+      setFlowState({ kind: "done", finalTxHash: uResp.txHash });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setWriteError(msg);
       setFlowState({ kind: "error", message: msg });
+    } finally {
+      chainInFlight.current = false;
     }
-  }, [adapter, expired, insufficient, market, minSyOut, parsedYt, sizeLimit.exceeded, user]);
+  }, [adapter, detail.syShare, expired, insufficient, market, minSyOut, parsedYt, sizeLimit.exceeded, syAllowance, syAllowanceRead, user]);
 
-  const isPending = adapter.isWritePending || flowState.kind === "selling";
+  const isPending =
+    adapter.isWritePending ||
+    flowState.kind === "selling" ||
+    flowState.kind === "approving" ||
+    flowState.kind === "unzapping";
   const isDoneFinal = flowState.kind === "done";
 
   /* ─────────────────────────── FlowOfFunds */
@@ -245,11 +333,13 @@ export function SellYtForm({ market, detail, user }: Props) {
     if (parsedYt === 0n) return "Enter amount";
     if (insufficient) return "Insufficient YT";
     if (sizeLimit.exceeded) return "Trade too large for pool";
-    if (flowState.kind === "error") return "Retry sell";
-    if (flowState.kind === "selling") return "Selling YT…";
-    if (flowState.kind === "done") return "✓ Done";
+    if (flowState.kind === "error") return "Retry Sell YT → HBAR";
+    if (flowState.kind === "selling") return "1/3 · Selling YT for SY…";
+    if (flowState.kind === "approving") return "2/3 · Approving SY for unzap…";
+    if (flowState.kind === "unzapping") return "3/3 · Unwrapping SY → HBAR…";
+    if (flowState.kind === "done") return "✓ Done — HBAR in wallet";
     if (isConfirmingFinal) return "Waiting for confirmation…";
-    return "Sell YT";
+    return syAllowance < minSyOut ? "Sell YT for HBAR (3 prompts)" : "Sell YT for HBAR (2 prompts)";
   };
 
   const buttonDisabled =
