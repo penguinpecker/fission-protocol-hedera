@@ -300,3 +300,57 @@ PRIOR SESSIONS — ARCHIVED
   All Market 0 v1 state from that note has since been re-deployed twice
   (Ed25519 fix 2026-05-22, then abandoned today for the clean slate
   documented above).
+
+═══════════════════════════════════════════════════════════════════════
+FORENSIC AUDIT  (2026-05-27, post-deploy)
+═══════════════════════════════════════════════════════════════════════
+
+Scope: SaucerSwapLPYieldSource, FissionRewardsMarket, FissionPeriphery.
+Verdict: NO CRITICAL FINDINGS. Architecture sound. Listed limitations are
+owner-trust / documentation concerns acceptable for current TVL (operator
+seed only); revisit before scaling user TVL.
+
+HIGH (no immediate fix; documented limitations):
+  H-1. Periphery.rescueToken — owner can drain Periphery's transient
+       balances. Defense-in-depth: every flow refunds dust in-tx. Real
+       risk = orphaned tokens from a failed inner call. Mitigation:
+       transfer Periphery ownership to Timelock + ThresholdAccount.
+  H-2. FissionRewardsMarket._split settles ytReceiver but not ptReceiver
+       reward state. Re-analysis: proportional reward distribution
+       preserved by pre-mint ts snapshot in _harvestRewards — NOT actually
+       exploitable. Audit flag was a misanalysis.
+  H-3. Market.swapExactYtForSyFor has no _checkSize gate (Periphery does).
+       Direct integrators could brick the pool with one huge YT sell.
+       Documented intent: gate lives in Periphery only.
+  H-4. Periphery.unzapSyToHbar accepts arbitrary syAdapter. Mitigation
+       options: (a) gate on registeredSyAdapter mapping (requires Periphery
+       v2 redeploy) or (b) trust the frontend to always pass the
+       canonical syAdapter. Currently (b) applies.
+
+MEDIUM (cosmetic / acceptable):
+  M-1. Direct user-to-user SY share transfers leak rewards. Acknowledged
+       in SYBase; all SY movement is mediated by Market in practice.
+  M-2. Constructor doesn't validate rewardTokens ≠ shareToken/PT/LP. Risk
+       only if SY ever returns conflicting tokens. SaucerSwapLPYieldSource
+       returns (token0, token1) = (USDC, WHBAR) which are not collisions.
+  M-3 / M-4 / M-5: cosmetic.
+
+LOW:
+  L-1. deadline=0 sentinel allowed (by design).
+  L-2. min*Out=0 allowed (user-set slippage).
+  L-3. Periphery.buySyForPt returns minPtOut not actual swap output
+       (cosmetic; curve guarantees ≥minPtOut).
+  L-4. zapHbarToSy forwards address(this).balance (includes stray HBAR).
+  L-5. _redeemSyToHbar uses 0 mins; outer min*Out gates.
+  L-6. initialize has no initialAnchor sanity bounds (admin-trust).
+
+INFO:
+  - First-deposit attack: mitigated via MINIMUM_LIQUIDITY=1000.
+  - Re-entrancy: all entries use ReentrancyGuardTransient.
+  - Pause: redeemLiquidity, merge, redeemAfterExpiry are intentionally
+    NOT pause-gated (users must always be able to exit).
+  - HTS Ed25519 long-zero: handled via _ytBal mirror.
+  - Curve init: setInitialLnImpliedRate validates newExchangeRate ≥ 1.
+
+CONCLUSION: shippable. Address H-4 (registered-adapter gate) when next
+contract cycle happens. Transfer ownership to Timelock before scaling TVL.
