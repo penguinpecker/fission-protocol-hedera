@@ -95,7 +95,7 @@ export function SellYtForm({ market, detail, user }: Props) {
             ] as const,
             address: detail.syShare,
             functionName: "allowance",
-            args: [user, ADDRESSES.fissionGateway],
+            args: [user, ADDRESSES.periphery],
           } as const,
         ]
       : [],
@@ -225,26 +225,27 @@ export function SellYtForm({ market, detail, user }: Props) {
     chainInFlight.current = true;
     setWriteError(null);
     try {
-      // Step 1: sell YT for SY (user is receiver).
+      // Post-rebuild (2026-05-27): 2-tx Periphery flow.
+      // PREREQ: user must have called market.setOperator(periphery, true) once.
+      // (a one-time setup the dApp surfaces separately; this form does NOT include it).
+      //
+      // Step 1: Periphery.sellYtForSy — Periphery calls market.swapExactYtForSyFor(user, …)
+      //         using the user's operator approval; wipes user's YT; sends SY to `user`.
       setFlowState({ kind: "selling" });
       const sellResp = await adapter.write({
-        kind: "swapExactYtForSy",
-        market,
-        ytIn: parsedYt,
-        minSyOut,
-        receiver: user,
+        kind: "writePeriphery",
+        functionName: "sellYtForSy",
+        args: [market, parsedYt, minSyOut, user, 0n],
       });
       setLastTxHash(sellResp.txHash);
 
-      // Step 2: approve SY → unzap if allowance is below what we plan to pull.
-      // The Hedera path waits for receipt internally; on EVM mode we wait
-      // ~3s mirror-lag so the next call sees the updated allowance.
+      // Step 2: approve SY → Periphery if allowance below the amount we'll pull.
       if (syAllowance < minSyOut) {
         setFlowState({ kind: "approving" });
         const aResp = await adapter.write({
           kind: "approveErc20",
           token: detail.syShare,
-          spender: ADDRESSES.fissionGateway,
+          spender: ADDRESSES.periphery,
           amount: MAX_HTS_APPROVE,
         });
         setLastTxHash(aResp.txHash);
@@ -252,15 +253,12 @@ export function SellYtForm({ market, detail, user }: Props) {
         await syAllowanceRead.refetch();
       }
 
-      // Step 3: unzap SY → HBAR.
+      // Step 3: Periphery.unzapSyToHbar — SY → HBAR delivered to user.
       setFlowState({ kind: "unzapping" });
       const uResp = await adapter.write({
-        kind: "unzapSy",
-        unzap: ADDRESSES.fissionGateway,
-        sy: detail.sy,
-        sharesIn: minSyOut,
-        minHbarOut: 1n,
-        receiver: user,
+        kind: "writePeriphery",
+        functionName: "unzapSyToHbar",
+        args: [detail.sy, minSyOut, 1n, 0n],
       });
       setLastTxHash(uResp.txHash);
       setFlowState({ kind: "done", finalTxHash: uResp.txHash });

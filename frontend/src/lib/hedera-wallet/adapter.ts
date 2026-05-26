@@ -26,10 +26,31 @@ import {
   marketWriteAbi,
   syWriteAbi,
   fissionGatewayAbi,
+  fissionPeripheryAbi,
 } from "@/lib/abis-write";
 import { ADDRESSES } from "@/lib/addresses";
 
 export type WriteOp =
+  /**
+   * Generic Periphery call for the post-rebuild 2-tx forms. `functionName` and
+   * `args` map directly to one of the 8 Periphery entry points; `value` only
+   * needed for `zapHbarToSy`. Use this instead of the legacy MegaZap/Gateway
+   * `kind`s — those route to ZERO addresses now.
+   */
+  | {
+      kind: "writePeriphery";
+      functionName:
+        | "zapHbarToSy"
+        | "buySyForPt"
+        | "buySyForYt"
+        | "buySyForLp"
+        | "sellPtForSy"
+        | "sellYtForSy"
+        | "sellLpForSy"
+        | "unzapSyToHbar";
+      args: readonly unknown[];
+      value?: bigint;
+    }
   | { kind: "approveErc20"; token: `0x${string}`; spender: `0x${string}`; amount: bigint }
   | { kind: "split"; market: `0x${string}`; amount: bigint }
   | { kind: "merge"; market: `0x${string}`; amount: bigint }
@@ -296,6 +317,19 @@ async function writeEvm(
   writeContractAsync: ReturnType<typeof useWriteContract>["writeContractAsync"],
 ): Promise<{ txHash: string }> {
   switch (op.kind) {
+    case "writePeriphery":
+      return {
+        txHash: await writeContractAsync({
+          abi: fissionPeripheryAbi,
+          address: ADDRESSES.periphery,
+          functionName: op.functionName,
+          // viem expects readonly any[] — the union of signatures across the 8
+          // Periphery entry points doesn't typecheck without an explicit cast.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          args: op.args as any,
+          value: op.value,
+        }),
+      };
     case "approveErc20":
       return {
         txHash: await writeContractAsync({
@@ -360,16 +394,16 @@ async function writeEvm(
         }),
       };
     case "zapHbarToSy": {
-      // Routed through the v2 Gateway. The Gateway forwards msg.value to
-      // FissionZap internally and delivers SY shares to `receiver`. +5
-      // HBAR NPM buffer same as before. Hashio takes wei (1 HBAR = 1e18).
+      // Post-rebuild (2026-05-27): routed through the new FissionPeriphery.
+      // Periphery.zapHbarToSy(market, receiver, deadline) — payable, msg.value
+      // is full HBAR amount (Periphery reserves v3NpmFeeBudget internally).
       return {
         txHash: await writeContractAsync({
-          abi: fissionGatewayAbi,
-          address: ADDRESSES.fissionGateway,
+          abi: fissionPeripheryAbi,
+          address: ADDRESSES.periphery,
           functionName: "zapHbarToSy",
-          args: [op.sy, op.receiver],
-          value: parseEther(String(op.hbarIn + 5)),
+          args: [ADDRESSES.market, op.receiver, 0n],
+          value: parseEther(String(op.hbarIn)),
         }),
       };
     }
@@ -393,26 +427,25 @@ async function writeEvm(
         }),
       };
     case "addLiquidity":
-      // ActionRouter v3 (2026-05-14) fixes the SY-share typing bug from v2
-      // — the router now pulls `sy.shareToken()` correctly, so the dApp
-      // routes Add LP through the router again (matches Remove LP).
-      // Approvals are on the SY-share + PT toward the router, not the
-      // market. v2 deployments without a v3 redeploy will revert here.
+      // Post-rebuild: route directly to the market. The new Periphery doesn't
+      // expose a addLiquidityProportional helper; the market's own addLiquidity
+      // does transferFrom from msg.sender, so user must approve SY+PT to the
+      // MARKET (not the Periphery) for this path.
       return {
         txHash: await writeContractAsync({
-          abi: routerAbi,
-          address: op.router,
-          functionName: "addLiquidityProportional",
-          args: [op.market, op.syIn, op.ptIn, op.minLpOut, op.receiver, op.deadline],
+          abi: marketWriteAbi,
+          address: op.market,
+          functionName: "addLiquidity",
+          args: [op.syIn, op.ptIn, op.minLpOut, op.receiver],
         }),
       };
     case "removeLiquidity":
       return {
         txHash: await writeContractAsync({
-          abi: routerAbi,
-          address: op.router,
-          functionName: "removeLiquidityProportional",
-          args: [op.market, op.lpIn, op.minSyOut, op.minPtOut, op.receiver, op.deadline],
+          abi: marketWriteAbi,
+          address: op.market,
+          functionName: "removeLiquidity",
+          args: [op.lpIn, op.minSyOut, op.minPtOut, op.receiver],
         }),
       };
     // All HBAR-in / *ForHbar-out paths route through FissionGateway v2.
@@ -780,6 +813,44 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
         0,
         10_000_000,
       );
+    case "writePeriphery": {
+      // Generic Periphery call for the post-rebuild 2-tx forms.
+      // Encode args per function signature. Each entry maps the JS args[] to
+      // the right ContractFunctionParameters builder calls. Falls back to
+      // `unsupported` if a future form passes an unknown function name.
+      const p = new ContractFunctionParameters();
+      const fn = op.functionName;
+      const a = op.args as unknown[];
+      const valueHbar = op.value ? Number(op.value) / 1e18 : 0;
+      // Helper: address arg cleanly (strips 0x).
+      const addrArg = (v: unknown) => String(v).replace(/^0x/, "");
+      switch (fn) {
+        case "zapHbarToSy":
+          p.addAddress(addrArg(a[0])).addAddress(addrArg(a[1])).addUint256(toBN(a[2] as bigint));
+          return exec(ADDRESSES.periphery, fn, p, valueHbar, 15_000_000);
+        case "buySyForPt":
+        case "sellPtForSy":
+        case "sellLpForSy":
+        case "sellYtForSy":
+          p.addAddress(addrArg(a[0])).addUint256(toBN(a[1] as bigint))
+            .addUint256(toBN(a[2] as bigint)).addAddress(addrArg(a[3])).addUint256(toBN(a[4] as bigint));
+          return exec(ADDRESSES.periphery, fn, p, 0, 10_000_000);
+        case "buySyForYt":
+          p.addAddress(addrArg(a[0])).addUint256(toBN(a[1] as bigint))
+            .addUint256(toBN(a[2] as bigint)).addAddress(addrArg(a[3])).addUint256(toBN(a[4] as bigint));
+          return exec(ADDRESSES.periphery, fn, p, 0, 12_000_000);
+        case "buySyForLp":
+          p.addAddress(addrArg(a[0])).addUint256(toBN(a[1] as bigint)).addUint16(Number(a[2]))
+            .addUint256(toBN(a[3] as bigint)).addAddress(addrArg(a[4])).addUint256(toBN(a[5] as bigint));
+          return exec(ADDRESSES.periphery, fn, p, 0, 12_000_000);
+        case "unzapSyToHbar":
+          p.addAddress(addrArg(a[0])).addUint256(toBN(a[1] as bigint))
+            .addUint256(toBN(a[2] as bigint)).addUint256(toBN(a[3] as bigint));
+          return exec(ADDRESSES.periphery, fn, p, 0, 10_000_000);
+        default:
+          throw new Error(`writePeriphery: unsupported function ${fn}`);
+      }
+    }
   }
 }
 

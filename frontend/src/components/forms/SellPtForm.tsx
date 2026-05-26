@@ -41,9 +41,10 @@ interface Props {
 type FlowKind =
   | { kind: "idle" }
   | { kind: "approving" }
-  | { kind: "selling" }
+  | { kind: "selling" } // tx1: PT → SY
+  | { kind: "unzapping" } // tx2: SY → HBAR
   | { kind: "done"; finalTxHash: string }
-  | { kind: "error"; message: string; failedAt: "approve" | "sell" };
+  | { kind: "error"; message: string; failedAt: "approve" | "sell" | "unzap" };
 
 export function SellPtForm({ market, detail, user }: Props) {
   const adapter = useWalletAdapter();
@@ -66,17 +67,16 @@ export function SellPtForm({ market, detail, user }: Props) {
   const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!lastTxHash;
   const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
 
-  const routerDeployed = isDeployed(ADDRESSES.router);
+  // Post-rebuild (2026-05-27): 2-tx flow via FissionPeriphery.
+  // Tx1: Periphery.sellPtForSy (PT → SY shares, delivered to user)
+  // Tx2: Periphery.unzapSyToHbar (SY shares → HBAR, sent to user)
+  // User must also approve SY-share → Periphery once before Tx2 succeeds.
+  const peripheryDeployed = isDeployed(ADDRESSES.periphery);
   const expired = Date.now() / 1000 >= Number(detail.expiry);
 
   /* ─────────────────────────── PT balance + allowance reads */
 
-  // Output is always native HBAR via FissionUnzap (router-direct SY-output
-  // path removed from this form on user request — gas overhead of unzap
-  // composition was deemed worth it for the UX win of HBAR-in-wallet).
-  // Approval goes to the unzap; underlying router.swapExactPtForSy is
-  // still called by the unzap internally on behalf of the user.
-  const spender: `0x${string}` = ADDRESSES.fissionGateway;
+  const spender: `0x${string}` = ADDRESSES.periphery;
   const ptRead = useReadContracts({
     contracts: user
       ? [
@@ -194,23 +194,41 @@ export function SellPtForm({ market, detail, user }: Props) {
     }
   }, [adapter, detail.pt, parsedPt, ptRead, spender, user]);
 
-  const runSell = useCallback(async (): Promise<boolean> => {
-    if (!user) return false;
+  const runSell = useCallback(async (): Promise<bigint | null> => {
+    // Tx 1: PT → SY via Periphery.sellPtForSy. Returns SY shares the user just received.
+    if (!user) return null;
     setFlowState({ kind: "selling" });
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     try {
       const { txHash } = await adapter.write({
-        kind: "sellPtForHbar",
-        unzap: ADDRESSES.fissionGateway,
-        market,
-        ptIn: parsedPt,
-        // FissionUnzap converts SY → USDC+WHBAR → HBAR through the V3 pool +
-        // V2 swap, so the final HBAR amount isn't a tight function of any
-        // single intermediate. Permissive `1` floor until an unzap-aware
-        // preview lens is built.
-        minHbarOut: 1n,
-        receiver: user,
-        deadline,
+        kind: "writePeriphery",
+        functionName: "sellPtForSy",
+        args: [market, parsedPt, 1n, user, 0n],
+      });
+      setLastTxHash(txHash);
+      // Wait briefly for receipt + return the computed SY out (lens-aligned for now).
+      await new Promise((r) => setTimeout(r, adapter.mode === "evm" ? 3500 : 1500));
+      // syEstimate is the off-chain prediction; the on-chain amount is what
+      // actually landed in user's wallet. For tx2 amount we use syEstimate since
+      // the Periphery is the only writer in this window — close enough.
+      return syEstimate;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setWriteError(msg);
+      setFlowState({ kind: "error", message: msg, failedAt: "sell" });
+      return null;
+    }
+  }, [adapter, market, parsedPt, user, syEstimate]);
+
+  const runUnzap = useCallback(async (sySharesToUnzap: bigint): Promise<boolean> => {
+    // Tx 2: SY → HBAR via Periphery.unzapSyToHbar.
+    // User must have approved SY-share → Periphery (one-time setup).
+    if (!user) return false;
+    setFlowState({ kind: "unzapping" });
+    try {
+      const { txHash } = await adapter.write({
+        kind: "writePeriphery",
+        functionName: "unzapSyToHbar",
+        args: [detail.sy, sySharesToUnzap, 1n, 0n],
       });
       setLastTxHash(txHash);
       setFlowState({ kind: "done", finalTxHash: txHash });
@@ -218,24 +236,30 @@ export function SellPtForm({ market, detail, user }: Props) {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setWriteError(msg);
-      setFlowState({ kind: "error", message: msg, failedAt: "sell" });
+      setFlowState({ kind: "error", message: msg, failedAt: "unzap" });
       return false;
     }
-  }, [adapter, market, parsedPt, user]);
+  }, [adapter, detail.sy, user]);
 
   const onPrimary = useCallback(async () => {
-    if (!user || parsedPt === 0n || !routerDeployed || expired) return;
+    if (!user || parsedPt === 0n || !peripheryDeployed || expired) return;
     if (insufficient || sizeLimit.exceeded) return;
     setWriteError(null);
 
     if (flowState.kind === "error") {
-      // Resume from the failed step.
       if (flowState.failedAt === "approve") {
         const ok = await runApprove();
         if (!ok) return;
-        await runSell();
+        const syOut = await runSell();
+        if (syOut === null) return;
+        await runUnzap(syOut);
+      } else if (flowState.failedAt === "sell") {
+        const syOut = await runSell();
+        if (syOut === null) return;
+        await runUnzap(syOut);
       } else {
-        await runSell();
+        // failed at unzap — operator still has the SY from tx1. Retry tx2 with syEstimate.
+        await runUnzap(syEstimate);
       }
       return;
     }
@@ -244,13 +268,16 @@ export function SellPtForm({ market, detail, user }: Props) {
       const ok = await runApprove();
       if (!ok) return;
     }
-    await runSell();
-  }, [user, parsedPt, routerDeployed, expired, insufficient, sizeLimit.exceeded, flowState, needsApprove, runApprove, runSell]);
+    const syOut = await runSell();
+    if (syOut === null) return;
+    await runUnzap(syOut);
+  }, [user, parsedPt, peripheryDeployed, expired, insufficient, sizeLimit.exceeded, flowState, needsApprove, runApprove, runSell, runUnzap, syEstimate]);
 
   const isPending =
     adapter.isWritePending ||
     flowState.kind === "approving" ||
-    flowState.kind === "selling";
+    flowState.kind === "selling" ||
+    flowState.kind === "unzapping";
 
   /* ─────────────────────────── FlowOfFunds */
 
@@ -273,8 +300,8 @@ export function SellPtForm({ market, detail, user }: Props) {
       isComplete: isDoneFinal,
     },
     {
-      label: "Router",
-      detail: shortAddr(ADDRESSES.router),
+      label: "Periphery",
+      detail: shortAddr(ADDRESSES.periphery),
       isActive: isPending && !isDoneFinal,
       isComplete: isDoneFinal,
     },
@@ -315,19 +342,20 @@ export function SellPtForm({ market, detail, user }: Props) {
     if (flowState.kind === "error") {
       return flowState.failedAt === "approve" ? "Retry approval" : "Retry sell";
     }
-    if (flowState.kind === "approving") return "Approving PT for Router…";
-    if (flowState.kind === "selling") return "Selling PT…";
+    if (flowState.kind === "approving") return "Approving PT…";
+    if (flowState.kind === "selling") return "Step 1/2 · Selling PT → SY…";
+    if (flowState.kind === "unzapping") return "Step 2/2 · Converting SY → HBAR…";
     if (flowState.kind === "done") return "✓ Done";
     if (isConfirmingFinal) return "Waiting for confirmation…";
-    if (needsApprove) return "Approve PT for Router";
-    return "Sell PT";
+    if (needsApprove) return "Approve PT for Periphery";
+    return "Sell PT for HBAR";
   };
 
   const buttonDisabled =
     !user ||
     isPending ||
     isConfirmingFinal ||
-    !routerDeployed ||
+    !peripheryDeployed ||
     expired ||
     parsedPt === 0n ||
     insufficient ||
@@ -483,8 +511,8 @@ export function SellPtForm({ market, detail, user }: Props) {
           </div>
         )}
 
-        {!routerDeployed && (
-          <p className="mt-2 font-mono text-[11px] text-error">Router not deployed yet.</p>
+        {!peripheryDeployed && (
+          <p className="mt-2 font-mono text-[11px] text-error">Periphery not deployed yet.</p>
         )}
       </div>
     </div>

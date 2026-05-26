@@ -64,7 +64,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   const hbarUsd = useHbarUsd();
 
   const [source, setSource] = useState<Source>("hbar");
-  const zapAvailable = isDeployed(ADDRESSES.fissionZap);
+  const zapAvailable = isDeployed(ADDRESSES.periphery);
   // MegaZap.zapHbarToYt is STRUCTURALLY over Hedera's 50-child consensus
   // limit: the YT path adds split-mint-PT/YT + YT freeze + extra AMM
   // transfers over the PT path, pushing total child records past 50 every
@@ -99,7 +99,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   });
   const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!lastTxHash;
   const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
-  const routerDeployed = isDeployed(ADDRESSES.router);
+  const routerDeployed = isDeployed(ADDRESSES.periphery);
   // `isPending` controls button-disable + spinner labels. CRITICAL: this
   // must also be true during the SHORT inter-step states (`zapped`,
   // `approved`) — those are the transitions BETWEEN wallet popups in the
@@ -171,7 +171,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
 
   /* ─────────────────────────── allowance + SY balance reads */
 
-  const spender: `0x${string}` = ADDRESSES.router;
+  const spender: `0x${string}` = ADDRESSES.periphery;
   const allowanceRead = useReadContracts({
     contracts:
       user && detail.syShare
@@ -283,7 +283,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         if (!user) throw new Error("No user address");
         const { txHash } = await adapter.write({
           kind: "zapHbarToSy",
-          zap: ADDRESSES.fissionZap,
+          zap: ADDRESSES.periphery,
           sy: detail.sy,
           receiver: user,
           hbarIn,
@@ -342,13 +342,9 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
       const minSyOut = (expectedSyOut * BigInt(10_000 - slippageBps)) / 10_000n;
       try {
         const { txHash } = await adapter.write({
-          kind: "buyYT",
-          router: ADDRESSES.router,
-          market,
-          syBudget: syIn,
-          minSyOut,
-          receiver: user,
-          deadline,
+          kind: "writePeriphery",
+          functionName: "buySyForYt",
+          args: [market, syIn, minSyOut, user, 0n],
         });
         setLastTxHash(txHash);
         setStatus({ kind: "done", finalTxHash: txHash });
@@ -387,7 +383,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
       try {
         const { txHash } = await adapter.write({
           kind: "zapHbarToYtMega",
-          megaZap: ADDRESSES.megaZap,
+          megaZap: ADDRESSES.periphery,
           market,
           sy: detail.sy,
           minSyOutFromPtSale: minSyOut,
@@ -591,7 +587,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         },
         {
           label: "Buy YT via MegaZap (1 tx)",
-          detail: `${shortAddr(ADDRESSES.megaZap)} · HBAR → SY → YT atomically · +5 HBAR NPM fee`,
+          detail: `${shortAddr(ADDRESSES.periphery)} · HBAR → SY → YT atomically · +5 HBAR NPM fee`,
           inToken:
             hbarAmount > 0
               ? {
@@ -627,7 +623,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         },
         {
           label: "Zap HBAR → SY",
-          detail: `${shortAddr(ADDRESSES.fissionZap)} · +5 HBAR NPM fee`,
+          detail: `${shortAddr(ADDRESSES.periphery)} · +5 HBAR NPM fee`,
           inToken:
             hbarAmount > 0
               ? {
@@ -645,7 +641,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         },
         {
           label: "Approve SY for Router",
-          detail: shortAddr(ADDRESSES.router),
+          detail: shortAddr(ADDRESSES.periphery),
           isActive: stepIsActive(3),
           isComplete: stepIsComplete(3),
         },
@@ -692,7 +688,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         },
         {
           label: "Router",
-          detail: shortAddr(ADDRESSES.router),
+          detail: shortAddr(ADDRESSES.periphery),
           isActive: isActive && !isDoneFinal,
           isComplete: isDoneFinal,
         },

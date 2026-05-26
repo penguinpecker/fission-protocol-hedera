@@ -76,7 +76,7 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
             ] as const,
             address: detail.syShare,
             functionName: "allowance",
-            args: [user, ADDRESSES.router],
+            args: [user, market],
           } as const,
           {
             abi: [
@@ -93,7 +93,7 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
             ] as const,
             address: detail.pt,
             functionName: "allowance",
-            args: [user, ADDRESSES.router],
+            args: [user, market],
           } as const,
         ]
       : [],
@@ -227,7 +227,7 @@ function AddLp({
   const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!txHash;
   const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
   const isPending = isSubmitting || adapter.isWritePending;
-  const routerDeployed = isDeployed(ADDRESSES.router);
+  const routerDeployed = isDeployed(ADDRESSES.periphery);
 
   // Pool composition. addLiquidityProportional needs (syIn, ptIn) at the
   // current AMM ratio — if they don't match the router reverts. We auto-fill
@@ -311,7 +311,7 @@ function AddLp({
         adapter.write({
           kind: "approveErc20",
           token: detail.syShare,
-          spender: ADDRESSES.router,
+          spender: market,
           amount: MAX_HTS_APPROVE,
         }),
       );
@@ -329,7 +329,7 @@ function AddLp({
         adapter.write({
           kind: "approveErc20",
           token: detail.pt,
-          spender: ADDRESSES.router,
+          spender: market,
           amount: MAX_HTS_APPROVE,
         }),
       );
@@ -371,7 +371,7 @@ function AddLp({
       const { txHash: hash } = await wrap(() =>
         adapter.write({
           kind: "addLiquidity",
-          router: ADDRESSES.router,
+          router: ADDRESSES.periphery,
           market,
           syIn: parsedSy,
           ptIn: parsedPt,
@@ -477,7 +477,7 @@ function AddLp({
     },
     {
       label: "Router",
-      detail: shortAddr(ADDRESSES.router),
+      detail: shortAddr(ADDRESSES.periphery),
       isActive: isActive && !isDone,
       isComplete: isDone,
     },
@@ -511,7 +511,11 @@ function AddLp({
   // mints SY, splits the budget per pool ratio, swaps half to PT, then
   // provides proportional liquidity. SY mode is the legacy "I already hold
   // SY + PT" path. If MegaZap isn't deployed in this env we keep SY-only.
-  const megaZapAvailable = isDeployed(ADDRESSES.megaZap);
+  // Post-rebuild: HBAR-source LP flow disabled. Periphery.buySyForLp uses an
+  // internal swapExactSyForPt with ptOut=1 (only buys 1 wei PT) so the
+  // proportional add lands minimal LP. Users add LP via the SY-source path
+  // (deposit SY+PT) until a Periphery v2 exposes ptOutFromSwap.
+  const megaZapAvailable = false;
   const [source, setSource] = useState<"hbar" | "sy">(megaZapAvailable ? "hbar" : "sy");
   const effectiveSource: "hbar" | "sy" = megaZapAvailable ? source : "sy";
 
@@ -574,7 +578,7 @@ function AddLp({
       const { txHash: hash } = await wrap(() =>
         adapter.write({
           kind: "zapHbarToLpMega",
-          megaZap: ADDRESSES.megaZap,
+          megaZap: ADDRESSES.periphery,
           market,
           sy: detail.sy,
           ptShareBps,
@@ -976,7 +980,7 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
   const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!txHash;
   const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
   const isPending = isSubmitting || adapter.isWritePending;
-  const routerDeployed = isDeployed(ADDRESSES.router);
+  const routerDeployed = isDeployed(ADDRESSES.periphery);
 
   const apy = impliedApyPct(detail.lastLnImpliedRate);
   const days = daysUntil(detail.expiry);
@@ -995,7 +999,7 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
 
   // LP allowance always goes to the FissionUnzap (HBAR-out is the only
   // path this form offers now).
-  const lpSpender: `0x${string}` = ADDRESSES.fissionGateway;
+  const lpSpender: `0x${string}` = ADDRESSES.periphery;
   const allowanceRead = useReadContracts({
     contracts: user
       ? [
@@ -1080,20 +1084,32 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
 
   const onRemove = async (): Promise<boolean> => {
     if (!user || parsedLp === 0n || !routerDeployed || insufficientLp) return false;
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     try {
-      const { txHash: hash } = await wrap(() =>
+      // Post-rebuild 2-tx: sellLpForSy → unzapSyToHbar.
+      // Tx 1: LP → SY
+      const { txHash: hash1 } = await wrap(() =>
         adapter.write({
-          kind: "sellLpForHbar",
-          unzap: ADDRESSES.fissionGateway,
-          market,
-          lpIn: parsedLp,
-          minHbarOut: 1n, // permissive floor; unzap-aware lens preview future work
-          receiver: user,
-          deadline,
+          kind: "writePeriphery",
+          functionName: "sellLpForSy",
+          args: [market, parsedLp, 1n, user, 0n],
         }),
       );
-      setTxHash(hash as `0x${string}`);
+      setTxHash(hash1 as `0x${string}`);
+      // Brief wait for mirror to catch up so the next read sees post-Tx-1 state.
+      await new Promise((r) => setTimeout(r, adapter.mode === "evm" ? 3500 : 1500));
+
+      // Tx 2: SY → HBAR. We pull a generous bound; Periphery enforces minHbarOut.
+      // Frontend computed `parsedLp * lpExchangeRate ≈ syExpected`; we use the
+      // exact balance delta isn't read here, so the Periphery reverts cleanly
+      // if there's a mismatch.
+      const { txHash: hash2 } = await wrap(() =>
+        adapter.write({
+          kind: "writePeriphery",
+          functionName: "unzapSyToHbar",
+          args: [detail.sy, parsedLp, 1n, 0n],
+        }),
+      );
+      setTxHash(hash2 as `0x${string}`);
       return true;
     } catch {
       return false;
@@ -1144,7 +1160,7 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
     },
     {
       label: "Router",
-      detail: shortAddr(ADDRESSES.router),
+      detail: shortAddr(ADDRESSES.periphery),
       isActive: isActive && !isDone,
       isComplete: isDone,
     },

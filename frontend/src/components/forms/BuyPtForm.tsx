@@ -87,7 +87,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
 
   // Source toggle. Default HBAR for the common "I only have HBAR" case.
   const [source, setSource] = useState<Source>("hbar");
-  const zapAvailable = isDeployed(ADDRESSES.fissionZap);
+  const zapAvailable = isDeployed(ADDRESSES.periphery);
   // MegaZap was riding the cliff of Hedera's 50-child consensus limit for
   // Buy PT (51 records — parent + 50 children). As the V3 NFT crosses more
   // ticks (pool state drifts with every swap) the child count tips past
@@ -125,7 +125,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   });
   const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!lastTxHash;
   const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
-  const routerDeployed = isDeployed(ADDRESSES.router);
+  const routerDeployed = isDeployed(ADDRESSES.periphery);
   // `isPending` must include the inter-step states (`zapped`, `approved`)
   // so the button stays disabled BETWEEN wallet popups in the chain.
   // Otherwise the user can double-press and fire a parallel chain.
@@ -202,7 +202,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
 
   /* ─────────────────────────── SY allowance (SY-mode + post-zap approve) */
 
-  const spender: `0x${string}` = ADDRESSES.router;
+  const spender: `0x${string}` = ADDRESSES.periphery;
   const allowanceRead = useReadContracts({
     contracts:
       user && detail.syShare
@@ -331,7 +331,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         if (!user) throw new Error("No user address");
         const { txHash } = await adapter.write({
           kind: "zapHbarToSy",
-          zap: ADDRESSES.fissionZap,
+          zap: ADDRESSES.periphery,
           sy: detail.sy,
           receiver: user,
           hbarIn,
@@ -384,13 +384,9 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
       const minSyOutBudget = (syIn * BigInt(10_000 - slippageBps)) / 10_000n;
       try {
         const { txHash } = await adapter.write({
-          kind: "swapExactSyForPt",
-          router: ADDRESSES.router,
-          market,
-          syIn,
-          minPtOut: minSyOutBudget,
-          receiver: user,
-          deadline,
+          kind: "writePeriphery",
+          functionName: "buySyForPt",
+          args: [market, syIn, minSyOutBudget, user, 0n],
         });
         setLastTxHash(txHash);
         setStatus({ kind: "done", finalTxHash: txHash });
@@ -437,7 +433,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
       try {
         const { txHash } = await adapter.write({
           kind: "zapHbarToPtMega",
-          megaZap: ADDRESSES.megaZap,
+          megaZap: ADDRESSES.periphery,
           market,
           sy: detail.sy,
           minPtOut: minPtOut > 0n ? minPtOut : 1n,
@@ -649,7 +645,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         },
         {
           label: "Buy PT via MegaZap (1 tx)",
-          detail: `${shortAddr(ADDRESSES.megaZap)} · HBAR → SY → PT atomically · +5 HBAR NPM fee`,
+          detail: `${shortAddr(ADDRESSES.periphery)} · HBAR → SY → PT atomically · +5 HBAR NPM fee`,
           inToken:
             hbarAmount > 0
               ? {
@@ -685,7 +681,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         },
         {
           label: "Zap HBAR → SY",
-          detail: `${shortAddr(ADDRESSES.fissionZap)} · +5 HBAR NPM fee`,
+          detail: `${shortAddr(ADDRESSES.periphery)} · +5 HBAR NPM fee`,
           inToken:
             hbarAmount > 0
               ? {
@@ -703,7 +699,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         },
         {
           label: "Approve SY for Router",
-          detail: shortAddr(ADDRESSES.router),
+          detail: shortAddr(ADDRESSES.periphery),
           isActive: stepIsActive(3),
           isComplete: stepIsComplete(3),
         },
@@ -750,7 +746,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         },
         {
           label: "Router",
-          detail: shortAddr(ADDRESSES.router),
+          detail: shortAddr(ADDRESSES.periphery),
           isActive: isActive && !isDoneFinal,
           isComplete: isDoneFinal,
         },

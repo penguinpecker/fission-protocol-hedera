@@ -43,7 +43,9 @@ interface MintFormProps {
 }
 
 export function MintSyForm({ sy, syShare, user }: MintFormProps) {
-  if (isDeployed(ADDRESSES.fissionZap)) {
+  // Post-rebuild (2026-05-27): the Periphery handles HBAR → SY directly.
+  // LegacyMintForm path is kept for environments without a Periphery wired.
+  if (isDeployed(ADDRESSES.periphery)) {
     return <ZapMintForm sy={sy} syShare={syShare} user={user} />;
   }
   return <LegacyMintForm sy={sy} syShare={syShare} user={user} />;
@@ -101,7 +103,7 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
     try {
       const { txHash: hash } = await adapter.write({
         kind: "zapHbarToSy",
-        zap: ADDRESSES.fissionZap,
+        zap: ADDRESSES.periphery,
         sy,
         receiver: user,
         hbarIn: hbarAmount,
@@ -149,7 +151,7 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
     },
     {
       label: "Zap contract",
-      detail: `${shortAddr(ADDRESSES.fissionZap)} · reserves 5 HBAR NPM fee`,
+      detail: `${shortAddr(ADDRESSES.periphery)} · reserves 5 HBAR NPM fee`,
       isActive: isActive && !isDone,
       isComplete: isDone,
     },

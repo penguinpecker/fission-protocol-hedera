@@ -454,4 +454,152 @@ export const marketWriteAbi = [
     ],
     outputs: [{ type: "uint256" }],
   },
+  {
+    type: "function",
+    name: "removeLiquidity",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "lpIn", type: "uint256" },
+      { name: "minSyOut", type: "uint256" },
+      { name: "minPtOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+    ],
+    outputs: [
+      { name: "syOut", type: "uint256" },
+      { name: "ptOut", type: "uint256" },
+    ],
+  },
+] as const;
+
+/**
+ * FissionPeriphery — 2026-05-27+ clean-slate rebuild. Single user-facing
+ * contract. 8 entry points, all deterministic 2-tx (no atomic, no fallbacks).
+ *
+ * Buy:   zapHbarToSy → buySyForPt / buySyForYt / buySyForLp
+ * Sell:  sellPtForSy / sellYtForSy / sellLpForSy → unzapSyToHbar
+ *
+ * Pre-flight: user must approve PT, LP, SY-share → Periphery (max int64) and
+ * call market.setOperator(periphery, true) once for YT-sell support.
+ */
+export const fissionPeripheryAbi = [
+  {
+    type: "function",
+    name: "zapHbarToSy",
+    stateMutability: "payable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "sharesOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "buySyForPt",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "syIn", type: "uint256" },
+      { name: "minPtOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "ptOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "buySyForYt",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "syIn", type: "uint256" },
+      { name: "minSyOutFromPtSale", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [
+      { name: "ytOut", type: "uint256" },
+      { name: "syRefund", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "buySyForLp",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "syIn", type: "uint256" },
+      { name: "ptShareBps", type: "uint16" },
+      { name: "minLpOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "lpOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "sellPtForSy",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "ptIn", type: "uint256" },
+      { name: "minSyOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "syOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "sellYtForSy",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "ytIn", type: "uint256" },
+      { name: "minSyOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "syOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "sellLpForSy",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "lpIn", type: "uint256" },
+      { name: "minSyOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "syOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "unzapSyToHbar",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "syAdapter", type: "address" },
+      { name: "sharesIn", type: "uint256" },
+      { name: "minHbarOut", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "hbarOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "quoteUnzapSy",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "syAdapter", type: "address" },
+      { name: "sharesIn", type: "uint256" },
+    ],
+    outputs: [
+      { name: "hbarOut", type: "uint256" },
+      { name: "usdcOut", type: "uint256" },
+      { name: "whbarOut", type: "uint256" },
+      { name: "ok", type: "bool" },
+    ],
+  },
 ] as const;

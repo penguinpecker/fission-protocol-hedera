@@ -133,7 +133,7 @@ function SellSyForm({ market, detail, user }: FormProps) {
   const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!lastTxHash;
   const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
 
-  const unzapDeployed = isDeployed(ADDRESSES.fissionGateway);
+  const unzapDeployed = isDeployed(ADDRESSES.periphery);
 
   // SY balance + allowance to the unzap.
   const reads = useReadContracts({
@@ -168,7 +168,7 @@ function SellSyForm({ market, detail, user }: FormProps) {
             ] as const,
             address: detail.syShare,
             functionName: "allowance",
-            args: [user, ADDRESSES.fissionGateway],
+            args: [user, ADDRESSES.periphery],
           } as const,
         ]
       : [],
@@ -221,7 +221,7 @@ function SellSyForm({ market, detail, user }: FormProps) {
         const aResp = await adapter.write({
           kind: "approveErc20",
           token: detail.syShare,
-          spender: ADDRESSES.fissionGateway,
+          spender: ADDRESSES.periphery,
           amount: MAX_HTS_APPROVE,
         });
         setLastTxHash(aResp.txHash);
@@ -230,17 +230,11 @@ function SellSyForm({ market, detail, user }: FormProps) {
       }
 
       setFlowState({ kind: "selling" });
-      // Gateway v2: `sy` is the SY ADAPTER address (not the share token).
-      // The gateway resolves shareToken from the adapter internally — this
-      // is the v1 bug fix. `unzap` field is preserved for backward compat
-      // but ignored by the adapter (routes through ADDRESSES.fissionGateway).
+      // Post-rebuild: Periphery.unzapSyToHbar(syAdapter, sharesIn, minHbarOut, deadline).
       const uResp = await adapter.write({
-        kind: "unzapSy",
-        unzap: ADDRESSES.fissionGateway,
-        sy: detail.sy,
-        sharesIn: parsedSy,
-        minHbarOut: minHbarOutTinybar,
-        receiver: user,
+        kind: "writePeriphery",
+        functionName: "unzapSyToHbar",
+        args: [detail.sy, parsedSy, minHbarOutTinybar, 0n],
       });
       setLastTxHash(uResp.txHash);
       setFlowState({ kind: "done", finalTxHash: uResp.txHash });
