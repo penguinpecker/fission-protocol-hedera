@@ -133,7 +133,8 @@ const SELECTOR_TO_EVENT = {
   "0x5cd4b2ba": "deposit",            // zapHbarToSy(address,address,uint256)
   "0x3ab0458a": "swap_sy_for_pt",     // buySyForPt(address,uint256,uint256,address,uint256)
   "0xa6be33fe": "swap_pt_for_sy",     // buySyForYt — composite, fires swap_pt_for_sy
-  "0xcbf84c49": "add_liquidity",      // buySyForLp(address,uint256,uint16,uint256,address,uint256)
+  "0xcbf84c49": "add_liquidity",      // buySyForLp v1 (6-arg) — old Periphery 0x8ce95cef..., kept for archived activity
+  "0x171109ef": "add_liquidity",      // buySyForLp v2 (7-arg, ptOutFromSwap) — Periphery v2 0x...a025c1
   "0x33b1da21": "swap_pt_for_sy",     // sellPtForSy(address,uint256,uint256,address,uint256)
   "0x01829011": "swap_pt_for_sy",     // sellYtForSy(address,uint256,uint256,address,uint256) — uses operator path
   "0xde01e48e": "remove_liquidity",   // sellLpForSy(address,uint256,uint256,address,uint256)

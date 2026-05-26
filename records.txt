@@ -380,3 +380,79 @@ Contracts to verify (deployed addresses):
   SY adapter    0x0000000000000000000000000000000000a02585
   Market        0x556938AcfDa70dF2A32ea97e6B6862B874d93ef9
   Periphery v2  0x0000000000000000000000000000000000a025c1
+
+═══════════════════════════════════════════════════════════════════════
+DEEP AUDIT PASS 2  (post-Periphery-v2, 2026-05-27)
+═══════════════════════════════════════════════════════════════════════
+
+Live verification: 11/11 v2 paths PASS on mainnet with real HBAR.
+  ✓ setOperator(v2) confirmed true
+  ✓ zapHbarToSy, buySyForPt, buySyForYt, buySyForLp (with ptOutFromSwap)
+  ✓ sellPtForSy, sellYtForSy, unzapSyToHbar(registered)
+  ✓ UnregisteredSyAdapter selector 0xca4e5522 fires on bad adapter (H-4 live)
+  ✓ TradeExceedsCap selector 0x15866bde fires on >5% pool trade
+  ✓ msg.value units confirmed = tinybars (v3NpmFeeBudget=5e8 = 5 HBAR correct)
+
+NEW FINDINGS from line-by-line audit:
+
+CRITICAL (data integrity):
+  X-1. Indexer selector for buySyForLp was stale (0xcbf84c49 = OLD 6-arg).
+       v2 signature is 7-arg → selector 0x171109ef. FIXED in index.js.
+       Without this, every buySyForLp tx on v2 would be invisible to
+       activity_log.
+
+HIGH (real-money, requires redeploy):
+  X-2. SY adapter HBAR leak — depositLiquidity forwards full msg.value
+       to NPM. NPM consumes only the mint fee; excess HBAR stays in the
+       SY adapter with NO withdrawal function. Over time, HBAR accumulates
+       and is unrecoverable. Fix requires SY adapter redeploy with admin
+       sweep. NOT FIXED — documented.
+
+  X-3. _checkSize mixes 18-dec (SY) + asset-dec (PT/USDC=6) scales.
+       Cap dominated by 18-dec side; PT-side is rounding noise. Effective
+       cap is ~totalSy * maxTradeBps / 10000 — looser than intended on
+       PT-heavy trades. Fix: separate caps per side. NOT FIXED.
+
+  X-4. quoteUnzapSy is external (not view) and depends on Periphery
+       having 0 SY balance between txs. Currently safe via nonReentrant
+       + zero-balance invariant. Fragile if future paths leave SY in
+       Periphery. Fix: refactor to pure view simulation or mark internal.
+       NOT FIXED.
+
+  X-5. Owner ordering attack on rescueToken — owner could front-run a
+       user's zap with rescueToken to steal in-flight USDC/WHBAR. Same
+       owner-trust assumption as prior H-1. Mitigation: Timelock-gate
+       rescue (user explicitly chose to skip Timelock handoff).
+
+MEDIUM:
+  X-6. v3NpmFeeBudget upper bound is 50 HBAR. If actual NPM fee ever
+       exceeds (HBAR price collapse), zaps lock out. Raise to 100.
+       NOT FIXED.
+
+  X-7. setOperator is permanent toggle, no expiry/amount limit. Users
+       who approve forget about it; future Periphery owners inherit
+       trust. Mitigation: documented in user-facing UX.
+
+LOW:
+  X-8. Deadline check in unzapSyToHbar:609 — modifier already enforces;
+       trailing line is dead noise. Cosmetic.
+  X-9. buySyForLp uses balanceOf to read ptAcquired — picks up any
+       dust from prior failed txs. Steals "next user's" tiny dust.
+  X-10. Periphery has no _refundDust path for SY adapter's stuck HBAR.
+       Compounds X-2.
+  X-11. Old Periphery v1 (0x8ce95cef...) still active on-chain with
+       all original allowances. Frontend points at v2; risk only via
+       cached browser state. Cannot be bricked from operator side
+       (no kill-switch in v1). Documented.
+
+ACTIONS TAKEN THIS PASS:
+  ✓ Indexer selector fixed (X-1)
+  ✓ All findings documented in records.txt
+  ✓ 11/11 v2 paths smoke-verified on mainnet
+
+ACTIONS DEFERRED (require redeploy; user explicitly skipped Timelock
+handoff and prefers no further redeploys):
+  X-2 SY HBAR leak (SY adapter redeploy)
+  X-3 _checkSize scaling (Periphery v3)
+  X-4 quoteUnzapSy lock-down (Periphery v3)
+  X-6 v3NpmFeeBudget upper bound (Periphery v3)
