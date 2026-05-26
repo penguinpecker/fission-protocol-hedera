@@ -16,7 +16,7 @@
     "factory": "0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c",
     "saucerSwapLPYieldSource": "0x0000000000000000000000000000000000a02585",
     "lens": "0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969",
-    "periphery": "0x8ce95cef2c521df83f346b579de84fa4aa8f50aa"
+    "periphery": "0x0000000000000000000000000000000000a025c1"
   },
   "market": {
     "address": "0x556938AcfDa70dF2A32ea97e6B6862B874d93ef9",
@@ -30,5 +30,14 @@
       "address": "0x3aCDD09b5850F551D9F2b4FE949439c2499f86C1",
       "reason": "anchor=1.0 → buy-PT blocked"
     }
-  ]
+  ],
+  "previousPeriphery": "0x8ce95cef2c521df83f346b579de84fa4aa8f50aa",
+  "peripheryV2Audit": {
+    "ts": "2026-05-26T21:20:44.049Z",
+    "fixes": [
+      "H-4: registeredSyAdapter gate on unzapSyToHbar",
+      "buySyForLp: ptOutFromSwap param"
+    ],
+    "previousPeriphery": "0x8ce95cef2c521df83f346b579de84fa4aa8f50aa"
+  }
 }

@@ -840,8 +840,10 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
             .addUint256(toBN(a[2] as bigint)).addAddress(addrArg(a[3])).addUint256(toBN(a[4] as bigint));
           return exec(ADDRESSES.periphery, fn, p, 0, 12_000_000);
         case "buySyForLp":
+          // (market, syIn, ptShareBps, ptOutFromSwap, minLpOut, receiver, deadline)
           p.addAddress(addrArg(a[0])).addUint256(toBN(a[1] as bigint)).addUint16(Number(a[2]))
-            .addUint256(toBN(a[3] as bigint)).addAddress(addrArg(a[4])).addUint256(toBN(a[5] as bigint));
+            .addUint256(toBN(a[3] as bigint)).addUint256(toBN(a[4] as bigint))
+            .addAddress(addrArg(a[5])).addUint256(toBN(a[6] as bigint));
           return exec(ADDRESSES.periphery, fn, p, 0, 12_000_000);
         case "unzapSyToHbar":
           p.addAddress(addrArg(a[0])).addUint256(toBN(a[1] as bigint))

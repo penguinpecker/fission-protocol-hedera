@@ -354,3 +354,29 @@ INFO:
 
 CONCLUSION: shippable. Address H-4 (registered-adapter gate) when next
 contract cycle happens. Transfer ownership to Timelock before scaling TVL.
+
+═══════════════════════════════════════════════════════════════════════
+SOURCIFY VERIFICATION  (deferred to manual)
+═══════════════════════════════════════════════════════════════════════
+
+Attempted programmatic Sourcify uploads via 3 paths (multipart with
+metadata+sources, solc-json, curl-direct multipart). HashScan's Sourcify
+endpoint (server-verify.hashscan.io) returns:
+  - /verify (multipart): HTTP 500 "Unexpected end of form"
+  - /verify/solc-json: HTTP 400 "No valid Solidity metadata"
+
+Per memory reference_sourcify_via_ir_hedera, via_ir + Sourcify is known-
+flaky on HashScan. Workaround: paste metadata.json + sources via the
+HashScan UI per-contract. To be done if/when source-transparency is
+required for a TVL milestone or audit demand. Bytecode + source are in
+the public GitHub repo + foundry artifacts, so anyone can verify by
+recompiling locally.
+
+Contracts to verify (deployed addresses):
+  Factory       0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c
+  Lens          0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969
+  StdDeployer   0xdbDf8da50240F21DFc1ed6c44e3a5806AFDcC9bF
+  RwdDeployer   0x63A75EaaB07feeBc48226A6eaF3Cbb057614e537
+  SY adapter    0x0000000000000000000000000000000000a02585
+  Market        0x556938AcfDa70dF2A32ea97e6B6862B874d93ef9
+  Periphery v2  0x0000000000000000000000000000000000a025c1

@@ -129,6 +129,12 @@ contract FissionPeriphery is ReentrancyGuardTransient {
     ///         registerMarket() pre-approves SY-share / PT / LP → market at int64.max.
     mapping(address => bool) public marketRegistered;
 
+    /// @notice SY adapters reachable through a registered market. Populated in
+    ///         `_registerMarket`. `unzapSyToHbar` is gated on this so users
+    ///         cannot pass an arbitrary (potentially malicious) adapter that
+    ///         could siphon the Periphery's standing token approvals.
+    mapping(address => bool) public registeredSyAdapter;
+
     // ───────────────────── errors ─────────────────────
 
     error AmountZero();
@@ -144,6 +150,7 @@ contract FissionPeriphery is ReentrancyGuardTransient {
     error UnexpectedSyTokens(address t0, address t1);
     error HbarTransferFailed();
     error MarketNotRegistered(address market);
+    error UnregisteredSyAdapter(address syAdapter);
     error TradeExceedsCap(uint256 attempted, uint256 cap);
     error InvalidCap(uint16 bps);
     error InvalidShareBps(uint16 bps);
@@ -251,6 +258,7 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         IERC20(WHBAR).forceApprove(syAdapter, MAX_HTS_APPROVE);
 
         marketRegistered[market] = true;
+        registeredSyAdapter[syAdapter] = true;
         emit MarketRegistered(market, syAdapter, pt, m.yt(), lp);
     }
 
@@ -440,11 +448,15 @@ contract FissionPeriphery is ReentrancyGuardTransient {
     }
 
     /// @notice Tx 2 of the Buy-LP flow. Splits SY into (syForLp, syForPt), swaps
-    ///         syForPt → PT, then adds (syForLp, PT) as proportional liquidity.
+    ///         syForPt → exact `ptOutFromSwap` PT, then adds (syForLp, PT) as
+    ///         proportional liquidity. Frontend pre-computes ptOutFromSwap via
+    ///         FissionLens.previewSwapExactSyForPt so the swap leg delivers a
+    ///         meaningful PT amount (versus the prior dust-only `ptOut=1` path).
     function buySyForLp(
         address market,
         uint256 syIn,
         uint16 ptShareBps,
+        uint256 ptOutFromSwap,
         uint256 minLpOut,
         address receiver,
         uint256 deadline
@@ -454,7 +466,7 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         checkDeadline(deadline)
         returns (uint256 lpOut)
     {
-        if (syIn == 0 || minLpOut == 0) revert AmountZero();
+        if (syIn == 0 || minLpOut == 0 || ptOutFromSwap == 0) revert AmountZero();
         if (ptShareBps == 0 || ptShareBps >= 10000) revert InvalidShareBps(ptShareBps);
         if (receiver == address(0)) revert ZeroAddress();
         if (!marketRegistered[market]) revert MarketNotRegistered(market);
@@ -467,12 +479,13 @@ contract FissionPeriphery is ReentrancyGuardTransient {
 
         IERC20(shareToken).safeTransferFrom(msg.sender, address(this), syIn);
 
-        // Split budget: swap `syForPt` → PT, keep `syForLp` for addLiquidity.
+        // Budget: swap up to syForPt SY for EXACTLY ptOutFromSwap PT, keep
+        // syForLp for the addLiquidity leg. Market.swapExactSyForPt is "give
+        // me exactly ptOut PT, taking up to syInMax SY" — caller (us) governs
+        // the upper bound via syForPt.
         uint256 syForPt = (syIn * ptShareBps) / 10000;
         uint256 syForLp = syIn - syForPt;
-
-        // Swap SY → PT (curve gives exact PT for syForPt SY).
-        m.swapExactSyForPt(syForPt, 1, address(this));
+        m.swapExactSyForPt(syForPt, ptOutFromSwap, address(this));
         uint256 ptAcquired = IERC20(pt).balanceOf(address(this));
 
         lpOut = m.addLiquidity(syForLp, ptAcquired, minLpOut, receiver);
@@ -576,6 +589,9 @@ contract FissionPeriphery is ReentrancyGuardTransient {
     {
         if (sharesIn == 0) revert AmountZero();
         if (syAdapter == address(0)) revert ZeroAddress();
+        // H-4 fix: only registered adapters. Prevents a malicious adapter
+        // from siphoning the Periphery's standing USDC/WHBAR approvals.
+        if (!registeredSyAdapter[syAdapter]) revert UnregisteredSyAdapter(syAdapter);
 
         address shareToken = ISYLiquidity(syAdapter).shareToken();
         if (shareToken == address(0)) revert ZeroAddress();

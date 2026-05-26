@@ -530,6 +530,7 @@ export const fissionPeripheryAbi = [
       { name: "market", type: "address" },
       { name: "syIn", type: "uint256" },
       { name: "ptShareBps", type: "uint16" },
+      { name: "ptOutFromSwap", type: "uint256" },
       { name: "minLpOut", type: "uint256" },
       { name: "receiver", type: "address" },
       { name: "deadline", type: "uint256" },

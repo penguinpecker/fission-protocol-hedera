@@ -9,10 +9,15 @@
     "deployedAt": "2026-05-27"
   },
   "periphery": {
+    "id": "0.0.10495425",
+    "evm": "0x0000000000000000000000000000000000a025c1",
+    "deployedAt": "2026-05-27",
+    "notes": "Periphery v2: registeredSyAdapter gate on unzapSyToHbar (H-4 fix) + ptOutFromSwap param on buySyForLp. Same source file FissionPeriphery.sol; new on-chain instance. Old at 0x8ce95cef... abandoned."
+  },
+  "periphery_v1_abandoned": {
     "id": "0.0.10495353",
     "evm": "0x8ce95cef2c521df83f346b579de84fa4aa8f50aa",
-    "deployedAt": "2026-05-27",
-    "notes": "Single user-facing contract. 8 entry points across deterministic 2-tx Buy/Sell flows. Replaces FissionZap + MegaZap + FissionUnzap + FissionGateway + ActionRouterV3."
+    "reason": "Superseded by Periphery v2 after audit fixes."
   },
   "lens": {
     "id": "0.0.10495350",
