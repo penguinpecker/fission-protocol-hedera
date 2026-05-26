@@ -50,18 +50,21 @@ function loadContractsFromDeployments() {
     list.push({ evm: evm.toLowerCase(), name, market });
   };
 
-  // Live core
+  // Live core (2026-05-27 clean-slate redeploy)
   push(d.factory?.evm, "Factory");
+  push(d.periphery?.evm, "FissionPeriphery");
+  push(d.lens?.evm ?? d.lens?.evm_address, "Lens");
+  push(d.standard_deployer?.evm, "StandardDeployer");
+  push(d.rewards_deployer?.evm, "RewardsDeployer");
+  push(d.sy_hbarx?.evm, "SY_HBARX");
+  push(d.sy_saucer_v2_lp?.evm, "SY_SaucerSwapV2LP");
+  // Pre-rebuild legacy (if still in the file)
   push(d.router?.evm, "ActionRouter");
   push(d.router_v3?.evm, "ActionRouterV3");
   push(d.fission_zap?.evm, "FissionZap");
   push(d.mega_zap?.evm, "MegaZap");
   push(d.fission_unzap?.evm, "FissionUnzap");
-  push(d.lens?.evm_address, "Lens");
-  push(d.standard_deployer?.evm, "StandardDeployer");
-  push(d.rewards_deployer?.evm, "RewardsDeployer");
-  push(d.sy_hbarx?.evm, "SY_HBARX");
-  push(d.sy_saucer_v2_lp?.evm, "SY_SaucerSwapV2LP");
+  push(d.fission_gateway?.evm, "FissionGateway");
 
   // Live markets — `market: true` so activity_log gets the market addr,
   // not the contract itself, as the grouping key.
@@ -126,6 +129,15 @@ const SELECTOR_TO_EVENT = {
   "0x151bf8f1": "swap_pt_for_sy",     // sellPtForHbar(address,uint256,uint256,address,uint256)
   "0x05b74d3d": "redeem",             // unzapSy(address,uint256,uint256,address)
   "0x485eb750": "remove_liquidity",   // sellLpForHbar(address,uint256,uint256,address,uint256)
+  // FissionPeriphery (2026-05-27 clean-slate redeploy) — 2-tx Buy/Sell flow.
+  "0x5cd4b2ba": "deposit",            // zapHbarToSy(address,address,uint256)
+  "0x3ab0458a": "swap_sy_for_pt",     // buySyForPt(address,uint256,uint256,address,uint256)
+  "0xa6be33fe": "swap_pt_for_sy",     // buySyForYt — composite, fires swap_pt_for_sy
+  "0xcbf84c49": "add_liquidity",      // buySyForLp(address,uint256,uint16,uint256,address,uint256)
+  "0x33b1da21": "swap_pt_for_sy",     // sellPtForSy(address,uint256,uint256,address,uint256)
+  "0x01829011": "swap_pt_for_sy",     // sellYtForSy(address,uint256,uint256,address,uint256) — uses operator path
+  "0xde01e48e": "remove_liquidity",   // sellLpForSy(address,uint256,uint256,address,uint256)
+  "0x047a7060": "redeem",             // unzapSyToHbar(address,uint256,uint256,uint256)
 };
 
 function decodeSelector(callData) {
