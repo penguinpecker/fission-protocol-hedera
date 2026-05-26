@@ -5,49 +5,39 @@ import {AccessControlDefaultAdminRules} from
     "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 
 import {FissionMarket} from "./FissionMarket.sol";
-import {FissionMarketRewards} from "./FissionMarketRewards.sol";
+import {FissionRewardsMarket} from "./FissionRewardsMarket.sol";
 import {StandardMarketDeployer} from "./StandardMarketDeployer.sol";
 import {RewardsMarketDeployer} from "./RewardsMarketDeployer.sol";
 import {IStandardizedYield} from "../interfaces/IStandardizedYield.sol";
 
 /// @title  FissionFactory — deploys per-maturity Markets with whitelisted SY tokens.
 /// @notice The Penpie defence: arbitrary SY tokens cannot become market underlyings.
-///         Adding an SY is a TWO-step process with a 7-day public review window:
+///         Adding an SY is a TWO-step process with a public review window:
 ///             1. SY_REVIEWER_ROLE calls `proposeSY(addr)` — emits an event the
 ///                community can review.
 ///             2. ADMIN_ROLE calls `confirmSY(addr)` after `SY_REVIEW_WINDOW`.
-///         Only after confirmation can `createMarket(sy, ...)` succeed for that SY.
-///         The 7-day window is a hard contract requirement; admins cannot bypass it.
+///         Only after confirmation can `createMarket` / `createRewardsMarket` succeed
+///         for that SY. The window is a hard contract requirement; admins cannot bypass.
 ///
-///         Markets are NOT initialized by the factory — `createMarket` deploys
-///         Market+PT+YT and wires them up, but the protocol's Safe (admin on the
-///         Market) is responsible for `market.initialize(...)` with its own seed
-///         capital. This keeps the factory custody-free.
+///         Markets are NOT initialized by the factory — `createRewardsMarket` deploys
+///         Market+PT+YT+LP and wires them up, but the protocol's admin is responsible
+///         for `market.initialize(...)` with its own seed capital. Keeps factory custody-free.
 contract FissionFactory is AccessControlDefaultAdminRules {
     bytes32 public constant SY_REVIEWER_ROLE = keccak256("SY_REVIEWER_ROLE");
     bytes32 public constant MARKET_CREATOR_ROLE = keccak256("MARKET_CREATOR_ROLE");
 
-    /// @notice Public review window between proposeSY and confirmSY. Set at
-    ///         construction: production deploys pass 7 days for the Penpie defence;
-    ///         a bootstrap-only deploy can pass 0 to ship markets in one block.
+    /// @notice Discriminator emitted with MarketCreated so the indexer / lens can
+    ///         dispatch on market shape without re-reading the market itself.
+    uint8 public constant MARKET_TYPE_STANDARD = 0;
+    uint8 public constant MARKET_TYPE_REWARDS = 1;
+
     uint256 public immutable SY_REVIEW_WINDOW;
 
-    /// @notice Minimum market duration. L-8 audit fix: prevents accidental ultra-short
-    ///         markets (e.g., `expiry = block.timestamp + 1`) where `initialize` and a
-    ///         user's first deposit would race the expiry boundary in a single block.
     uint256 public constant MIN_MARKET_DURATION = 7 days;
 
-    /// @notice Default admin set on every newly created Market — typically the
-    ///         protocol's Safe + TimelockController. Updatable by the factory's
-    ///         own admin (also typically the Safe).
     address public marketAdmin;
-
-    /// @notice Default treasury set on every newly created Market. Updatable.
     address public marketTreasury;
 
-    /// @notice Bytecode-isolation deployers. The Market initcodes live in these
-    ///         external contracts so this factory's runtime stays under Hedera's
-    ///         15M-gas-per-tx ContractCreate cap. Immutable — set at construction.
     StandardMarketDeployer public immutable standardDeployer;
     RewardsMarketDeployer public immutable rewardsDeployer;
 
@@ -63,14 +53,17 @@ contract FissionFactory is AccessControlDefaultAdminRules {
     event SYProposed(address indexed sy, address indexed proposer, uint256 confirmAfter);
     event SYConfirmed(address indexed sy);
     event SYRevoked(address indexed sy);
+    /// @dev marketType: 0=Standard (yield-bearing), 1=Rewards (constant-rate, reward-tokens).
     event MarketCreated(
         uint256 indexed marketId,
         address indexed market,
         address indexed sy,
         address pt,
         address yt,
+        address lp,
         uint256 expiry,
-        int256 scalarRoot
+        int256 scalarRoot,
+        uint8 marketType
     );
     event MarketAdminUpdated(address indexed prev, address indexed next);
     event MarketTreasuryUpdated(address indexed prev, address indexed next);
@@ -81,10 +74,6 @@ contract FissionFactory is AccessControlDefaultAdminRules {
     error SYNotWhitelisted();
     error ZeroAddress();
     error MarketDurationTooShort(uint256 given, uint256 minimum);
-    // L-11 audit fix removed post-HTS-migration: see `setMarketAdmin` for rationale.
-    // The `AdminMustBeContract` error is intentionally kept (no longer thrown) so external
-    // tooling that decoded prior reverts doesn't crash.
-    error AdminMustBeContract(address admin);
 
     constructor(
         address admin_,
@@ -111,17 +100,6 @@ contract FissionFactory is AccessControlDefaultAdminRules {
 
     // ───────────────────── governance ─────────────────────
 
-    /// @notice Set the marketAdmin granted to FUTURE markets. Existing markets keep
-    ///         their previously-set admin — rotation there goes through OZ
-    ///         AccessControlDefaultAdminRules' two-step delayed transfer.
-    /// @dev    The pre-HTS code rejected EOA admins via `code.length > 0` (L-11). That
-    ///         check assumed an EVM Gnosis Safe was the only "real" multisig path — wrong
-    ///         on Hedera, where native ThresholdKey accounts are consensus-enforced
-    ///         M-of-N signers but have no EVM bytecode (their EVM alias looks like an
-    ///         EOA from a contract's perspective). Dropping the check lets any address
-    ///         that can sign EVM txs serve as admin: a single-key EOA, a Hedera
-    ///         ThresholdKey account's EVM alias, an EVM Safe, or a Timelock — operators
-    ///         pick the model that fits their custody story.
     function setMarketAdmin(address newAdmin) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newAdmin == address(0)) revert ZeroAddress();
         emit MarketAdminUpdated(marketAdmin, newAdmin);
@@ -134,8 +112,6 @@ contract FissionFactory is AccessControlDefaultAdminRules {
         marketTreasury = newTreasury;
     }
 
-    /// @notice Revoke an SY from the whitelist. Pre-existing markets continue to
-    ///         function — this only blocks NEW market creation.
     function revokeSY(address sy) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (!whitelistedSY[sy]) revert SYNotWhitelisted();
         whitelistedSY[sy] = false;
@@ -165,9 +141,6 @@ contract FissionFactory is AccessControlDefaultAdminRules {
 
     // ───────────────────── market creation ─────────────────────
 
-    /// @notice Deploy Market + PT + YT for a whitelisted SY. Does NOT initialize
-    ///         liquidity — the market admin must call `market.initialize(...)` separately
-    ///         with seed funds.
     function createMarket(address sy, uint256 expiry, int256 scalarRoot, string calldata suffix)
         external
         payable
@@ -175,7 +148,6 @@ contract FissionFactory is AccessControlDefaultAdminRules {
         returns (uint256 marketId, address marketAddr)
     {
         if (!whitelistedSY[sy]) revert SYNotWhitelisted();
-        // L-8 audit fix: enforce minimum market duration.
         if (expiry < block.timestamp + MIN_MARKET_DURATION) {
             revert MarketDurationTooShort(expiry, block.timestamp + MIN_MARKET_DURATION);
         }
@@ -194,13 +166,9 @@ contract FissionFactory is AccessControlDefaultAdminRules {
             address(this)
         );
 
-        // Effects-first: stash the market in our own storage BEFORE the only external
-        // call (setTokens).
         markets.push(address(m));
         marketAddr = address(m);
 
-        // Market self-creates THREE HTS-native tokens (PT, YT, LP) inside setTokens.
-        // msg.value pays the three createFungible network fees (~3 HBAR mainnet).
         m.setTokens{value: msg.value}(
             string.concat("Fission PT-", suffix),
             string.concat("fPT-", suffix),
@@ -210,18 +178,14 @@ contract FissionFactory is AccessControlDefaultAdminRules {
             string.concat("fLP-", suffix)
         );
 
-        emit MarketCreated(marketId, marketAddr, sy, m.pt(), m.yt(), expiry, scalarRoot);
+        emit MarketCreated(
+            marketId, marketAddr, sy, m.pt(), m.yt(), m.lp(),
+            expiry, scalarRoot, MARKET_TYPE_STANDARD
+        );
     }
 
-    /// @notice Deploy a `FissionMarketRewards` Market + PT + YT for an SY whose yield is
-    ///         distributed via reward tokens (e.g. `SY_SaucerSwapV2LP`). Same gating as
-    ///         `createMarket` — SY must be whitelisted via the 7-day review window.
-    /// @dev    Distinct from `createMarket` because the constructor for
-    ///         `FissionMarketRewards` reads `sy.getRewardTokens()` and pins the reward
-    ///         token addresses immutable. Calling `createMarket` for a reward-bearing SY
-    ///         is permitted but will silently produce a market whose YT yield path never
-    ///         fires — the `assetType == LIQUIDITY` SYs should always go through this
-    ///         entry point. Frontends and routers should pre-check `sy.assetInfo()`.
+    /// @notice Deploy a `FissionRewardsMarket` Market + PT + YT + LP for a reward-bearing SY
+    ///         (e.g. SaucerSwapLPYieldSource). Same gating as `createMarket`.
     function createRewardsMarket(address sy, uint256 expiry, int256 scalarRoot, string calldata suffix)
         external
         payable
@@ -237,7 +201,7 @@ contract FissionFactory is AccessControlDefaultAdminRules {
         IStandardizedYield syIface = IStandardizedYield(sy);
         (, , uint8 dec) = syIface.assetInfo();
 
-        FissionMarketRewards m = rewardsDeployer.deploy(
+        FissionRewardsMarket m = rewardsDeployer.deploy(
             sy,
             expiry,
             scalarRoot,
@@ -259,7 +223,10 @@ contract FissionFactory is AccessControlDefaultAdminRules {
             string.concat("fLP-", suffix)
         );
 
-        emit MarketCreated(marketId, marketAddr, sy, m.pt(), m.yt(), expiry, scalarRoot);
+        emit MarketCreated(
+            marketId, marketAddr, sy, m.pt(), m.yt(), m.lp(),
+            expiry, scalarRoot, MARKET_TYPE_REWARDS
+        );
     }
 
     // ───────────────────── views ─────────────────────

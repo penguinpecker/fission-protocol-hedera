@@ -1,0 +1,302 @@
+CLEAN-SLATE REDEPLOY PLAN — 2026-05-27
+Last live commit at time of writing: 2624107 (main)
+
+═══════════════════════════════════════════════════════════════════════
+DECISION
+═══════════════════════════════════════════════════════════════════════
+
+Redeploy every contract on a fresh deployer wallet. Abandon all current
+on-chain state. No third-party user has >$5 stuck (one EOA at $4.01,
+operator at $60 controlled by user themselves). Reason: accumulated
+debt across multiple in-place patches (gateway v1 → v2 → v2.1, market
+0 bricked at 98% PT, peripheral approval flows hitting Hedera's 50-
+child-record consensus cap). Single clean deploy beats further patches.
+
+Rule for this redeploy: NO version suffixes in contract names. Provenance
+lives in deployments/295.json + git commit SHA.
+
+═══════════════════════════════════════════════════════════════════════
+NEW DEPLOYER WALLET  (FUNDED — ready)
+═══════════════════════════════════════════════════════════════════════
+
+Hedera account ID : 0.0.10495279
+EVM address       : 0xa7e128326861d2eedc68ed82e2a5eb5f653a11a7
+Key type          : ECDSA_SECP256K1  (HashPack + MetaMask + Foundry compat)
+HBAR balance      : ~6,000 HBAR  (budget is 925 HBAR; ~5x headroom)
+Private key       : stored in .env as NEW_DEPLOYER_KEY  (never echoed, never committed)
+
+Old deployer (0.0.10463169) retains its current positions on the
+about-to-be-archived markets and can ignore them post-cutover.
+
+═══════════════════════════════════════════════════════════════════════
+WHAT'S GOING TO CHANGE — CONTRACT LAYER
+═══════════════════════════════════════════════════════════════════════
+
+REPLACED:                              NAMING (no version markers):
+  FissionFactory                        FissionFactory
+  StandardDeployer + RewardsDeployer    StandardMarketDeployer + RewardsMarketDeployer
+  SY_SaucerSwapV2LP (SY adapter)        SaucerSwapLPYieldSource
+  FissionMarketRewards                  FissionRewardsMarket (single source)
+  ActionRouterV3                        merged into FissionPeriphery (no separate router)
+  FissionZap+MegaZap+Unzap+Gateway      FissionPeriphery (consolidated, pre-approves markets)
+  FissionLens                           FissionLens
+
+ABANDONED (stay on-chain, no traffic routed to them):
+  Old Factory       0.0.10488654
+  Old Router v3     0.0.10477449
+  Old FissionZap    0.0.10475908
+  Old MegaZap       0.0.10477452
+  Old Unzap v1      0.0.10492515
+  Old Gateway v2    0.0.10493916  (orphaned same day)
+  Old Gateway v2.1  0.0.10494003
+  Old Lens          0.0.10489822
+  Old Market 0      0.0.10488661  (bricked at 98% PT, redeem at maturity 2026-08-19)
+  Old Market 1      0.0.10494007  (initialized with $2.20/side then abandoned)
+  Old SY adapter    0x...9fb089   (V3 NFT #74444 with ~$700 USDC/WHBAR
+                                   stays attached for legacy redeems)
+  Old PT/YT/LP tokens, HBARX SY adapter — all stay
+
+═══════════════════════════════════════════════════════════════════════
+WHAT'S GOING TO CHANGE — EVERY FIX BAKED IN
+═══════════════════════════════════════════════════════════════════════
+
+(numbered for traceability against the contract source)
+
+FissionPeriphery (single user-facing contract):
+   1. Deterministic 2-tx Buy paths            — Tx1: zapHbarToSy. Tx2:
+                                                buySyForPt/Yt/Lp(syIn, …).
+                                                NO atomic 1-tx attempted.
+                                                Each leg <30 child records.
+                                                See policy section #43-47.
+   2. Deterministic 2-tx Sell paths           — Tx1: sellPt/Yt/LpForSy
+                                                using setOperator +
+                                                swapExactYtForSyFor pattern
+                                                for YT. Tx2: unzapSyToHbar.
+                                                NO atomic 1-tx attempted.
+   3. unzapSy dual-address bug                — derives shareToken from adapter
+                                                via adapter.shareToken().
+   4. Trade-size cap at contract layer        — maxTradeBps state (default 500=5%),
+                                                owner-tunable, applied to every
+                                                AMM-touching entry. Stops the
+                                                operator-bypass brick scenario.
+   5. sweepAllToHbar(market)                  — PT + LP + SY + YT (via setOperator)
+                                                in one tx.
+   6. warmApprovals(market) public            — anyone can call once post-deploy
+                                                to set standing allowances.
+                                                Eliminates cold-start spike.
+   7. Custom errors with values               — SlippageTooHigh(actual,min),
+                                                TradeExceedsCap(size,cap),
+                                                V2SwapFailed(amountIn,minOut), etc.
+                                                No more "0xaf53f054" mysteries.
+   8. Wrapped sub-call errors                 — try/catch V2/V3 0x reverts,
+                                                rethrow as typed errors with context.
+   9. Sell-side view quoters                  — quoteSellPt, quoteSellLp,
+                                                quoteUnzapSy, quoteSellYt.
+                                                eth_call sim for accurate min*.
+  10. Hashio-predictable gas                  — ≤6 HTS precompile hops per fn,
+                                                documented at fn level.
+  11. V3 NFT mint fee handling                — query NPM for exact fee at runtime,
+                                                no more hardcoded +5 HBAR drift.
+  12. WHBAR auto-approve before withdraw      — set in constructor.
+  13. receive() accepts dust + rescueHbar     — owner can recover orphan HBAR.
+  14. 2-step transferOwnership/acceptOwnership
+  15. nonReentrant on every entry
+  16. Standardized deadline + slippage on every state-mutating fn.
+
+Router consolidation (was FissionRouter, now folded into FissionPeriphery):
+  17. Periphery constructor pre-approvals     — takes (syAdapter, market)[] tuples;
+                                                approves share token → market at
+                                                deploy. Drops 1-2 runtime approvals.
+                                                Same effect, fewer hops, fewer
+                                                child records than a separate
+                                                Router contract.
+  18. registerMarket(syAdapter, market) owner — for adding new markets later
+                                                without redeploying Periphery.
+  19. PeripheryAction events for indexer      — (kind, market, user, in, out, gas).
+                                                Replaces RouterAction; same payload.
+
+FissionRewardsMarket:
+  20. setOperator(operator, approved)         — user-approved third party.
+  21. swapExactYtForSyFor(owner, ytIn, …)     — operator-callable variant that
+                                                reads _ytBal[owner] and wipes
+                                                YT on owner's behalf. Enables (2).
+  22. Reward accrual + Ed25519 fix            — carried forward verbatim.
+  23. CurveProportionOutOfBounds(prop,min,max)— replaces MarketProportionTooHigh
+                                                with structured context.
+  24. Comprehensive events                    — Initialized, Split, Merge,
+                                                Swap{ExactPtForSy,ExactSyForPt,
+                                                YtForSy}, AddLiquidity,
+                                                RemoveLiquidity, RedeemAfterExpiry,
+                                                OperatorChanged.
+
+SaucerSwapLPYieldSource (SY adapter):
+  25. Constructor pre-approves USDC + WHBAR → V3 NPM.
+  26. Query NPM for exact mint fee at runtime.
+  27. shareToken(), token0(), token1() kept.
+  28. redeemLiquidity + harvest carried forward.
+
+FissionFactory:
+  29. MarketCreated(market, sy, pt, yt, lp, type) event for indexer auto-pickup.
+  30. whitelistSY owner+timelock-gated.
+
+═══════════════════════════════════════════════════════════════════════
+WHAT'S GOING TO CHANGE — FRONTEND
+═══════════════════════════════════════════════════════════════════════
+
+  31. addresses.ts rewrite             — drop ALL v1/v2/v2.1 fallbacks,
+                                         point only at new addresses.
+  32. abis-write.ts rewrite            — single fissionPeripheryAbi +
+                                         fissionRouterAbi + fissionMarketAbi.
+  33. adapter.ts WriteOp shapes        — collapse 8 op kinds to 6 cleaner
+                                         ones (the zap/mega/unzap/gateway
+                                         split goes away).
+  34. Wallet picker stays              — HashPack + MetaMask side-by-side.
+  35. Hollow-account proactive banner  — on MetaMask connect, query mirror
+                                         node maxAutoAssoc, show banner if 0.
+  36. Custom-error selector decoder    — every revert mapped to human msg.
+  37. MAX button advisory              — when click would exceed 5% pool
+                                         size, warn before submit.
+
+═══════════════════════════════════════════════════════════════════════
+WHAT'S GOING TO CHANGE — OFF-CHAIN
+═══════════════════════════════════════════════════════════════════════
+
+  38. cron-indexer/deployments/295.json  — synced to new addresses.
+  39. cron-indexer event_type enum       — adds buy_yt, sell_yt,
+                                           sell_pt_hbar, sell_lp_hbar,
+                                           unzap_sy_hbar (distinct from
+                                           underlying AMM events).
+  40. cron-indexer backfill on restart   — walks from max(block_timestamp)
+                                           not just live tail.
+  41. Supabase markets_cache             — truncate; indexer fills on tick.
+  42. Supabase activity_log              — kept; indexer writes new events.
+
+═══════════════════════════════════════════════════════════════════════
+DEPLOY SEQUENCE  (in order; each depends on prior)
+═══════════════════════════════════════════════════════════════════════
+
+  ── TESTNET DRY RUN  (chainId 296, faucet HBAR, ~1-2h)  ──
+   0a. Deploy full stack to Hedera testnet using the SAME source.
+       Testnet has its own SaucerSwap V2 router + V3 NPM + WHBAR + USDC.
+   0b. Run 1 trade per LEG (zapHbarToSy, buySyForPt, buySyForYt,
+       buySyForLp, sellPtForSy, sellYtForSy, sellLpForSy, unzapSyToHbar)
+       from the same ECDSA deployer key.
+   0c. Measure child-record count per LEG via HashScan testnet.
+       Target: every leg < 30 children (headroom against 50 limit).
+       If any leg exceeds 35: investigate and trim that leg specifically.
+       No conditional flags — design is uniformly 2-tx, every leg same shape.
+   0d. Only proceed to mainnet if no leg exceeds 35 children AND
+       slippage quoters return values within 0.5% of actual fill.
+
+  ── MAINNET DEPLOY  ──
+   1. FissionFactory deploy
+   2. MarketDeployer + RewardsMarketDeployer deploy + link to Factory
+   3. SaucerSwapLPYieldSource deploy (mints fresh V3 LP NFT, needs HBAR)
+   4. Operator seeds V3 NFT with USDC + WHBAR (via SaucerSwap UI/script)
+   5. Factory.whitelistSY(syAdapter)
+   6. Factory.createRewardsMarket(sy, expiry, scalarRoot, suffix)
+   7. FissionRouter deploy (constructor: (sy, market)[] for pre-approval)
+   8. FissionPeriphery deploy (constructor: V2 router, WHBAR, USDC, NPM, Router, SY)
+   9. FissionLens deploy
+  10. Periphery.warmApprovals(market)
+  11. Operator seeds market (zap HBAR → SY, split, market.initialize)
+  12. Frontend cutover: addresses.ts + abis-write.ts + adapter.ts +
+      cron-indexer JSON
+  13. Supabase markets_cache reset
+  14. Smoke: 1 small trade per path from operator
+  15. (Optional) governance handoff to FissionTimelock + 2-of-2
+      ThresholdAccount
+
+═══════════════════════════════════════════════════════════════════════
+CHILD-RECORD POLICY  (deterministic 2-tx — NO atomic, NO fallbacks)
+═══════════════════════════════════════════════════════════════════════
+
+DECISION (2026-05-27): every Buy/Sell flow is explicitly 2 transactions
+from day 1. No atomic-1-tx attempts. No fallback flags. Each tx peaks
+at ~25 child records — half the 50 limit. Works regardless of future
+Hedera precompile changes or SaucerSwap NPM changes. No version-coupling
+to downstream gas costs.
+
+  43. Periphery exposes paired entrypoints only:
+        Buy:    zapHbarToSy(deadline)                                    → Tx 1
+                buySyForPt(market, syIn, minPtOut, deadline)             → Tx 2
+                buySyForYt(market, syIn, minYtOut, deadline)             → Tx 2
+                buySyForLp(market, syIn, minLpOut, deadline)             → Tx 2
+
+        Sell:   sellPtForSy(market, ptIn, minSyOut, deadline)            → Tx 1
+                sellYtForSy(market, ytIn, minSyOut, deadline)            → Tx 1
+                sellLpForSy(market, lpIn, minSyOut, deadline)            → Tx 1
+                unzapSyToHbar(syAdapter, sharesIn, minHbarOut, deadline) → Tx 2
+
+  44. NO single-tx zapHbarToPt/Yt/Lp. NO sellPtForHbar single-tx.
+      The contract literally does not expose them — design enforces 2-tx.
+
+  45. Frontend submits Tx1, waits for receipt, then submits Tx2 using
+      the SY balance delta. Uses the same wallet session — no extra
+      connects. UI shows "Step 1/2 → Step 2/2" progress.
+
+  46. Exception: standalone HBAR ↔ SY (zapHbarToSy / unzapSyToHbar)
+      is naturally 1-tx — no curve trade, no second leg required.
+
+  47. ZERO testnet child-count gate. Each leg's child budget is
+      bounded by the structure (~25 each). No edge cases to engineer
+      around. No "the day Hedera bumps an opcode" risk.
+
+═══════════════════════════════════════════════════════════════════════
+HBAR BUDGET
+═══════════════════════════════════════════════════════════════════════
+
+  Factory                                          8 HBAR
+  MarketDeployer + RewardsMarketDeployer          20
+  SaucerSwapLPYieldSource                         12
+  V3 NFT mint fee (initial)                        5
+  V3 NFT initial liquidity (USDC/WHBAR backing)  500    ← tunable
+  Factory.createRewardsMarket                     60
+  Market initialize seed                         100
+  FissionRouter                                   12
+  FissionPeriphery                                18
+  FissionLens                                      6
+  Periphery.warmApprovals                          3
+  Smoke (8 paths × 5 HBAR)                        40
+  Governance setup (optional)                     20
+  ──────────────────────────────────────────────────
+  Subtotal                                       ~804
+  15% safety buffer                              121
+  ──────────────────────────────────────────────────
+  TOTAL                                          ~925 HBAR
+
+  Wallet has 6,000 HBAR — ~5x headroom.
+
+═══════════════════════════════════════════════════════════════════════
+NON-FIXABLE (DOCUMENTED LIMITATIONS)
+═══════════════════════════════════════════════════════════════════════
+
+  A. HashPack ignores setMaxTransactionFee at sign time   wallet-side
+  B. Hashio eth_estimateGas under-estimates HTS precompile RPC bug
+  C. Pendle V2 curve proportion cap can stall a market    protocol design;
+                                                          mitigated by
+                                                          per-trade cap (fix 4)
+
+═══════════════════════════════════════════════════════════════════════
+POST-RESTART CHECKLIST  (if context compresses mid-deploy)
+═══════════════════════════════════════════════════════════════════════
+
+  1. Read this records.txt.
+  2. Read /Users/pp/.claude/projects/-Users-pp/memory/MEMORY.md.
+  3. cd /Users/pp/Desktop/Projects/fission-protocol-hedera
+  4. git log --oneline -10                       # see what's committed
+  5. Check progress against the DEPLOY SEQUENCE above; resume from the
+     first uncompleted step.
+  6. New deployer credentials are in .env (NEW_DEPLOYER_KEY +
+     auto-populated NEW_DEPLOYER_ID).  Use scripts/lookup-deployer-id.mjs
+     to re-verify on resume.
+  7. Spawn watchdog Agent after every push (per existing memory).
+
+═══════════════════════════════════════════════════════════════════════
+PRIOR SESSIONS — ARCHIVED
+═══════════════════════════════════════════════════════════════════════
+
+  2026-05-15 handoff (HBARX experimentation + LP-add chunks): superseded.
+  All Market 0 v1 state from that note has since been re-deployed twice
+  (Ed25519 fix 2026-05-22, then abandoned today for the clean slate
+  documented above).
