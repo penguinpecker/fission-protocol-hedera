@@ -8,6 +8,7 @@ import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { HEDERA_MAINNET_CHAIN_ID } from "@/lib/wagmi";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
+import { WalletPicker } from "@/components/WalletPicker";
 
 function shortAddr(addr: string): string {
   return addr.slice(0, 6) + "…" + addr.slice(-4);
@@ -60,10 +61,15 @@ export function Nav() {
   //     (with a still-valid cookie) doesn't bounce the user back to /markets.
   const autoSignAfterConnectRef = useRef(false);
   const redirectAfterAuthRef = useRef(false);
-  const handleConnect = async () => {
+  // Picker modal — replaces the direct hedera.connect() call. Lets the user
+  // pick between HashPack (Hedera-native WC) and MetaMask (EIP-6963 injected).
+  // The picker calls back when a connect attempt is kicked off so this Nav
+  // can arm the auto-sign + redirect refs (same effect as the prior
+  // handleConnect did for HashPack-only).
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const handleConnectStarted = () => {
     autoSignAfterConnectRef.current = true;
     redirectAfterAuthRef.current = true;
-    await hedera.connect();
   };
   const handleDisconnect = async () => {
     if (auth.status === "authenticated") await signOut();
@@ -193,12 +199,12 @@ export function Nav() {
             ) : (
               <button
                 type="button"
-                onClick={handleConnect}
+                onClick={() => setPickerOpen(true)}
                 disabled={isConnecting || !hederaAvailable}
                 title={
                   !hederaAvailable
                     ? "WalletConnect not configured (NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID missing)"
-                    : "Two HashPack popups, back-to-back: 1) connect, 2) sign in. Then we land you on /markets."
+                    : "Pick HashPack or MetaMask; we'll auto-sign you in right after."
                 }
                 className="rounded-[2px] border border-white bg-white px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -265,6 +271,12 @@ export function Nav() {
           Connect failed: {connectErrorMsg.slice(0, 160)}
         </div>
       )}
+
+      <WalletPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onConnectStarted={handleConnectStarted}
+      />
     </>
   );
 }

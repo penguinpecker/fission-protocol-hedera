@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAccount, useChainId } from "wagmi";
 import { HEDERA_MAINNET_CHAIN_ID } from "@/lib/wagmi";
 import { LockIcon } from "@/components/Icons";
 import { diag } from "@/lib/diag";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
+import { WalletPicker } from "@/components/WalletPicker";
 
 /**
  * Wraps content that should only render when a wallet is connected. We
@@ -72,9 +73,7 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const onConnect = async () => {
-    await hedera.connect();
-  };
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
     <section className="mx-auto flex min-h-[60vh] max-w-[560px] flex-col items-center px-6 py-20 text-center">
@@ -92,7 +91,7 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
 
       <button
         type="button"
-        onClick={onConnect}
+        onClick={() => setPickerOpen(true)}
         disabled={!hederaAvailable}
         className="mt-8 rounded-xl bg-white px-9 py-[14px] text-[14px] font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
       >
@@ -100,8 +99,11 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
       </button>
 
       <p className="mt-4 text-[12px] text-textDim">
-        Opens a WalletConnect modal. Pick HashPack, Kabila, Blade, or any other Hedera wallet — Ed25519 and ECDSA accounts both work.
+        HashPack (Hedera-native) or MetaMask (EVM via Hashio). Both ECDSA and Ed25519 account types
+        supported on the HashPack side.
       </p>
+
+      <WalletPicker open={pickerOpen} onClose={() => setPickerOpen(false)} />
 
       {hedera.error && (
         <div className="mt-6 max-w-[460px] rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-left text-[12px] leading-relaxed text-warning">
