@@ -11,7 +11,7 @@
     "evm": "0x00000000000000000000000000000000009fd993",
     "deployedAt": "2026-05-13",
     "tx": "0.0.10463169@1778617484.441245870",
-    "notes": "Redeployed with maxAutomaticTokenAssociations=-1 (HIP-904). Original deploy at 0.0.10464662 had max_auto=0 — HTS transferFrom into router silently failed, blocking every Buy PT / Buy YT / addLiquidity flow. New router is operator-admin-keyed so we can tune auto-assoc if HTS semantics shift; transfer admin to Timelock post-handoff alongside the other contracts."
+    "notes": "Redeployed with maxAutomaticTokenAssociations=-1 (HIP-904). Original deploy at 0.0.10464662 had max_auto=0 \u2014 HTS transferFrom into router silently failed, blocking every Buy PT / Buy YT / addLiquidity flow. New router is operator-admin-keyed so we can tune auto-assoc if HTS semantics shift; transfer admin to Timelock post-handoff alongside the other contracts."
   },
   "abandoned_router_v1": {
     "id": "0.0.10464662",
@@ -45,12 +45,12 @@
       "usdc_token": "0x000000000000000000000000000000000006f89a",
       "swap_router": "0x00000000000000000000000000000000003c437a"
     },
-    "notes": "One-tx HBAR→SY mint zap. Permissionless, no admin. maxAutomaticTokenAssociations=-1 set at deploy."
+    "notes": "One-tx HBAR\u2192SY mint zap. Permissionless, no admin. maxAutomaticTokenAssociations=-1 set at deploy."
   },
   "abandoned_zap_v1": {
     "id": "0.0.10475902",
     "evm": "0x00000000000000000000000000000000009fd97e",
-    "reason": "first deploy had wrapAmount-in-wei but Hedera msg.value is in tinybars — InsufficientValue revert. Replaced by 0.0.10475908 with msg.value-driven design."
+    "reason": "first deploy had wrapAmount-in-wei but Hedera msg.value is in tinybars \u2014 InsufficientValue revert. Replaced by 0.0.10475908 with msg.value-driven design."
   },
   "deployer": "0.0.10463169",
   "deployerEvm": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
@@ -98,7 +98,7 @@
   "marketTreasury": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "syAdmin": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
   "keeper": "0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90",
-  "notes": "Ed25519-fixed redeploy on 2026-05-22 IST. New factory 0.0.10488654 (0x...a00b4e), new deployers 0.0.10488646 (0x...a00b46) + 0.0.10488651 (0x...a00b4b). SY adapter REUSED — V3 NFT #74444 with $700+ USDC/WHBAR liquidity untouched. Operator's positions on old market 0xfa90...8a6d remain withdrawable. Pending: proposeSY + confirmSY + createRewardsMarket + initialize + frontend env update.",
+  "notes": "Ed25519-fixed redeploy on 2026-05-22 IST. New factory 0.0.10488654 (0x...a00b4e), new deployers 0.0.10488646 (0x...a00b46) + 0.0.10488651 (0x...a00b4b). SY adapter REUSED \u2014 V3 NFT #74444 with $700+ USDC/WHBAR liquidity untouched. Operator's positions on old market 0xfa90...8a6d remain withdrawable. Pending: proposeSY + confirmSY + createRewardsMarket + initialize + frontend env update.",
   "sy_review_window_seconds": 0,
   "markets": [
     {
@@ -122,12 +122,40 @@
       "initial_anchor_e18": "1.02e18",
       "ln_fee_rate_root_e18": "3e14",
       "reserve_fee_percent": 80,
-      "seed_size_hbar_equiv": "30 HBAR zap → ~22M raw SY + 22M raw PT (≈ $1.50/side)",
+      "seed_size_hbar_equiv": "30 HBAR zap \u2192 ~22M raw SY + 22M raw PT (\u2248 $1.50/side)",
       "seed_tx": "0.0.10463169@1779402513.301509140",
       "createMarket_tx": "0.0.10463169@1779402331.671286904",
       "ed25519_fix": true,
       "swapExactYtForSy_supported": true,
-      "notes": "Ed25519-fixed market. Pairs with existing SY adapter (V3 NFT #74444, USDC/WHBAR full-range). Seed is intentionally small — top up with more HBAR via FissionZap if needed before launch."
+      "notes": "Ed25519-fixed market. Pairs with existing SY adapter (V3 NFT #74444, USDC/WHBAR full-range). Seed is intentionally small \u2014 top up with more HBAR via FissionZap if needed before launch.",
+      "is_archived": true,
+      "archived_at": "2026-05-26T00:00:00Z",
+      "archived_reason": "Pool bricked at 98.21% PT proportion by operator-wallet smoke sells bypassing the dApp 1% trade cap. Pendle V2 curve refuses trades past ~96% \u2014 pool is stuck until maturity 2026-08-19. Holders can redeemAfterExpiry then."
+    },
+    {
+      "id": 1,
+      "evm": "0x3c1b76553b2c47edde6790a28f439ec39dbaaf18",
+      "entityId": "0.0.10494007",
+      "type": "rewards",
+      "sy": "0x00000000000000000000000000000000009fb089",
+      "expiry_unix": 1787527979,
+      "expiry_iso": "2026-08-23T23:32:59Z",
+      "scalarRoot": "75e18",
+      "suffix": "SS-V2-90D-V2",
+      "pt": "0x0000000000000000000000000000000000a02038",
+      "yt": "0x0000000000000000000000000000000000a02039",
+      "lp": "0x0000000000000000000000000000000000a02040",
+      "pt_entity": "0.0.10494008",
+      "yt_entity": "0.0.10494009",
+      "lp_entity": "0.0.10494010",
+      "initialized": false,
+      "lp_total_supply": null,
+      "initial_anchor_e18": "1.02e18",
+      "ln_fee_rate_root_e18": "3e14",
+      "reserve_fee_percent": 80,
+      "createMarket_tx": "0.0.10463169@1779751966.871341830",
+      "notes": "Fresh Pendle V2 market \u2014 replaces archived Market 0. Empty at deploy; operator to seed proportionally with at least $100/side equivalent to support normal trade sizes.",
+      "is_active": true
     }
   ],
   "abandoned": {
@@ -150,19 +178,19 @@
       "0x52f95a30bfc130efb5295a68bf17448c84c3f7ea",
       "0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d"
     ],
-    "reason": "Iteratively redeployed while debugging Hedera-specific bugs: (1) HtsHelpers.createFungible drained msg.value into first call when called 3× in setTokens; (2) FissionFactory missed setMaxAutomaticTokenAssociations; (3) SY/Market contracts couldn't receive HTS tokens without explicit associate calls; (4) SaucerSwap V2 NPM requires msg.value (USD-cents-denominated fee converted via tinycentsToTinybars) for V3 NFT mint; (5) _burnYt didn't unfreeze before wipe (frozen YT holders couldn't merge); (6) _mintLp(0xdEaD, MIN_LIQUIDITY) failed because 0xdEaD isn't HTS-associated. All fixed in source; current factory + market are the working set.",
+    "reason": "Iteratively redeployed while debugging Hedera-specific bugs: (1) HtsHelpers.createFungible drained msg.value into first call when called 3\u00d7 in setTokens; (2) FissionFactory missed setMaxAutomaticTokenAssociations; (3) SY/Market contracts couldn't receive HTS tokens without explicit associate calls; (4) SaucerSwap V2 NPM requires msg.value (USD-cents-denominated fee converted via tinycentsToTinybars) for V3 NFT mint; (5) _burnYt didn't unfreeze before wipe (frozen YT holders couldn't merge); (6) _mintLp(0xdEaD, MIN_LIQUIDITY) failed because 0xdEaD isn't HTS-associated. All fixed in source; current factory + market are the working set.",
     "old_deployers": [
       "0x00000000000000000000000000000000009fb0af",
       "0x00000000000000000000000000000000009fb0b1"
     ],
-    "reason_2026_05_22": "Ed25519 reward-accrual bug fix — see audits/internal/SECURITY_REVIEW_ED25519_BAL_2026-05-22.md. Old contracts remain live; existing positions on the old market are fully withdrawable on-chain. Fixed redeploy: factory 0x...a00b4e, deployers 0x...a00b46 + 0x...a00b4b."
+    "reason_2026_05_22": "Ed25519 reward-accrual bug fix \u2014 see audits/internal/SECURITY_REVIEW_ED25519_BAL_2026-05-22.md. Old contracts remain live; existing positions on the old market are fully withdrawable on-chain. Fixed redeploy: factory 0x...a00b4e, deployers 0x...a00b46 + 0x...a00b4b."
   },
   "router_v3": {
     "id": "0.0.10477449",
     "evm": "0x00000000000000000000000000000000009fdf89",
     "deployedAt": "2026-05-13",
     "tx": "0.0.10463169@1778710017.635895689",
-    "notes": "ActionRouter v3 — fixes addLiquidityProportional typing bug from v2 (now pulls sy.shareToken() instead of the SY contract address). maxAutomaticTokenAssociations=-1, operator-admin. Drop-in ABI-compatible with v2 (0.0.10475923) for the other entries."
+    "notes": "ActionRouter v3 \u2014 fixes addLiquidityProportional typing bug from v2 (now pulls sy.shareToken() instead of the SY contract address). maxAutomaticTokenAssociations=-1, operator-admin. Drop-in ABI-compatible with v2 (0.0.10475923) for the other entries."
   },
   "mega_zap": {
     "id": "0.0.10477452",
@@ -173,7 +201,7 @@
       "zap": "0x00000000000000000000000000000000009fd984",
       "router": "0x00000000000000000000000000000000009fdf89"
     },
-    "notes": "Atomic HBAR → PT/YT/LP zap. Wraps FissionZap (HBAR→SY) and ActionRouterV3 (SY→PT/YT/LP). Permissionless, no admin. maxAutomaticTokenAssociations=-1."
+    "notes": "Atomic HBAR \u2192 PT/YT/LP zap. Wraps FissionZap (HBAR\u2192SY) and ActionRouterV3 (SY\u2192PT/YT/LP). Permissionless, no admin. maxAutomaticTokenAssociations=-1."
   },
   "lens": {
     "contract_id": "0.0.10489822",
@@ -193,12 +221,12 @@
       "saucer_v2_router": "0x00000000000000000000000000000000003c437a",
       "router_v3": "0x00000000000000000000000000000000009fdf89"
     },
-    "notes": "One-tx PT/SY/LP → native HBAR. Mirror of FissionZap; uses sy.redeemLiquidity → V2 swap USDC→WHBAR → unwrap WHBAR."
+    "notes": "One-tx PT/SY/LP \u2192 native HBAR. Mirror of FissionZap; uses sy.redeemLiquidity \u2192 V2 swap USDC\u2192WHBAR \u2192 unwrap WHBAR."
   },
   "fission_gateway": {
-    "id": "0.0.10493916",
-    "evm": "0x0000000000000000000000000000000000a01fdc",
-    "deployed_at": "2026-05-25T22:24:17.247Z",
+    "id": "0.0.10494003",
+    "evm": "0x0000000000000000000000000000000000a02033",
+    "deployed_at": "2026-05-25T23:31:54.508Z",
     "constructor": {
       "whbar_contract": "0x0000000000000000000000000000000000163b59",
       "whbar": "0x0000000000000000000000000000000000163b5a",
@@ -207,6 +235,13 @@
       "router_v3": "0x00000000000000000000000000000000009fdf89",
       "fission_zap": "0x00000000000000000000000000000000009fd984"
     },
-    "notes": "v2 unified periphery — replaces FissionMegaZap + FissionUnzap. Atomic 1-tx for 6 of 7 user flows (Sell YT → HBAR is 2-tx forced by market wipe-on-msg.sender). Lazy int64.max approvals via _ensureApproval drop child-records ~5-9 per call."
+    "notes": "v2 unified periphery \u2014 replaces FissionMegaZap + FissionUnzap. Atomic 1-tx for 6 of 7 user flows (Sell YT \u2192 HBAR is 2-tx forced by market wipe-on-msg.sender). Lazy int64.max approvals via _ensureApproval drop child-records ~5-9 per call."
+  },
+  "fission_gateway_v1": {
+    "id": "0.0.10493916",
+    "evm": "0x0000000000000000000000000000000000a01fdc",
+    "deployed_at": "2026-05-26T00:20:00Z",
+    "status": "superseded",
+    "reason": "Replaced by v2.1 with in-contract maxTradeBps cap (5%). Still on-chain; do not route new traffic."
   }
 }

@@ -14,6 +14,8 @@ interface IFissionMarketView {
     function yt() external view returns (address);
     function sy() external view returns (address);
     function lp() external view returns (address);
+    function totalPt() external view returns (uint256);
+    function totalSy() external view returns (uint256);
 }
 
 interface ISYExtended {
@@ -127,6 +129,20 @@ contract FissionGateway is ReentrancyGuard {
     address public owner;
     address public pendingOwner;
 
+    /* ─────────────────────────────── trade-size cap ──── */
+
+    /// @notice Max trade size as a fraction of pool depth, in basis points.
+    ///         Default 500 = 5%. Applied to every AMM-touching entry point.
+    ///         Owner-settable so we can tune without redeploy.
+    ///
+    ///         Why: Market 0 (`0xfa90...`) and now Market 0 (`0x36ed...`) were
+    ///         both bricked into a degenerate ~98% PT proportion by single
+    ///         operator-wallet sell trades that bypassed the dApp's 1% cap.
+    ///         Routing through this gateway with the in-contract cap means
+    ///         the only way to brick a pool is to call the underlying Router
+    ///         directly. Defense-in-depth.
+    uint16 public maxTradeBps = 500;
+
     /* ─────────────────────────────── errors ──── */
 
     error AmountZero();
@@ -142,6 +158,8 @@ contract FissionGateway is ReentrancyGuard {
     error HbarTransferFailed();
     error NoPositionsToSweep();
     error MarketNotResolved(address market);
+    error TradeExceedsCap(uint256 attempted, uint256 cap);
+    error InvalidCap(uint16 bps);
 
     /* ─────────────────────────────── events ──── */
 
@@ -190,6 +208,24 @@ contract FissionGateway is ReentrancyGuard {
         owner = msg.sender;
     }
 
+    /* ─────────────────────────────── trade-size cap helper ──── */
+
+    /// @notice Owner-only update of the in-contract trade-size cap.
+    /// @param  bps Cap in basis points (100 = 1%, 500 = 5%, max 10000=100%).
+    function setMaxTradeBps(uint16 bps) external onlyOwner {
+        if (bps == 0 || bps > 10000) revert InvalidCap(bps);
+        maxTradeBps = bps;
+    }
+
+    /// @dev    Revert if `tradeAmount` exceeds `maxTradeBps` of `referenceTotal`.
+    ///         Caller decides what reference to use (totalPt for PT sells,
+    ///         totalPt+totalSy for SY-side trades, lp.totalSupply for LP sells).
+    function _checkSize(uint256 tradeAmount, uint256 referenceTotal) internal view {
+        if (referenceTotal == 0) return;  // empty pool: no constraint (seed-time)
+        uint256 cap = (referenceTotal * maxTradeBps) / 10000;
+        if (tradeAmount > cap) revert TradeExceedsCap(tradeAmount, cap);
+    }
+
     /* ─────────────────────────────── lazy approval helper ──── */
 
     /// @dev    Each call probes the existing allowance; only writes a new one
@@ -229,6 +265,10 @@ contract FissionGateway is ReentrancyGuard {
         IFissionZap(FISSION_ZAP).zapHbarToSy{value: msg.value}(syAdapter, 0, 0, 0, 1, address(this));
         uint256 syAcquired = IERC20(ISYExtended(syAdapter).shareToken()).balanceOf(address(this)) - sharesBefore;
         if (syAcquired == 0) revert InsufficientShares(0, 1);
+
+        // Cap: the AMM-side trade (syAcquired pushed into the pool) must be
+        // ≤ maxTradeBps of pool depth. Protects against bricking the pool.
+        _checkSize(syAcquired, IFissionMarketView(market).totalPt() + IFissionMarketView(market).totalSy());
 
         // Step 2: SY → PT via Router. Allowance is lazy-warmed.
         address shareToken = ISYExtended(syAdapter).shareToken();
@@ -277,6 +317,10 @@ contract FissionGateway is ReentrancyGuard {
         uint256 syAcquired = IERC20(shareToken).balanceOf(address(this)) - sharesBefore;
         if (syAcquired == 0) revert InsufficientShares(0, 1);
 
+        // Cap: the AMM-side trade (split → sell PT) must be ≤ maxTradeBps
+        // of pool depth.
+        _checkSize(syAcquired, IFissionMarketView(market).totalPt() + IFissionMarketView(market).totalSy());
+
         // Step 2: SY → YT via Router (which internally splits + sells PT).
         _ensureApproval(shareToken, ROUTER);
         (ytOut, syRefund) = IActionRouter(ROUTER).buyYT(
@@ -319,9 +363,12 @@ contract FissionGateway is ReentrancyGuard {
         uint256 syAcquired = IERC20(shareToken).balanceOf(address(this)) - sharesBefore;
         if (syAcquired == 0) revert InsufficientShares(0, 1);
 
-        // Step 2: split SY budget per ptShareBps — swap that portion for PT.
+        // Cap: the internal swap (syForPt → PT) is the AMM touch. Check
+        // syForPt against pool depth.
         uint256 syForPt = (syAcquired * ptShareBps) / 10000;
         uint256 syForLp = syAcquired - syForPt;
+        _checkSize(syForPt, IFissionMarketView(market).totalPt() + IFissionMarketView(market).totalSy());
+
         _ensureApproval(shareToken, ROUTER);
         // exact-SY-in variant; router infers PT out from curve.
         IActionRouter(ROUTER).swapExactSyForPt(
@@ -387,6 +434,10 @@ contract FissionGateway is ReentrancyGuard {
         address syAdapter = IFissionMarketView(market).sy();
         if (pt == address(0) || syAdapter == address(0)) revert MarketNotResolved(market);
 
+        // Cap: PT-sell pushes PT INTO the pool. Limit ptIn against the
+        // current pool's totalPt so a single sell can't brick the proportion.
+        _checkSize(ptIn, IFissionMarketView(market).totalPt());
+
         // Step 1: pull PT from user.
         IERC20(pt).safeTransferFrom(msg.sender, address(this), ptIn);
 
@@ -421,6 +472,10 @@ contract FissionGateway is ReentrancyGuard {
         address pt = IFissionMarketView(market).pt();
         address syAdapter = IFissionMarketView(market).sy();
         if (lp == address(0) || pt == address(0) || syAdapter == address(0)) revert MarketNotResolved(market);
+
+        // Cap: LP-sell pulls proportional PT+SY out of pool. Limit lpIn
+        // against LP total supply so a single sell can't drain reserves.
+        _checkSize(lpIn, IERC20(lp).totalSupply());
 
         // Step 1: pull LP, approve to router, removeLiquidity.
         IERC20(lp).safeTransferFrom(msg.sender, address(this), lpIn);
