@@ -8,8 +8,7 @@
    - deployments/295.json   (machine-readable source of truth)
 
  Headline current-live set (Hedera mainnet, chain 295):
-   FissionFactory          0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f's factory
-                           = 0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c
+   FissionFactory          0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c
    FissionPeriphery v3     0x0000000000000000000000000000000000A02731
    FissionLens             0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969
    SaucerSwapLPYieldSource 0x0000000000000000000000000000000000A0289A  (with sweepHbar)
