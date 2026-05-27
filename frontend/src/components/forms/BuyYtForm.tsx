@@ -721,6 +721,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     if (effectiveSource === "hbar") {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
+      if (hbarAmount < 6) return "Min 6 HBAR";
       if (megaZapAvailable) {
         if (flowState.kind === "error") return "Retry MegaZap";
         if (flowState.kind === "associating") return "Associating tokens…";
@@ -757,13 +758,16 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     return "Buy YT";
   };
 
+  // HBAR floor = v3NpmFeeBudget (5 HBAR on-chain) + 1 HBAR buffer for actual
+  // SY mint. Sub-floor inputs hit AmountZero on-chain — block in UI.
+  const hbarBelowFloor = effectiveSource === "hbar" && hbarAmount > 0 && hbarAmount < 6;
   const buttonDisabled =
     !user ||
     isPending ||
     isConfirmingFinal ||
     !routerDeployed ||
     (effectiveSource === "hbar"
-      ? hbarAmount === 0 || !zapAvailable
+      ? hbarAmount === 0 || !zapAvailable || hbarBelowFloor
       : parsedSy === 0n || insufficient || sizeLimit.exceeded);
 
   return (

@@ -318,7 +318,7 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
 
         <button
           type="button"
-          disabled={!user || hbarAmount === 0 || isPending || isConfirmingFinal}
+          disabled={!user || hbarAmount === 0 || hbarAmount < 6 || isPending || isConfirmingFinal}
           onClick={onZap}
           className="w-full rounded-[10px] bg-white px-7 py-3.5 font-mono text-sm font-semibold uppercase tracking-[1px] text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -326,11 +326,13 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
             ? "Connect wallet"
             : hbarAmount === 0
               ? "Enter amount"
-              : isPending
-                ? "Sign in HashPack…"
-                : isConfirmingFinal
-                  ? "Waiting for confirmation…"
-                  : `Mint SY with ${hbarAmount.toFixed(2)} HBAR`}
+              : hbarAmount < 6
+                ? "Min 6 HBAR"
+                : isPending
+                  ? "Sign in HashPack…"
+                  : isConfirmingFinal
+                    ? "Waiting for confirmation…"
+                    : `Mint SY with ${hbarAmount.toFixed(2)} HBAR`}
         </button>
 
         {isConfirmedFinal && txHash && (

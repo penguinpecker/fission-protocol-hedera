@@ -784,6 +784,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     if (effectiveSource === "hbar") {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
+      if (hbarAmount < 6) return "Min 6 HBAR";
       if (megaZapAvailable) {
         // Fast path. The MegaZap is a single contract call — at most one
         // associate popup beforehand on Hedera mode.
@@ -823,13 +824,16 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     return "Buy PT";
   };
 
+  // HBAR floor = v3NpmFeeBudget (5 HBAR on-chain) + 1 HBAR buffer for actual
+  // SY mint. Sub-floor inputs hit AmountZero on-chain — block in UI.
+  const hbarBelowFloor = effectiveSource === "hbar" && hbarAmount > 0 && hbarAmount < 6;
   const buttonDisabled =
     !user ||
     isPending ||
     isConfirmingFinal ||
     !routerDeployed ||
     (effectiveSource === "hbar"
-      ? hbarAmount === 0 || !zapAvailable
+      ? hbarAmount === 0 || !zapAvailable || hbarBelowFloor
       : parsedSy === 0n || insufficient || sizeLimit.exceeded);
 
   return (

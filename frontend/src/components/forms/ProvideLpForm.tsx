@@ -874,7 +874,7 @@ function AddLp({
             isConfirmingFinal ||
             !routerDeployed ||
             (effectiveSource === "hbar"
-              ? hbarAmount <= 0 || !megaZapAvailable
+              ? hbarAmount <= 0 || hbarAmount < 6 || !megaZapAvailable
               : noInput || insufficientSy || insufficientPt || noPt)
           }
           onClick={onPrimary}
@@ -885,11 +885,13 @@ function AddLp({
             : effectiveSource === "hbar"
               ? hbarAmount <= 0
                 ? "Enter HBAR amount"
-                : isPending
-                  ? "Adding LP via MegaZap…"
-                  : isConfirmingFinal
-                    ? "Waiting for confirmation…"
-                    : "Add LP via MegaZap (1 tx)"
+                : hbarAmount < 6
+                  ? "Min 6 HBAR"
+                  : isPending
+                    ? "Adding LP via MegaZap…"
+                    : isConfirmingFinal
+                      ? "Waiting for confirmation…"
+                      : "Add LP via MegaZap (1 tx)"
               : noPt
                 ? "You need PT — buy PT first"
                 : noInput
