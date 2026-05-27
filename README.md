@@ -109,40 +109,38 @@ Governance:  2-of-2 Hedera ThresholdKey  ──►  Timelock (48h)  ──►  c
 
 All deployments are tracked in [`deployments/295.json`](deployments/295.json). HashScan links open the contract page directly.
 
-### Core protocol
+### Core protocol *(2026-05-27 clean-slate redeploy + audit-pass-2 fixes)*
 
 | Contract | EVM | Hedera ID | HashScan |
 |----------|-----|-----------|----------|
-| **FissionFactory** *(2026-05-22 Ed25519 fix)* | `0x...a00b4e` | `0.0.10488654` | [view](https://hashscan.io/mainnet/contract/0.0.10488654) |
-| **ActionRouter v3** | `0x...009fdf89` | `0.0.10477449` | [view](https://hashscan.io/mainnet/contract/0.0.10477449) |
-| **FissionZap** (HBAR→SY) | `0x...009fd984` | `0.0.10475908` | [view](https://hashscan.io/mainnet/contract/0.0.10475908) |
-| **MegaZap** (HBAR→PT/YT/LP) | `0x...009fdf8c` | `0.0.10477452` | [view](https://hashscan.io/mainnet/contract/0.0.10477452) |
-| **FissionUnzap** (PT/SY/LP→HBAR) *(new 2026-05-24)* | `0x...a01a63` | `0.0.10492515` | [view](https://hashscan.io/mainnet/contract/0.0.10492515) |
-| **FissionLens** (read-helper) | `0x...a00fde` | `0.0.10489822` | [view](https://hashscan.io/mainnet/contract/0.0.10489822) |
-| **SY_SaucerSwapV2LP** | `0x...009fb089` | `0.0.10465417` | [view](https://hashscan.io/mainnet/contract/0.0.10465417) |
-| **Market 0 — `SS-V2-90D-FIX`** | `0x36ed8f34c9bfc0004f107153b1a16099f8910b58` | `0.0.10488661` | [view](https://hashscan.io/mainnet/contract/0.0.10488661) |
-| StandardMarketDeployer | `0x...a00b46` | `0.0.10488646` | [view](https://hashscan.io/mainnet/contract/0.0.10488646) |
-| RewardsMarketDeployer | `0x...a00b4b` | `0.0.10488651` | [view](https://hashscan.io/mainnet/contract/0.0.10488651) |
+| **FissionFactory** | `0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c` | `0.0.10495346` | [view](https://hashscan.io/mainnet/contract/0.0.10495346) |
+| **FissionPeriphery v3** *(consolidates Zap+MegaZap+Unzap+Gateway+Router)* | `0x0000000000000000000000000000000000a02731` | `0.0.10495793` | [view](https://hashscan.io/mainnet/contract/0.0.10495793) |
+| **FissionLens** | `0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969` | `0.0.10495350` | [view](https://hashscan.io/mainnet/contract/0.0.10495350) |
+| **SaucerSwapLPYieldSource v2** *(with `sweepHbar`)* | `0x0000000000000000000000000000000000a0289a` | `0.0.10496154` | [view](https://hashscan.io/mainnet/contract/0.0.10496154) |
+| **Market — `USDC-WHBAR-2026-08-25-v3`** | `0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f` | `0.0.10496157` | [view](https://hashscan.io/mainnet/contract/0.0.10496157) |
+| StandardMarketDeployer | `0xdbDf8da50240F21DFc1ed6c44e3a5806AFDcC9bF` | `0.0.10495325` | [view](https://hashscan.io/mainnet/contract/0.0.10495325) |
+| RewardsMarketDeployer | `0x63A75EaaB07feeBc48226A6eaF3Cbb057614e537` | `0.0.10495326` | [view](https://hashscan.io/mainnet/contract/0.0.10495326) |
 
-#### HashScan verification
+**User flow (2-tx deterministic):**
+- Buy: `Periphery.zapHbarToSy` → `Periphery.buySyForPt / buySyForYt / buySyForLp`
+- Sell: `Periphery.sellPtForSy / sellYtForSy / sellLpForSy` → `Periphery.unzapSyToHbar`
 
-Verified on chain 295 via [Sourcify](https://sourcify.dev/server):
+Old contracts (ActionRouter v3, FissionZap, MegaZap, FissionUnzap, FissionGateway v2/v2.1, prior Peripheries v1/v2) are abandoned but on-chain; they receive no new traffic from the dApp. See `deployments/295.json` for the full historical record.
 
-| Contract | Status |
-|----------|--------|
-| FissionFactory | ✅ full match |
-| SY_SaucerSwapV2LP | ✅ full match |
-| StandardMarketDeployer, RewardsMarketDeployer, Market 0, ActionRouterV3, FissionZap | ⏳ pending |
+#### Sourcify verification
 
-**Sourcify caveat:** Foundry's `via_ir = true` produces bytecode that Sourcify can't exactly reproduce from the same metadata. Manual upload via HashScan UI (`https://hashscan.io/mainnet/contract/<entity_id>/source`) is the workaround. Source in this repo is byte-identical to what's deployed.
+Programmatic Sourcify verification against the HashScan endpoint is currently flaky for `via_ir = true` artifacts (HTTP 500 "unexpected end of form"). Manual upload via HashScan UI (`https://hashscan.io/mainnet/contract/<entity_id>/source`) is the workaround. Source in this repo is byte-identical to what's deployed; anyone can recompile + cross-reference against the deployed bytecode (`cast code <addr>`).
 
-> **2026-05-22 redeploy**
+> **2026-05-27 clean-slate redeploy + audit pass-2**
 >
-> Addresses above replaced the pre-fix set. The old factory (`0x...009fb0b3`) and old market (`0xfa903b…8a6d`) had an Ed25519 reward-accrual bug: the Hedera HTS facade's `balanceOf(addr)` silently returned 0 for long-zero EVM addresses of Ed25519 accounts (HashPack's default key type), zeroing reward + yield accrual for those users.
+> The current contract set replaces every prior on-chain instance (going back through three Periphery iterations + two SY adapters + two markets). Reasons across the cycle:
 >
-> **Fix:** track YT balances internally in `_ytBal[address]`. Operator's $700+ V3 LP position migrated to the new market; old contracts remain on chain but are archived in the dApp.
+> - **Ed25519 reward-accrual bug** (2026-05-22 cycle, now fixed) — HTS facade `balanceOf` returned 0 for long-zero Ed25519 EVM addresses. Resolved by tracking YT balances in `_ytBal[address]` mapping.
+> - **Periphery consolidation** (2026-05-27) — collapsed FissionZap + MegaZap + FissionUnzap + FissionGateway + ActionRouter into a single `FissionPeriphery` with deterministic 2-tx flow.
+> - **Periphery v3 audit pass-2** — added `registeredSyAdapter` gate (H-4), `isProtectedToken` rescue gate (X-5), per-side `_checkSize`, `ptOutFromSwap` param on `buySyForLp`, raised V3 NPM fee cap.
+> - **SY adapter v2 (X-2 fix)** — added `sweepHbar()` so HBAR refunded by the V3 NPM is recoverable. Old SY adapter has 6.26 HBAR permanently stuck (no sweep).
 >
-> Forensic write-up: [`audits/internal/SECURITY_REVIEW_ED25519_BAL_2026-05-22.md`](audits/internal/SECURITY_REVIEW_ED25519_BAL_2026-05-22.md)
+> Full forensic write-up: [`records.txt`](records.txt) at repo root.
 
 ### Governance contracts
 
@@ -151,52 +149,55 @@ Verified on chain 295 via [Sourcify](https://sourcify.dev/server):
 | **Timelock** (48h) | `0x...009fc1c0` | `0.0.10469824` | [view](https://hashscan.io/mainnet/contract/0.0.10469824) |
 | **2-of-2 ThresholdKey** account | `0x...009fc1be` | `0.0.10469822` | [view](https://hashscan.io/mainnet/account/0.0.10469822) |
 
-### Market 0 HTS tokens *(2026-05-22 set)*
+### Live market HTS tokens *(USDC-WHBAR-2026-08-25-v3)*
 
-| Token | Symbol | EVM | Hedera ID | HashScan |
-|-------|--------|-----|-----------|----------|
-| SY shares | `fSY-SS-V2` | `0x...009fb08b` | `0.0.10465419` | [view](https://hashscan.io/mainnet/token/0.0.10465419) |
-| Principal Token | `fPT-SS-V2-90D-FIX` | `0x...a00b56` | `0.0.10488662` | [view](https://hashscan.io/mainnet/token/0.0.10488662) |
-| Yield Token | `fYT-SS-V2-90D-FIX` | `0x...a00b57` | `0.0.10488663` | [view](https://hashscan.io/mainnet/token/0.0.10488663) |
-| LP Token | `fLP-SS-V2-90D-FIX` | `0x...a00b58` | `0.0.10488664` | [view](https://hashscan.io/mainnet/token/0.0.10488664) |
+| Token | EVM | Hedera ID | HashScan |
+|-------|-----|-----------|----------|
+| SY share | `0x0000000000000000000000000000000000a0289b` | `0.0.10496155` | [view](https://hashscan.io/mainnet/token/0.0.10496155) |
+| Principal Token (PT) | `0x0000000000000000000000000000000000a028aa` | `0.0.10496170` | [view](https://hashscan.io/mainnet/token/0.0.10496170) |
+| Yield Token (YT) | `0x0000000000000000000000000000000000a028ab` | `0.0.10496171` | [view](https://hashscan.io/mainnet/token/0.0.10496171) |
+| LP Token | `0x0000000000000000000000000000000000a028ac` | `0.0.10496172` | [view](https://hashscan.io/mainnet/token/0.0.10496172) |
 
-SY share token is reused from the legacy deployment — the same V3 NFT-backed asset, exposed via the fixed market. PT/YT/LP are freshly minted per market.
+All four are HTS-native fungibles. YT is frozen post-receive so user-to-user transfers revert — AMM-only by design, which closes a stale-yield-index exploit class.
 
-All four are HTS-native fungibles with 18 decimals. YT is frozen post-receive so user-to-user transfers revert — AMM-only by design, which closes a stale-yield-index exploit class.
+### Trade surface (`FissionPeriphery` — single user-facing contract)
 
-### Trade surface
+All Buy and Sell flows go through Periphery v3 (`0x...a02731`). Each flow is **two transactions** (deterministic, no atomic 1-tx, no fallback):
 
-#### Principal Token (PT)
+#### Buy path (HBAR-in)
 
-| Action | Entry point | Notes |
-|--------|-------------|-------|
-| Buy PT (HBAR-in, 1 tx) | `MegaZap.zapHbarToPt(market, sy, minPtOut, receiver, deadline)` | Auto-falls back to legacy 4-tx chain on Hedera `MAX_CHILD_RECORDS_EXCEEDED` |
-| Buy PT (SY-in) | `ActionRouter.swapExactSyForPt(market, syIn, ptOut, …)` | |
-| **Sell PT → HBAR (1 tx)** *(2026-05-24)* | `FissionUnzap.sellPtForHbar(market, ptIn, minHbarOut, receiver, deadline)` | Router swap PT→SY → `sy.redeemLiquidity` → V2 swap USDC→WHBAR → unwrap |
-| Sell PT → SY | `ActionRouter.swapExactPtForSy(market, ptIn, minSyOut, …)` | |
+| Action | Tx 1 | Tx 2 |
+|--------|------|------|
+| Buy PT  | `Periphery.zapHbarToSy(market, receiver, deadline)` | `Periphery.buySyForPt(market, syIn, minPtOut, receiver, deadline)` |
+| Buy YT  | `Periphery.zapHbarToSy(...)` | `Periphery.buySyForYt(market, syIn, minSyOutFromPtSale, receiver, deadline)` |
+| Buy LP  | `Periphery.zapHbarToSy(...)` | `Periphery.buySyForLp(market, syIn, ptShareBps, ptOutFromSwap, minLpOut, receiver, deadline)` |
+| Mint SY only | `Periphery.zapHbarToSy(...)` | *(stop after Tx 1)* |
 
-#### Yield Token (YT)
+#### Sell path (HBAR-out)
 
-| Action | Entry point | Notes |
-|--------|-------------|-------|
-| Buy YT (HBAR-in, 1 tx) | `MegaZap.zapHbarToYt(market, sy, minSyOutFromPtSale, receiver, deadline)` | Auto-falls back to legacy 4-tx chain on `MAX_CHILD_RECORDS_EXCEEDED` |
-| Buy YT (SY-in) | `ActionRouter.buyYT(market, syBudget, …)` | Splits then sells PT internally |
-| **Sell YT → HBAR (3 tx)** *(2026-05-24)* | `Market.swapExactYtForSy` → `FissionUnzap.unzapSy(sy, sharesIn, minHbarOut, receiver)` | YT freeze forces 3-step UX: market wipes YT in-place, then SY → HBAR via unzap |
-| Sell YT → SY | `Market.swapExactYtForSy(ytIn, minSyOut, receiver)` | Direct on Market — YT is frozen-by-default; Market uses WIPE key to consume YT in-place + burns paired PT from the AMM pool |
+| Action | Tx 1 | Tx 2 |
+|--------|------|------|
+| Sell PT | `Periphery.sellPtForSy(market, ptIn, minSyOut, receiver, deadline)` | `Periphery.unzapSyToHbar(syAdapter, sharesIn, minHbarOut, deadline)` |
+| Sell YT | `Periphery.sellYtForSy(market, ytIn, minSyOut, receiver, deadline)` *(requires `market.setOperator(periphery, true)` first)* | `Periphery.unzapSyToHbar(...)` |
+| Sell LP | `Periphery.sellLpForSy(market, lpIn, minSyOut, receiver, deadline)` | `Periphery.unzapSyToHbar(...)` |
+| Unzap SY only | *(skip)* | `Periphery.unzapSyToHbar(...)` |
 
-#### Liquidity (LP)
+#### One-time setup (per user)
 
-| Action | Entry point | Notes |
-|--------|-------------|-------|
-| Add LP (HBAR-in, 1 tx) | `MegaZap.zapHbarToLp(market, sy, ptShareBps, minLpOut, receiver, deadline)` | |
-| **Remove LP → HBAR (1 tx)** *(2026-05-24)* | `FissionUnzap.sellLpForHbar(market, lpIn, minHbarOut, receiver, deadline)` | |
-| Add / remove LP (SY-in) | `ActionRouter.addLiquidityProportional` / `removeLiquidityProportional` | |
+1. Approve PT, LP, SY-share to Periphery (`int64.max`)
+2. `market.setOperator(periphery, true)` — only needed for Sell YT
 
-#### Redeem
+#### Direct Market calls (advanced)
 
-| Action | Entry point | Notes |
-|--------|-------------|-------|
-| Redeem after expiry | `Market.redeemAfterExpiry(ptIn, ytIn, receiver)` | Rewards-type market: PT-only (1:1 to SY); standard market: both PT and YT |
+For users who already hold SY shares and want to skip the Periphery:
+
+| Action | Entry point |
+|--------|-------------|
+| Split SY → PT + YT | `Market.split(amount)` |
+| Merge PT + YT → SY | `Market.merge(amount)` |
+| Add liquidity (SY + PT in) | `Market.addLiquidity(syIn, ptIn, minLpOut, receiver)` |
+| Remove liquidity | `Market.removeLiquidity(lpIn, minSyOut, minPtOut, receiver)` |
+| Redeem after expiry | `Market.redeemAfterExpiry(ptIn, 0, receiver)` *(YT burn not permitted on rewards market)* |
 
 ---
 

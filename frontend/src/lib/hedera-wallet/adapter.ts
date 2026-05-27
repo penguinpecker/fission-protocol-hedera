@@ -52,6 +52,12 @@ export type WriteOp =
       value?: bigint;
     }
   | { kind: "approveErc20"; token: `0x${string}`; spender: `0x${string}`; amount: bigint }
+  /**
+   * Set / revoke an operator on a market. Used by the profile / settings UI
+   * for X-7 mitigation — users can flip off any Periphery they previously
+   * approved as YT-sell operator.
+   */
+  | { kind: "marketSetOperator"; market: `0x${string}`; operator: `0x${string}`; approved: boolean }
   | { kind: "split"; market: `0x${string}`; amount: bigint }
   | { kind: "merge"; market: `0x${string}`; amount: bigint }
   | {
@@ -348,6 +354,19 @@ async function writeEvm(
           args: [op.amount],
         }),
       };
+    case "marketSetOperator":
+      return {
+        txHash: await writeContractAsync({
+          abi: [{
+            type: "function", name: "setOperator", stateMutability: "nonpayable",
+            inputs: [{ name: "operator", type: "address" }, { name: "approved", type: "bool" }],
+            outputs: [],
+          }] as const,
+          address: op.market,
+          functionName: "setOperator",
+          args: [op.operator, op.approved],
+        }),
+      };
     case "merge":
       return {
         txHash: await writeContractAsync({
@@ -606,6 +625,16 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
         new ContractFunctionParameters().addUint256(toBN(op.amount)),
         0,
         2_000_000,
+      );
+    case "marketSetOperator":
+      return exec(
+        op.market,
+        "setOperator",
+        new ContractFunctionParameters()
+          .addAddress(op.operator.replace(/^0x/, ""))
+          .addBool(op.approved),
+        0,
+        1_000_000,
       );
     case "merge":
       return exec(

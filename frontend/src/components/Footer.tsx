@@ -30,14 +30,12 @@ const NAV = [
   {
     heading: "Network",
     links: [
-      // Ed25519-fixed redeploy 2026-05-22 — pointers updated to current addresses.
-      { href: "https://hashscan.io/mainnet/contract/0x36ed8f34c9bfc0004f107153b1a16099f8910b58", label: "Market 0", external: true },
-      { href: "https://hashscan.io/mainnet/contract/0x0000000000000000000000000000000000a00b4e", label: "Factory", external: true },
-      { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fd993", label: "Router (v3)", external: true },
-      { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fd984", label: "Zap", external: true },
-      // MegaZap link intentionally omitted — contract is disabled in prod
-      // (see README "Future work / MegaZap v2"). Restore when v2 redeploys.
-      { href: "https://hashscan.io/mainnet/contract/0x00000000000000000000000000000000009fb089", label: "SY adapter", external: true },
+      // Post-rebuild 2026-05-27 — pointers updated to current addresses.
+      { href: "https://hashscan.io/mainnet/contract/0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f", label: "Market", external: true },
+      { href: "https://hashscan.io/mainnet/contract/0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c", label: "Factory", external: true },
+      { href: "https://hashscan.io/mainnet/contract/0x0000000000000000000000000000000000a02731", label: "Periphery (v3)", external: true },
+      { href: "https://hashscan.io/mainnet/contract/0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969", label: "Lens", external: true },
+      { href: "https://hashscan.io/mainnet/contract/0x0000000000000000000000000000000000a0289a", label: "SY adapter", external: true },
     ],
   },
 ];

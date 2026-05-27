@@ -14,11 +14,15 @@ import { ADDRESSES, isDeployed } from "@/lib/addresses";
 import { factoryAbi, marketAbi, erc20Abi, syAbi } from "@/lib/abis";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 
-// v1 lineup — update when adding new rewards-bearing SY adapters.
+// Rewards-bearing SY adapters. The current live one + every retired one so
+// historical market records resolve correctly. Update when adding new ones.
 const REWARDS_SY_ADDRESSES = new Set<string>(
   [
     process.env.NEXT_PUBLIC_SY_SAUCER_V2_LP_ADDRESS,
-    "0x00000000000000000000000000000000009fb089",
+    process.env.NEXT_PUBLIC_SY_ADDRESS,
+    "0x0000000000000000000000000000000000a0289a", // 2026-05-27 SY v2 (with sweepHbar)
+    "0x0000000000000000000000000000000000a02585", // 2026-05-27 SY v1 (archived)
+    "0x00000000000000000000000000000000009fb089", // legacy
   ]
     .filter((s): s is string => Boolean(s))
     .map((s) => s.toLowerCase()),

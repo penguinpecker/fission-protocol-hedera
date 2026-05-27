@@ -2,24 +2,28 @@
 
 > **READ THIS FIRST.** This document is the only safe path to a mainnet deploy.
 > Skipping any step risks user funds. The protocol is **not externally audited**;
-> a mainnet deploy is at the operator's risk until at least Phase 9 audit pipeline
-> completes (see `docs/IMPLEMENTATION_PLAN.md`).
+> a mainnet deploy is at the operator's risk.
 
-> **2026-05-22 update — Ed25519 fix redeploy is now LIVE.**
-> Current production set:
-> - FissionFactory: `0x...a00b4e` / `0.0.10488654`
-> - StandardMarketDeployer: `0x...a00b46` / `0.0.10488646`
-> - RewardsMarketDeployer:  `0x...a00b4b` / `0.0.10488651`
-> - Market 0 (`SS-V2-90D-FIX`): `0x36ed8f34c9bfc0004f107153b1a16099f8910b58` / `0.0.10488661`
+> **2026-05-27 update — Clean-slate redeploy + audit pass-2 LIVE.**
+> Current production set (all per `deployments/295.json`):
+> - FissionFactory: `0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c` / `0.0.10495346`
+> - FissionPeriphery v3: `0x0000000000000000000000000000000000a02731` / `0.0.10495793`
+> - FissionLens: `0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969` / `0.0.10495350`
+> - SaucerSwapLPYieldSource v2: `0x0000000000000000000000000000000000a0289a` / `0.0.10496154`
+> - Market USDC-WHBAR-2026-08-25-v3: `0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f` / `0.0.10496157`
+> - StandardMarketDeployer: `0xdbDf8da50240F21DFc1ed6c44e3a5806AFDcC9bF` / `0.0.10495325`
+> - RewardsMarketDeployer:  `0x63A75EaaB07feeBc48226A6eaF3Cbb057614e537` / `0.0.10495326`
 >
-> SY adapter `0x...009fb089`, FissionZap `0x...009fd984`, ActionRouter v3 `0x...009fd993`
-> are unchanged and re-used.
+> All prior contracts (Factory `0x...a00b4e`, Periphery v1/v2, SY adapter v1
+> `0x...a02585`, market `0x556938...`, ActionRouter v3, FissionZap, MegaZap,
+> FissionUnzap, FissionGateway v2/v2.1) are abandoned but on-chain. The dApp
+> routes only to v3. Historical state archived in `deployments/295.json` +
+> `markets_cache.is_archived=true`.
 >
-> The references to the old factory (`0x...009fb0b3`) and old market
-> (`0xfa903b…8a6d`) below remain for historical context. They are archived in
-> `deployments/295.json#abandoned` and `is_archived=true` in `markets_cache`.
-> Old market is no longer surfaced in the dApp; deep-link still resolves so
-> any residual positions there can be withdrawn manually.
+> All deploy scripts that produced this state are in `scripts/`:
+> `deploy-rebuild.mjs`, `deploy-periphery-v2.mjs`, `deploy-periphery-v3.mjs`,
+> `deploy-sy-v2-cascade.mjs`, `seed-rebuild.mjs`, `fund-market.mjs`,
+> `smoke-rebuild.mjs`, `smoke-v3.mjs`. See `records.txt` for the full timeline.
 
 > **v1.0 launch decision (2026-05-08):** the bootstrap factory at
 > `0x00000000000000000000000000000000009fb0b3` (`SY_REVIEW_WINDOW=0`) is

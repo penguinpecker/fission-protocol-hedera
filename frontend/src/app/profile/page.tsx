@@ -7,6 +7,7 @@ import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { WalletGate } from "@/components/WalletGate";
+import { ApprovalsCard } from "@/components/profile/ApprovalsCard";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { useCachedMarkets } from "@/hooks/useCachedMarkets";
 import { useMarketDetail, useUserPosition, type MarketDetail } from "@/hooks/useMarket";
@@ -151,6 +152,7 @@ function ProfileBody() {
             unclaimedUsdc={totals.unclaimedUsdc}
             unclaimedWhbar={totals.unclaimedWhbar}
           />
+          <ApprovalsCard user={address} />
           <RecentActivityCard userEvm={address} />
           <WatchlistCard />
         </aside>

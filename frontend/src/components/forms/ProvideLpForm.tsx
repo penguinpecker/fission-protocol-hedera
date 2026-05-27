@@ -511,11 +511,17 @@ function AddLp({
   // mints SY, splits the budget per pool ratio, swaps half to PT, then
   // provides proportional liquidity. SY mode is the legacy "I already hold
   // SY + PT" path. If MegaZap isn't deployed in this env we keep SY-only.
-  // Post-rebuild: HBAR-source LP flow disabled. Periphery.buySyForLp uses an
-  // internal swapExactSyForPt with ptOut=1 (only buys 1 wei PT) so the
-  // proportional add lands minimal LP. Users add LP via the SY-source path
-  // (deposit SY+PT) until a Periphery v2 exposes ptOutFromSwap.
-  const megaZapAvailable = false;
+  // Post-rebuild + Periphery v3: HBAR-source LP is a 2-tx flow.
+  //   Tx 1: Periphery.zapHbarToSy(market, user, deadline)
+  //   Tx 2: Periphery.buySyForLp(market, syIn, ptShareBps, ptOutFromSwap,
+  //                              minLpOut, user, deadline)
+  // ptOutFromSwap is the exact PT we ask the curve to mint for the swap leg.
+  // We use a conservative 1:1 ratio (syForPt SY → syForPt PT). The market's
+  // swapExactSyForPt is "exact PT out, take UP TO syInMax SY" — undershooting
+  // is safe (curve consumes less SY, residue refunded as dust). Overshooting
+  // reverts when ptOut > what the curve can produce. Future improvement:
+  // Lens.previewSwapExactSyForPt binary search for tighter pricing.
+  const megaZapAvailable = isDeployed(ADDRESSES.periphery);
   const [source, setSource] = useState<"hbar" | "sy">(megaZapAvailable ? "hbar" : "sy");
   const effectiveSource: "hbar" | "sy" = megaZapAvailable ? source : "sy";
 
@@ -575,20 +581,37 @@ function AddLp({
 
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     try {
-      const { txHash: hash } = await wrap(() =>
+      // Tx 1: HBAR → SY shares (delivered to user).
+      const r1 = await wrap(() =>
         adapter.write({
-          kind: "zapHbarToLpMega",
-          megaZap: ADDRESSES.periphery,
-          market,
+          kind: "zapHbarToSy",
+          zap: ADDRESSES.periphery,
           sy: detail.sy,
-          ptShareBps,
-          minLpOut: minLp > 0n ? minLp : 1n,
           receiver: user,
-          deadline,
           hbarIn: hbarAmount,
         }),
       );
-      setTxHash(hash as `0x${string}`);
+      setTxHash(r1.txHash as `0x${string}`);
+
+      // Brief wait for mirror lag so balance read sees the post-Tx1 state.
+      await new Promise((r) => setTimeout(r, adapter.mode === "evm" ? 3500 : 1500));
+
+      // Tx 2: Periphery.buySyForLp with conservative ptOutFromSwap = syForPt.
+      // We don't know exact post-zap SY balance; estSyAfterZap is the linear
+      // estimate. The Periphery's _checkSize gate enforces 5% pool cap; the
+      // swapExactSyForPt(ptOut=syForPt) is "exact-PT-out so undershoots are
+      // safe — curve takes less SY for syForPt PT than for syForPt SY".
+      const syForPt = (estSyAfterZap * BigInt(ptShareBps)) / 10_000n;
+      const ptOutFromSwap = syForPt > 0n ? syForPt : 1n; // conservative 1:1
+
+      const r2 = await wrap(() =>
+        adapter.write({
+          kind: "writePeriphery",
+          functionName: "buySyForLp",
+          args: [market, estSyAfterZap, ptShareBps, ptOutFromSwap, minLp > 0n ? minLp : 1n, user, deadline],
+        }),
+      );
+      setTxHash(r2.txHash as `0x${string}`);
     } catch {
       /* error captured */
     }
