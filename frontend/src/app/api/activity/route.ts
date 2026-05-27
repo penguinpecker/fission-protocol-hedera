@@ -132,6 +132,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "invalid_address" }, { status: 400 });
   }
 
+  // Mirror Node stores `from` as the account's long-zero alias for Hedera-
+  // native accounts (0x000...<accountNum>), not the ECDSA-derived EVM alias.
+  // So a user with both forms (HashPack ECDSA via wallet-connect) gets indexed
+  // under the long-zero. Resolve both forms and query OR so the user's
+  // history appears regardless of which address the frontend passes.
+  const candidates = await resolveAddressForms(address);
+
   // Read from the persisted index (kept warm by the cron-indexer Railway
   // worker which polls Hedera Mirror Node every 60s). Falls back to mirror
   // on Supabase failure so a transient DB outage doesn't blank the feed.
@@ -142,7 +149,7 @@ export async function GET(req: NextRequest) {
     const { data, error } = await supa
       .from("activity_log")
       .select("tx_hash,address,event_type,market_address,block_timestamp,block_number,payload")
-      .eq("address", address.toLowerCase())
+      .in("address", candidates)
       .order("block_timestamp", { ascending: false })
       .limit(limit);
     if (error) throw error;
@@ -185,6 +192,53 @@ function toMirrorShape(row: ActivityLogRow): MirrorContractResult {
 }
 
 // Mirror-direct fallback used when Supabase is unavailable.
+/**
+ * Resolve a single user address into all the forms Mirror Node might have
+ * indexed it under:
+ *   1. The user-supplied form (lower-cased EVM hex).
+ *   2. The long-zero alias `0x000...<accountNum hex>` for the Hedera account.
+ *   3. The ECDSA-derived EVM alias from the account's public key, if different
+ *      from #1 (mirror returns `evm_address` field with the canonical alias).
+ *
+ * The cron-indexer writes `from` exactly as Mirror Node returns it — which is
+ * the long-zero for Hedera-native sigs and the EVM alias for ECDSA-keyed
+ * accounts that have aliased. This helper normalises both directions.
+ */
+async function resolveAddressForms(input: string): Promise<string[]> {
+  const out = new Set<string>();
+  const lower = input.toLowerCase();
+  out.add(lower);
+
+  // Hedera account-ID form "0.0.NNNN" → derive long-zero immediately.
+  if (/^0\.0\.\d+$/.test(input)) {
+    const num = Number(input.split(".")[2]);
+    out.add("0x" + num.toString(16).padStart(40, "0"));
+  }
+
+  // Look up mirror to find the EVM alias (for long-zero input) or the
+  // account ID (for EVM input). Either direction yields the other form.
+  try {
+    const r = await fetch(
+      `https://mainnet-public.mirrornode.hedera.com/api/v1/accounts/${input}`,
+      { cache: "no-store" },
+    );
+    if (r.ok) {
+      const d = (await r.json()) as { account?: string; evm_address?: string };
+      if (d.evm_address) out.add(d.evm_address.toLowerCase());
+      if (d.account) {
+        const num = Number(d.account.split(".")[2]);
+        if (Number.isFinite(num)) {
+          out.add("0x" + num.toString(16).padStart(40, "0"));
+        }
+      }
+    }
+  } catch {
+    /* fall through with just the input form */
+  }
+
+  return [...out];
+}
+
 async function fetchMirrorFallback(address: string, limit: number): Promise<ActivityLogRow[]> {
   const mirrorBase =
     process.env.NEXT_PUBLIC_MIRROR_NODE_URL ??
