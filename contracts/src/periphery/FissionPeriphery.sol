@@ -129,6 +129,12 @@ contract FissionPeriphery is ReentrancyGuardTransient {
     ///         registerMarket() pre-approves SY-share / PT / LP → market at int64.max.
     mapping(address => bool) public marketRegistered;
 
+    /// @notice Tokens the protocol treats as protected (cannot be rescued).
+    ///         Populated for USDC + WHBAR at construction and for shareToken /
+    ///         PT / LP per market on `_registerMarket`. Fixes X-5: prevents
+    ///         the owner from ordering-attacking in-flight user dust.
+    mapping(address => bool) public isProtectedToken;
+
     /// @notice SY adapters reachable through a registered market. Populated in
     ///         `_registerMarket`. `unzapSyToHbar` is gated on this so users
     ///         cannot pass an arbitrary (potentially malicious) adapter that
@@ -151,6 +157,7 @@ contract FissionPeriphery is ReentrancyGuardTransient {
     error HbarTransferFailed();
     error MarketNotRegistered(address market);
     error UnregisteredSyAdapter(address syAdapter);
+    error ProtectedToken(address token);
     error TradeExceedsCap(uint256 attempted, uint256 cap);
     error InvalidCap(uint16 bps);
     error InvalidShareBps(uint16 bps);
@@ -220,6 +227,11 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         HtsHelpers.associateIfNeeded(address(this), usdcToken);
         HtsHelpers.associateIfNeeded(address(this), whbarToken);
 
+        // X-5: mark protocol tokens unrescuable. Owner can still rescue stray
+        // tokens (foreign airdrops, etc) but never the in-flight USDC/WHBAR.
+        isProtectedToken[usdcToken] = true;
+        isProtectedToken[whbarToken] = true;
+
         for (uint256 i = 0; i < markets.length; i++) {
             _registerMarket(markets[i]);
         }
@@ -259,6 +271,10 @@ contract FissionPeriphery is ReentrancyGuardTransient {
 
         marketRegistered[market] = true;
         registeredSyAdapter[syAdapter] = true;
+        // X-5: protect the market's PT/LP and SY's share token from rescue.
+        isProtectedToken[shareToken] = true;
+        isProtectedToken[pt] = true;
+        isProtectedToken[lp] = true;
         emit MarketRegistered(market, syAdapter, pt, m.yt(), lp);
     }
 
@@ -269,8 +285,10 @@ contract FissionPeriphery is ReentrancyGuardTransient {
     }
 
     /// @notice Tune the V3 NPM mint-fee budget (tinybars). Default 5 HBAR.
+    /// @dev X-6: upper bound raised from 50 to 100 HBAR so an HBAR-price
+    ///      collapse doesn't lock out zaps.
     function setV3NpmFeeBudget(uint256 tinybars) external onlyOwner {
-        if (tinybars == 0 || tinybars > 50 * 1e8) revert InvalidFeeBudget(tinybars);
+        if (tinybars == 0 || tinybars > 100 * 1e8) revert InvalidFeeBudget(tinybars);
         emit V3NpmFeeBudgetUpdated(v3NpmFeeBudget, tinybars);
         v3NpmFeeBudget = tinybars;
     }
@@ -291,6 +309,9 @@ contract FissionPeriphery is ReentrancyGuardTransient {
 
     function rescueToken(address token, address to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
+        // X-5: refuse to rescue protocol tokens. Closes the owner-ordering
+        // attack on in-flight USDC/WHBAR/PT/LP/SY during user zaps.
+        if (isProtectedToken[token]) revert ProtectedToken(token);
         IERC20(token).safeTransfer(to, amount);
         emit TokenRescued(token, to, amount);
     }
@@ -397,7 +418,7 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         IFissionMarketExt m = IFissionMarketExt(market);
         address shareToken = ISYLiquidity(address(m.sy())).shareToken();
 
-        _checkSize(syIn, m.totalPt() + m.totalSy());
+        _checkSize(syIn, m.totalSy());
 
         IERC20(shareToken).safeTransferFrom(msg.sender, address(this), syIn);
 
@@ -433,7 +454,7 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         IFissionMarketExt m = IFissionMarketExt(market);
         address shareToken = ISYLiquidity(address(m.sy())).shareToken();
 
-        _checkSize(syIn, m.totalPt() + m.totalSy());
+        _checkSize(syIn, m.totalSy());
 
         IERC20(shareToken).safeTransferFrom(msg.sender, address(this), syIn);
 
@@ -475,7 +496,7 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         address shareToken = ISYLiquidity(address(m.sy())).shareToken();
         address pt = m.pt();
 
-        _checkSize(syIn, m.totalPt() + m.totalSy());
+        _checkSize(syIn, m.totalSy());
 
         IERC20(shareToken).safeTransferFrom(msg.sender, address(this), syIn);
 
@@ -485,8 +506,13 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         // the upper bound via syForPt.
         uint256 syForPt = (syIn * ptShareBps) / 10000;
         uint256 syForLp = syIn - syForPt;
+
+        // X-9: snapshot pre-swap PT balance so we consume ONLY the swap's
+        // delta. Without this, any stray PT dust from prior reverts would
+        // be silently spent on this user's behalf.
+        uint256 ptBefore = IERC20(pt).balanceOf(address(this));
         m.swapExactSyForPt(syForPt, ptOutFromSwap, address(this));
-        uint256 ptAcquired = IERC20(pt).balanceOf(address(this));
+        uint256 ptAcquired = IERC20(pt).balanceOf(address(this)) - ptBefore;
 
         lpOut = m.addLiquidity(syForLp, ptAcquired, minLpOut, receiver);
         if (lpOut < minLpOut) revert InsufficientLpOut(lpOut, minLpOut);
@@ -606,7 +632,8 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         hbarOut = hbarTotal;
         emit PeripheryAction(7, syAdapter, msg.sender, sharesIn, hbarOut, 0);
         usdcOut; whbarOut; // silence unused
-        if (block.timestamp > deadline && deadline != 0) revert DeadlineExpired();
+        // X-8: dead deadline check removed — checkDeadline modifier above
+        // already gates entry; this trailing line was post-effect dead code.
     }
 
     /// @dev SY → USDC + WHBAR → all-WHBAR → HBAR pipeline shared by sells.
@@ -663,34 +690,11 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         }
     }
 
-    // ───────────────────── view quoters (eth_call simulate) ─────────────────────
-
-    /// @notice Simulate `unzapSyToHbar` end-to-end via eth_call. Frontend uses this
-    ///         to size `minHbarOut` against the live V2 USDC/WHBAR pool state.
-    /// @dev    Non-view but designed for eth_call invocation (state changes get
-    ///         discarded by the RPC). Returns ok=false on any internal revert
-    ///         (e.g. unsupported SY shape) so callers don't have to wrap their own
-    ///         try/catch.
-    function quoteUnzapSy(address syAdapter, uint256 sharesIn)
-        external
-        returns (uint256 hbarOut, uint256 usdcOut, uint256 whbarOut, bool ok)
-    {
-        if (sharesIn == 0 || syAdapter == address(0)) return (0, 0, 0, false);
-        try this._redeemSyToHbarExternal(syAdapter, sharesIn) returns (uint256 u, uint256 w, uint256 h) {
-            usdcOut = u; whbarOut = w; hbarOut = h; ok = true;
-        } catch {
-            ok = false;
-        }
-    }
-
-    /// @dev External wrapper around `_redeemSyToHbar` so quoteUnzapSy can try/catch it.
-    function _redeemSyToHbarExternal(address syAdapter, uint256 sharesIn)
-        external
-        returns (uint256 usdcOut, uint256 whbarOut, uint256 hbarOut)
-    {
-        if (msg.sender != address(this)) revert NotOwner();
-        return _redeemSyToHbar(syAdapter, sharesIn);
-    }
+    // X-4: quoteUnzapSy + _redeemSyToHbarExternal removed. They were external
+    // state-changing functions guarded only by msg.sender==address(this), which
+    // is fragile if any future code path leaves SY in the Periphery between
+    // txs. Frontends should quote via FissionLens.previewSwapExactPtForSy +
+    // off-chain SaucerSwap V2 quoter for accurate minHbarOut sizing.
 
     // ───────────────────── receive ─────────────────────
 

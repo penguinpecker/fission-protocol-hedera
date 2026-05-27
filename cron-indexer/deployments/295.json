@@ -9,15 +9,20 @@
     "deployedAt": "2026-05-27"
   },
   "periphery": {
+    "id": "0.0.10495793",
+    "evm": "0x0000000000000000000000000000000000a02731",
+    "deployedAt": "2026-05-27",
+    "notes": "Periphery v3: audit pass-2 fixes (X-3 per-side _checkSize, X-4 remove quoteUnzapSy, X-5 protectedToken rescue gate, X-6 NPM fee cap 100 HBAR, X-8 delete dead deadline check, X-9 buySyForLp delta-only). Same source file."
+  },
+  "periphery_v2_abandoned": {
     "id": "0.0.10495425",
     "evm": "0x0000000000000000000000000000000000a025c1",
-    "deployedAt": "2026-05-27",
-    "notes": "Periphery v2: registeredSyAdapter gate on unzapSyToHbar (H-4 fix) + ptOutFromSwap param on buySyForLp. Same source file FissionPeriphery.sol; new on-chain instance. Old at 0x8ce95cef... abandoned."
+    "reason": "Superseded by Periphery v3 after audit pass-2."
   },
   "periphery_v1_abandoned": {
     "id": "0.0.10495353",
     "evm": "0x8ce95cef2c521df83f346b579de84fa4aa8f50aa",
-    "reason": "Superseded by Periphery v2 after audit fixes."
+    "reason": "Superseded by Periphery v2; never v3."
   },
   "lens": {
     "id": "0.0.10495350",
