@@ -27,6 +27,13 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
 
   const hederaAvailable = Boolean(process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID);
 
+  // Hooks must be called unconditionally on every render — the `pickerOpen`
+  // state was previously declared AFTER the early returns below, which made
+  // the hook count vary across renders (rule-of-hooks violation → React error
+  // #310 once a connected user transitions back to disconnected). Pinning it
+  // to the top of the component fixes it.
+  const [pickerOpen, setPickerOpen] = useState(false);
+
   // Diag — one event per state transition for server-side tailing.
   const lastSnapshotRef = useRef<string>("");
   useEffect(() => {
@@ -72,8 +79,6 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
       </section>
     );
   }
-
-  const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
     <section className="mx-auto flex min-h-[60vh] max-w-[560px] flex-col items-center px-6 py-20 text-center">
