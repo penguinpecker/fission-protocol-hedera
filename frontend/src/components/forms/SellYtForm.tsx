@@ -65,11 +65,10 @@ export function SellYtForm({ market, detail, user }: Props) {
   const [writeError, setWriteError] = useState<string | null>(null);
 
   const useWagmiReceipt = adapter.mode === "evm";
-  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming } = useWaitForTransactionReceipt({
     hash: useWagmiReceipt ? (lastTxHash as `0x${string}` | undefined) : undefined,
     query: { enabled: useWagmiReceipt && !!lastTxHash && lastTxHash.startsWith("0x") },
   });
-  const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!lastTxHash;
   const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
 
   const expired = Date.now() / 1000 >= Number(detail.expiry);

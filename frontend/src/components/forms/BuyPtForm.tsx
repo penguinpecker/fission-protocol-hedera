@@ -86,7 +86,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   const hbarUsd = useHbarUsd();
 
   // Source toggle. Default HBAR for the common "I only have HBAR" case.
-  const [source, setSource] = useState<Source>("hbar");
+  const [source] = useState<Source>("hbar");
   const zapAvailable = isDeployed(ADDRESSES.periphery);
   // MegaZap was riding the cliff of Hedera's 50-child consensus limit for
   // Buy PT (51 records — parent + 50 children). As the V3 NFT crosses more
@@ -119,11 +119,10 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   const [writeError, setWriteError] = useState<string | null>(null);
 
   const useWagmiReceipt = adapter.mode === "evm";
-  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming } = useWaitForTransactionReceipt({
     hash: useWagmiReceipt ? (lastTxHash as `0x${string}` | undefined) : undefined,
     query: { enabled: useWagmiReceipt && !!lastTxHash && lastTxHash.startsWith("0x") },
   });
-  const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!lastTxHash;
   const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
   const routerDeployed = isDeployed(ADDRESSES.periphery);
   // `isPending` must include the inter-step states (`zapped`, `approved`)
@@ -380,7 +379,6 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     async (syIn: bigint): Promise<boolean> => {
       if (!user) return false;
       setStatus({ kind: "buying", stepIdx: 4 });
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
       const minSyOutBudget = (syIn * BigInt(10_000 - slippageBps)) / 10_000n;
       try {
         const { txHash } = await adapter.write({

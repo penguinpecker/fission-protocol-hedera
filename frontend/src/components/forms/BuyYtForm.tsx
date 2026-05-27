@@ -63,7 +63,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   const { usdPerShare } = useSyValueUsd(detail.sy);
   const hbarUsd = useHbarUsd();
 
-  const [source, setSource] = useState<Source>("hbar");
+  const [source] = useState<Source>("hbar");
   const zapAvailable = isDeployed(ADDRESSES.periphery);
   // MegaZap.zapHbarToYt is STRUCTURALLY over Hedera's 50-child consensus
   // limit: the YT path adds split-mint-PT/YT + YT freeze + extra AMM
@@ -93,11 +93,10 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   const [writeError, setWriteError] = useState<string | null>(null);
 
   const useWagmiReceipt = adapter.mode === "evm";
-  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming } = useWaitForTransactionReceipt({
     hash: useWagmiReceipt ? (lastTxHash as `0x${string}` | undefined) : undefined,
     query: { enabled: useWagmiReceipt && !!lastTxHash && lastTxHash.startsWith("0x") },
   });
-  const isConfirmedFinal = useWagmiReceipt ? isConfirmed : !!lastTxHash;
   const isConfirmingFinal = useWagmiReceipt ? isConfirming : false;
   const routerDeployed = isDeployed(ADDRESSES.periphery);
   // `isPending` controls button-disable + spinner labels. CRITICAL: this
@@ -331,7 +330,6 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     async (syIn: bigint): Promise<boolean> => {
       if (!user) return false;
       setStatus({ kind: "buying", stepIdx: 4 });
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
       // buyYT splits `syIn` SY → `syIn` PT + `syIn` YT, then sells the PT for
       // SY at the current pool rate. Expected SY back ≈ syIn · ptRate where
       // ptRate < 1 pre-expiry. Apply slippage to that **expected** value, NOT

@@ -21,7 +21,7 @@
  */
 import { useState } from "react";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
-import { ADDRESSES, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
+import { ADDRESSES, isDeployed } from "@/lib/addresses";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 
 const erc20AllowanceAbi = [
@@ -76,7 +76,6 @@ export function ApprovalsCard({ user }: Props) {
 
   const peripheryDeployed = isDeployed(ADDRESSES.periphery);
   const marketDeployed = isDeployed(ADDRESSES.market);
-  const syShareDeployed = isDeployed(ADDRESSES.syAdapter);
 
   // Read PT + LP addresses from market (we don't have these in addresses.ts —
   // they're per-market HTS tokens). Then read allowances.

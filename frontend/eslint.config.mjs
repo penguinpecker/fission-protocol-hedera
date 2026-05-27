@@ -15,4 +15,25 @@ export default [
       "public/**",
     ],
   },
+  {
+    rules: {
+      // Standard convention: leading-underscore vars/args are intentionally
+      // unused (placeholder params, "captured but not consumed" locals).
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          destructuredArrayIgnorePattern: "^_",
+        },
+      ],
+      // Disabled: the markets/profile pages use `// label` strings as a
+      // styled UI element (rendered as visible header text). These are
+      // not accidental JS comments leaking into JSX.
+      "react/jsx-no-comment-textnodes": "off",
+      // Disabled: stylistic only — `'` and `&apos;` render identically.
+      "react/no-unescaped-entities": "off",
+    },
+  },
 ];

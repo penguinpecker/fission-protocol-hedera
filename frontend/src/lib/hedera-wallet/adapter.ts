@@ -548,6 +548,10 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
 
   // Lazy-load the SDK so it doesn't sit in the initial bundle.
   const sdk = await import("@hashgraph/sdk");
+  // AccountId is referenced only via `typeof AccountId` in InstanceType<>
+  // below — TypeScript needs it in scope as a value but ESLint's
+  // no-unused-vars doesn't track typeof-only uses.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { ContractExecuteTransaction, ContractFunctionParameters, ContractId, Hbar, AccountId, Client } = sdk;
   // bignumber.js is the SDK's accepted form for uint256/uint128 params.
   const { default: BigNumber } = await import("bignumber.js");

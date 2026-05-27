@@ -190,7 +190,6 @@ async function fetchHbarUsd(): Promise<number | null> {
 // ─────────────────────────────── V3 math ───────────────────────────────
 
 const Q96 = 2n ** 96n;
-const Q128 = 2n ** 128n;
 const U256_MAX = (1n << 256n) - 1n;
 
 /**

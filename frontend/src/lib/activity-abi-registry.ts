@@ -287,15 +287,14 @@ export function pickPrimaryArg(
   contractAddress: string,
 ): PrimaryArg | null {
   if (!args) return null;
-  const fromContract = (a: number = 0): `0x${string}` =>
-    contractAddress.toLowerCase() as `0x${string}` & { __markerArg?: typeof a };
+  const fromContract = (_a: number = 0): `0x${string}` =>
+    contractAddress.toLowerCase() as `0x${string}` & { __markerArg?: typeof _a };
 
   // Routes need the market address to find the PT/YT/LP token tied to this
   // call; for v1 we have one market only, so its tokens live in TOKEN_INFO
   // and pickPrimaryArg can return a `kind`-coded address. If we add more
   // markets later this should look up market→token via a separate map.
   const PT = PT_TOKEN as `0x${string}`;
-  const YT = YT_TOKEN as `0x${string}`;
   const LP = LP_TOKEN as `0x${string}`;
   const SY_SHARE = SY_SHARE_TOKEN as `0x${string}`;
 

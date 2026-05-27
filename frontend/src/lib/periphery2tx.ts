@@ -14,7 +14,7 @@
  */
 
 import { fissionPeripheryAbi } from "./abis-write";
-import { ADDRESSES, MAX_HTS_APPROVE } from "./addresses";
+import { ADDRESSES } from "./addresses";
 
 const NO_DEADLINE = 0n;
 
@@ -22,6 +22,9 @@ export type StepCallback = (step: 1 | 2, label: string, txHash?: string) => void
 
 export interface WriteAdapter {
   address: `0x${string}` | null;
+  // `op` is a discriminated union over many kinds defined in the adapter
+  // (writePeriphery, approveErc20, etc.); the adapter narrows internally.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   write: (op: any) => Promise<{ txHash: string }>;
   waitForReceipt?: (txHash: string) => Promise<void>;
 }

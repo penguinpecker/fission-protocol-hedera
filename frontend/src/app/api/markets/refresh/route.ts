@@ -8,10 +8,10 @@
 // header automatically). In dev, set CRON_SECRET locally to call manually.
 
 import { NextResponse, type NextRequest } from "next/server";
-import { createPublicClient, http, parseAbi } from "viem";
+import { createPublicClient, http } from "viem";
 import { hederaMainnet } from "@/lib/chains";
 import { ADDRESSES, isDeployed } from "@/lib/addresses";
-import { factoryAbi, marketAbi, erc20Abi, syAbi } from "@/lib/abis";
+import { factoryAbi, marketAbi, erc20Abi } from "@/lib/abis";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 
 // Rewards-bearing SY adapters. The current live one + every retired one so
