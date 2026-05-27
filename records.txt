@@ -870,3 +870,47 @@ Result:
   Net HBAR gained: 1,152.53 HBAR ≈ $98.61 at $0.0855/HBAR
 
 Script: scripts/unwind-to-hbar.mjs (driven by NEW_DEPLOYER_KEY).
+
+═══════════════════════════════════════════════════════════════════════════════
+CANONICAL MARKET LP TOP-UP 2026-05-28 (~04:30 IST)
+═══════════════════════════════════════════════════════════════════════════════
+
+User: "add 1,000 HBAR to the canonical market." Pool was tiny (~$50 backing,
+brutal slippage for trades >$5). Goal: deepen for early users.
+
+Path:
+  1. Periphery.setMaxTradeBps(2000)  // raise X-3 cap 5% → 20%      ✓
+  2. Periphery.zapHbarToSy(canonical, op, deadline) {value: 1000 HBAR}  ✓
+     → operator received 1,453,000,000 raw SY shares (1,453 SY)
+  ---- buySyForLp attempt would have failed: AMM swap portion (726 SY)
+       exceeds totalPt (581) of pre-add pool. Switched to manual path: ----
+  3. market.split(726.5 SY) → 726.5 PT + 726.5 YT                  ✓
+  4. shareToken.approve(market, int64.max)                          ✓
+  5. PT.approve(market, int64.max)                                  ✓
+  6. market.addLiquidity(726.5 SY, 726.5 PT, 0, operator)           ✓
+  7. Periphery.setMaxTradeBps(500)  // restore default              ✓
+
+Result (canonical market):
+  totalSy:  590.81 → 1,317.31  (+726.5,  +123%)
+  totalPt:  581.56 → 1,296.68  (+715.1,  +123%)
+  LP supply: 586.60 → 1,307.92  (+721.3,  +123%)
+  Operator's LP: 586.60 → 1,307.92 (still 100% owner)
+
+Pool size roughly 2.23x. Now supports ~$10-20 trades smoothly; tracks
+total backing of ~$110-130 vs prior ~$50.
+
+Operator residual after:
+  HBAR:        264 → ~245 (gas)
+  SY-shares:   2,761 → 1,308  (used 1,453 of the 1,453 zapped; original
+                              1,308 loose still held for flexibility)
+  PT (loose):  0.08 → 11.46  (curve refund from addLiquidity)
+  YT (loose):  581.64 → 1,308.14  (PT/YT pair from split)
+  LP:          586.60 → 1,307.92
+
+Scripts: scripts/add-canonical-lp.mjs + scripts/finish-canonical-lp.mjs.
+The first attempted buySyForLp but reverted (cap), zapHbarToSy still
+succeeded so the second script picked up from there with the manual
+split+addLiquidity path.
+
+Pipeline: post-push watchdog will verify Vercel build green (per the
+"deploy a local agent to verify after push" rule).
