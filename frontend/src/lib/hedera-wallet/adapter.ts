@@ -740,33 +740,32 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
         2_000_000,
       );
     case "addLiquidity":
-      // ActionRouter v3 fixes the SY-share typing bug — Add LP routes through
-      // the router again (matches Remove LP). Approvals must be on SY-share
-      // + PT toward the router, not the market.
+      // Post-rebuild 2026-05-27: market.addLiquidity directly — Periphery v3
+      // exposes buySyForLp (AMM-mediated) for the HBAR-in path but no
+      // proportional helper for users who already hold SY+PT. User must
+      // approve SY-share + PT toward the MARKET (not Periphery).
       return exec(
-        op.router,
-        "addLiquidityProportional",
+        op.market,
+        "addLiquidity",
         new ContractFunctionParameters()
-          .addAddress(op.market)
           .addUint256(toBN(op.syIn))
           .addUint256(toBN(op.ptIn))
           .addUint256(toBN(op.minLpOut))
-          .addAddress(op.receiver)
-          .addUint256(toBN(op.deadline)),
+          .addAddress(op.receiver.replace(/^0x/, "")),
         0,
         4_000_000,
       );
     case "removeLiquidity":
+      // Post-rebuild 2026-05-27: market.removeLiquidity directly. Burns LP
+      // from msg.sender (no allowance needed — internal _burnLp).
       return exec(
-        op.router,
-        "removeLiquidityProportional",
+        op.market,
+        "removeLiquidity",
         new ContractFunctionParameters()
-          .addAddress(op.market)
           .addUint256(toBN(op.lpIn))
           .addUint256(toBN(op.minSyOut))
           .addUint256(toBN(op.minPtOut))
-          .addAddress(op.receiver)
-          .addUint256(toBN(op.deadline)),
+          .addAddress(op.receiver.replace(/^0x/, "")),
         0,
         4_000_000,
       );

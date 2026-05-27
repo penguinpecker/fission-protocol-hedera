@@ -1059,7 +1059,11 @@ function HbarInput({
 }) {
   // Force raw (HBAR) mode if no price feed.
   const effective = hbarUsd === undefined ? "raw" : inputMode;
-  const tooSmall = hbarAmount > 0 && hbarAmount < 1;
+  // Periphery reserves 5 HBAR (v3NpmFeeBudget) for the V3 NPM mint fee.
+  // Any HBAR ≤ 5 produces effective-zap = 0 → AmountZero revert. Block ≤ 6
+  // HBAR in the UI so the user sees a clear floor instead of a cryptic
+  // on-chain revert.
+  const tooSmall = hbarAmount > 0 && hbarAmount < 6;
 
   return (
     <label className="mb-3 block">
@@ -1164,7 +1168,7 @@ function HbarInput({
 
       {tooSmall && (
         <span className="mt-1 block font-mono text-[10px] font-medium text-warning">
-          Tiny amounts get eaten by the 5 HBAR NPM fee — commit ≥1 HBAR.
+          5 HBAR is reserved for the V3 NPM mint fee. Commit ≥6 HBAR so any actually lands in the pool.
         </span>
       )}
     </label>

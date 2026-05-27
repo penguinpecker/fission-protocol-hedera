@@ -121,7 +121,9 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
     setHbarError(null);
   };
 
-  const tooSmall = hbarAmount > 0 && hbarAmount < 1;
+  // Periphery reserves 5 HBAR (v3NpmFeeBudget) — block ≤6 HBAR so users
+  // see a clear floor instead of an AmountZero revert.
+  const tooSmall = hbarAmount > 0 && hbarAmount < 6;
   const isPending = isSubmitting || adapter.isWritePending;
   const isActive = isPending || isConfirmingFinal;
   const isDone = isConfirmedFinal;
@@ -302,7 +304,7 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
           </div>
           {tooSmall && (
             <span className="mt-1 block font-mono text-[10px] font-medium text-warning">
-              Tiny amounts get eaten by the 5 HBAR NPM fee — commit ≥1 HBAR.
+              5 HBAR is reserved for the V3 NPM mint fee. Commit ≥6 HBAR so any actually lands in the pool.
             </span>
           )}
           {hbarError && (
