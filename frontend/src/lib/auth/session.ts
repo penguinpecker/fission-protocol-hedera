@@ -1,27 +1,30 @@
 // Server-side session: a JWT signed with OUR OWN secret, stored as an
 // httpOnly cookie. Independent of Supabase Auth.
 //
-// Why not Supabase Auth's JWT? Supabase doesn't expose the project's JWT
-// secret programmatically (dashboard-only). We sign with our own secret +
-// authorize per-route via this helper. RLS on user-scoped tables stays
-// configured (defense in depth): API routes use the service-role client
-// (which bypasses RLS) and enforce per-user filtering in code.
-//
-// Top-tier hardening:
+// Hardened design (2026-05-28+):
 //   - HS256 with a 32-byte random secret loaded from SESSION_SECRET env.
-//     The .env.local generator picked it via crypto.randomBytes(32).
+//   - JWT carries `sub` = lowercased EVM address, `siwe_at` = sign-in ts,
+//     and `jti` = UUID identifier indexed in public.sessions.
+//   - signSession() inserts a public.sessions row at sign time so revoke
+//     paths (logout, admin) can flip revoked_at without rotating the
+//     global SESSION_SECRET.
+//   - verifySession() does TWO checks: (a) JWT signature + claims valid,
+//     (b) the jti exists in public.sessions and revoked_at IS NULL.
+//   - Old tokens without a jti claim are rejected (forces re-login once
+//     after this migration deploys — only the operator currently has any
+//     live session, so impact is one re-login).
+//   - Logout / per-session revocation: revokeSession(jti) sets revoked_at.
 //   - Cookie flags: HttpOnly, Secure (in prod), SameSite=Lax, Path=/.
-//   - 7-day TTL; the cookie expiry matches the JWT exp.
-//   - JWT carries `sub = lowercased EVM address` and `siwe_at` (sign-in
-//     timestamp) so we can spot suspicious replay activity later.
-//   - getSession() returns null on any validation error — never throws to
-//     callers, so downstream "if (!session) 401" stays uniform.
-//   - Cookies are read directly from the Next.js request context; we never
-//     trust an Authorization header for the wallet identity.
+//   - 7-day TTL; cookie expiry matches the JWT exp.
+//
+// One additional Supabase round-trip per authenticated request — cheap
+// compared to the gas/RPC fan-out the protocol already does.
 
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import type { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
+import { createServiceRoleClient } from "@/lib/supabase/server";
 
 export const SESSION_COOKIE = "fission_session";
 const SEVEN_DAYS_S = 7 * 24 * 60 * 60;
@@ -43,37 +46,93 @@ export interface Session {
   address: string; // lowercased EVM hex
   siwe_at: number;
   exp: number;
+  jti: string;
 }
 
-/** Sign a session JWT for `address`. Address must already be lowercased. */
-export async function signSession(address: string): Promise<string> {
+/**
+ * Sign a session JWT for `address` and register it in public.sessions so it
+ * can be individually revoked later. Address must already be lowercased.
+ *
+ * Returns the encoded JWT. Caller should set it as a cookie via
+ * attachSessionCookie().
+ */
+export async function signSession(address: string, opts?: { userAgentSummary?: string | null }): Promise<string> {
   if (!/^0x[a-f0-9]{40}$/.test(address)) {
     throw new Error("signSession: address must be lowercased EVM hex");
   }
   const now = Math.floor(Date.now() / 1000);
-  return new SignJWT({ siwe_at: now })
+  const jti = randomUUID();
+  const expSec = now + SEVEN_DAYS_S;
+
+  // Persist BEFORE issuing the cookie so a downstream verify can immediately
+  // find the row. On insert failure we throw — better to fail the login than
+  // hand out a token that can't be revoked.
+  const supa = createServiceRoleClient();
+  const { error } = await supa.from("sessions").insert({
+    jti,
+    address,
+    expires_at: new Date(expSec * 1000).toISOString(),
+    user_agent_summary: opts?.userAgentSummary ?? null,
+  });
+  if (error) {
+    throw new Error(`signSession: failed to persist session row: ${error.message}`);
+  }
+
+  return new SignJWT({ siwe_at: now, jti })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(address)
     .setIssuedAt(now)
-    .setExpirationTime(now + SEVEN_DAYS_S)
+    .setExpirationTime(expSec)
     .sign(getSecret());
 }
 
-/** Verify a session JWT. Returns null on any error. */
+/**
+ * Verify a session JWT. Returns null on any validation error or if the
+ * matching sessions-table row is missing/revoked.
+ */
 export async function verifySession(token: string | undefined): Promise<Session | null> {
   if (!token) return null;
+  let address: string;
+  let jti: string;
+  let siwe_at: number;
+  let exp: number;
   try {
     const { payload } = await jwtVerify(token, getSecret(), { algorithms: ["HS256"] });
-    const address = payload.sub;
-    if (typeof address !== "string" || !/^0x[a-f0-9]{40}$/.test(address)) return null;
-    return {
-      address,
-      siwe_at: typeof payload.siwe_at === "number" ? payload.siwe_at : 0,
-      exp: typeof payload.exp === "number" ? payload.exp : 0,
-    };
+    const sub = payload.sub;
+    const j = payload.jti;
+    if (typeof sub !== "string" || !/^0x[a-f0-9]{40}$/.test(sub)) return null;
+    if (typeof j !== "string" || j.length === 0) return null; // pre-revocation tokens have no jti
+    address = sub;
+    jti = j;
+    siwe_at = typeof payload.siwe_at === "number" ? payload.siwe_at : 0;
+    exp = typeof payload.exp === "number" ? payload.exp : 0;
   } catch {
     return null;
   }
+
+  // Server-side revocation check.
+  const supa = createServiceRoleClient();
+  const { data, error } = await supa
+    .from("sessions")
+    .select("revoked_at, expires_at, address")
+    .eq("jti", jti)
+    .maybeSingle();
+  if (error || !data) return null;
+  if (data.revoked_at !== null) return null;
+  if (data.address.toLowerCase() !== address) return null; // jti was reissued for someone else? hard reject
+  if (new Date(data.expires_at).getTime() < Date.now()) return null;
+
+  return { address, siwe_at, exp, jti };
+}
+
+/** Revoke a specific session by jti. Idempotent — already-revoked is OK. */
+export async function revokeSession(jti: string): Promise<void> {
+  const supa = createServiceRoleClient();
+  await supa
+    .from("sessions")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("jti", jti)
+    .is("revoked_at", null);
 }
 
 /** Read + validate the session cookie. For use in route handlers / RSCs. */
