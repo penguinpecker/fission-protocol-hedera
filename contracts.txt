@@ -1,67 +1,100 @@
 Fission Protocol — Hedera Mainnet (chain 295)
-Source: deployments/295.json   Last refreshed: 2026-05-25
+Source: deployments/295.json   Last refreshed: 2026-05-28
 
 ────────────────────────────────────────────────────────────────────────────
- Live contracts (current set — Ed25519-fixed redeploy 2026-05-22)
+ Live contracts (current — 2026-05-27 clean-slate redeploy + audit pass-2
+ + 2026-05-28 server-side session revocation)
 ────────────────────────────────────────────────────────────────────────────
 
 Core
-- Factory                 0.0.10488654   https://hashscan.io/mainnet/contract/0.0.10488654
-- StandardDeployer        0.0.10488646   https://hashscan.io/mainnet/contract/0.0.10488646
-- RewardsDeployer         0.0.10488651   https://hashscan.io/mainnet/contract/0.0.10488651
-- ActionRouter v3         0.0.10477449   https://hashscan.io/mainnet/contract/0.0.10477449
-
-Zaps  (HBAR ⇄ protocol — one-tx UX)
-- FissionZap   HBAR→SY    0.0.10475908   https://hashscan.io/mainnet/contract/0.0.10475908
-- MegaZap      HBAR→PT/YT/LP  0.0.10477452  https://hashscan.io/mainnet/contract/0.0.10477452
-- FissionUnzap PT/SY/LP→HBAR  0.0.10492515  https://hashscan.io/mainnet/contract/0.0.10492515
+- FissionFactory          0.0.10495346   0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c
+- StandardMarketDeployer  0.0.10495325   0xdbDf8da50240F21DFc1ed6c44e3a5806AFDcC9bF
+- RewardsMarketDeployer   0.0.10495326   0x63A75EaaB07feeBc48226A6eaF3Cbb057614e537
+- FissionPeriphery v3     0.0.10495793   0x0000000000000000000000000000000000A02731
+  (Consolidates the previous FissionZap + MegaZap + FissionUnzap +
+   FissionGateway + ActionRouter. Single 2-tx Buy/Sell flow.)
 
 Lens / read-helper
-- FissionLens             0.0.10489822   https://hashscan.io/mainnet/contract/0.0.10489822
+- FissionLens             0.0.10495350   0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969
 
-SY adapters  (reused across redeploys)
-- SY SaucerSwap V2 LP     evm  0x00000000000000000000000000000000009fb089
-- SY HBARX                evm  0x80728fbad79974e428c50dc548853ff858d9430c
+SY adapter (current, with sweepHbar X-2 fix)
+- SaucerSwapLPYieldSource 0.0.10496154   0x0000000000000000000000000000000000A0289A
 
-Market 0 — SaucerSwap V2 LP, 90D-FIX (expiry 2026-08-19T22:25:40Z)
-- Market                  0.0.10488661   evm  0x36ed8f34c9bfc0004f107153b1a16099f8910b58
-- PT  fPT-SS-V2-90D-FIX   0.0.10488662   evm  0x0000000000000000000000000000000000a00b56
-- YT  fYT-SS-V2-90D-FIX   0.0.10488663   evm  0x0000000000000000000000000000000000a00b57
-- LP  fLP-SS-V2-90D-FIX   0.0.10488664   evm  0x0000000000000000000000000000000000a00b58
+Live market — USDC/WHBAR, expiry 2026-08-25
+- Market                  0.0.10496157   0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f
+- SY share token          0.0.10496155   0x0000000000000000000000000000000000A0289B
+- PT  (USDC-WHBAR-2026-08-25-v3)
+                          0.0.10496170   0x0000000000000000000000000000000000A028Aa
+- YT                      0.0.10496171   0x0000000000000000000000000000000000A028aB
+- LP                      0.0.10496172   0x0000000000000000000000000000000000A028ac
 
-Governance  (operator-keyed today; multisig handoff at the very end)
-- ThresholdAccount (2/2)  0.0.10469822   evm  0x00000000000000000000000000000000009fc1be
-- TimelockController      0.0.10469824   evm  0x00000000000000000000000000000000009fc1c0
-- Operator (deployer)     0.0.10463169   evm  0x32e8fd8434badbcc5d79e70e1fe0d16f86a7ab90
-- Cosigner (ed25519)      0.0.10457309   evm  0x00000000000000000000000000000000009f90dd
+Governance  (operator-keyed today; multisig handoff is the final step)
+- Timelock (48h)          0.0.10469824   0x00000000000000000000000000000000009fc1c0
+- 2-of-2 ThresholdKey     0.0.10469822   0x00000000000000000000000000000000009fc1be
+- Operator (deployer)     0.0.10495279   0xa7e128326861d2eedc68ed82e2a5eb5f653a11a7
+
+External (Hedera system / SaucerSwap V2)
+- USDC                    0.0.456858     0x000000000000000000000000000000000006f89A
+- WHBAR (HTS token)       0.0.1456986    0x0000000000000000000000000000000000163b5A
+- WHBAR wrapper contract  0.0.1456985    0x0000000000000000000000000000000000163b59
+- SaucerSwap V2 Router    0.0.3949434    0x00000000000000000000000000000000003c437A
+- SaucerSwap V2 Factory   0.0.3947857    0x00000000000000000000000000000000003c3951
+- USDC/WHBAR 0.15% pool                  0xC5B707348dA504E9Be1bD4E21525459830e7B11d
+- V3 NonfungiblePositionManager
+                          0.0.4053433    0x00000000000000000000000000000000003DDbb9
 
 ────────────────────────────────────────────────────────────────────────────
- Abandoned but on-chain  (positions still withdrawable; new mints disabled)
+ Abandoned but on-chain (drained 2026-05-27; PT still redeemable Aug-25)
 ────────────────────────────────────────────────────────────────────────────
 
-Old market (Ed25519 reward-accrual bug — see audits/internal/SECURITY_REVIEW_ED25519_BAL_2026-05-22.md)
-- Market 0 (v1)           evm  0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d
-- Other discarded markets — see deployments/295.json `abandoned.old_markets`
+Pre-canonical market iterations from the 2026-05-27 cascade
+- Market 0x3aCDD09b5850F551D9F2b4FE949439c2499f86C1  (anchor=1.0 dead)
+- Market 0x556938AcfDa70dF2A32ea97e6B6862B874d93ef9
+- Market 0x15DeA525b88E18c4696CCd358979477F7F52d4BE
+- Market 0xA9040C794bbF74D7c7d9D095aA68a64746e7a390  (zero-state)
+- Market 0xb50372dA60888975696CF6d3b6899d367805444b  (zero-state)
 
-Older zaps / routers
-- ActionRouter v1         evm  0x00000000000000000000000000000000009fad96   (max_auto=0 bug)
-- FissionZap v1           evm  0x00000000000000000000000000000000009fd97e   (wei vs tinybar bug)
+Pre-rebuild Periphery iterations (replaced by FissionPeriphery v3)
+- Periphery v1            0x8ce95cef2c521df83f346b579de84fa4aa8f50aa
+- Periphery v2            0x0000000000000000000000000000000000a025c1
+
+Pre-rebuild SY adapter (no sweepHbar; 6.26 HBAR permanently stuck inside)
+- SY v1                   0x0000000000000000000000000000000000a02585
+
+Pre-rebuild app contracts (deprecated by Periphery v3 consolidation)
+- ActionRouter v3         0.0.10477449
+- FissionZap              0.0.10475908
+- MegaZap                 0.0.10477452
+- FissionUnzap            0.0.10492515
+- FissionGateway          (multiple iterations)
+- Factory (pre-rebuild)   0.0.10488654
+- Pre-rebuild Market 0    0.0.10488661  (0x36ed8f34c9bfc0004f107153b1a16099f8910b58)
+- Pre-rebuild Market v1   0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d  (Ed25519 reward-accrual bug)
 
 ────────────────────────────────────────────────────────────────────────────
  Off-chain services
 ────────────────────────────────────────────────────────────────────────────
 
 - Frontend                https://www.fissionp.com   (Vercel: penguinpeckers-projects/fission-protocol)
-- Vercel cron             /api/markets/refresh @ 00:00 UTC daily
-- Railway cron-indexer    polls Mirror Node every 60s → Supabase activity_log
-- Supabase project        atjsjwebftwbaellnuuy.supabase.co (ap-south-1)
+- Railway fission-cache-cron   POSTs /api/markets/refresh every 60s
+- Railway fission-indexer      polls Mirror Node every 60s → Supabase activity_log
+- Supabase project        atjsjwebftwbaellnuuy.supabase.co  (ap-south-1)
+                          public.users + .activity_log + .markets_cache + .auth_nonces + .sessions
 
 ────────────────────────────────────────────────────────────────────────────
  Notes
 ────────────────────────────────────────────────────────────────────────────
 
-- Operator's positions on the old market remain fully withdrawable.
-- Sourcify verification: simple contracts verify; deployer-pattern + embedded-
-  bytecode contracts must use HashScan UI or disable via_ir.
+- Operator's positions on the abandoned markets remain withdrawable. SY-shares
+  redeemed 2026-05-27 for $78 immediate + ~$1,448 PT face value pending
+  2026-08-25 redeemAfterExpiry.
+- Sourcify verification: simple contracts verify via `sourcify.dev/server`;
+  deployer-pattern + embedded-bytecode contracts must use HashScan UI or
+  disable via_ir.
 - All HTS allowance approvals use int64.max = 2^63-1 (not uint256.max).
-- FissionUnzap is permissionless and stateless — no admin, no upgrade key.
+- HBAR-EVM conversion: Hashio msg.value is in TINYBARS (1e8), not wei (1e18).
+- SIWE sessions: HS256 JWT with `jti` claim + public.sessions revocation
+  table. Logout revokes server-side; captured cookies die at logout, not TTL.
+
+For the full forensic history (every cascade iteration, audit fix, drain
+step), see records.txt + deployments/295.json at repo root.

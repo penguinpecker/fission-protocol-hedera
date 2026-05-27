@@ -48,26 +48,28 @@
                           │ multi-step user flows
                           │
               ┌─────────────────────────────────────────┐
-              │   ActionRouter (UUPS, timelock-owned)   │
-              │   - depositAndSplit                     │
-              │   - swapExactSyForPt / swapExactPtForSy │
-              │   - buyYT (SY → split → keep YT, sell PT for SY refund) │
-              │   - addLiquidityProportional / remove   │
-              │   - redeemAfterExpiryAndUnwrap          │
-              │   - unwrapSY                            │
-              │   v1.1 backlog: HBAR↔WHBAR auto-wrap,   │
-              │                 swapExactYtForSy        │
-              │                 (flash-swap pattern),   │
-              │                 one-tx claim+unwrap     │
-              │                 (needs claimYieldFor)   │
+              │   FissionPeriphery v3 (owner-only       │
+              │     transferOwnership → 48h Timelock)   │
+              │   Deterministic 2-tx flows:             │
+              │   - zapHbarToSy   → buySyForPt          │
+              │   - zapHbarToSy   → buySyForYt          │
+              │   - zapHbarToSy   → buySyForLp          │
+              │   - sellPtForSy   → unzapSyToHbar       │
+              │   - sellYtForSy   → unzapSyToHbar       │
+              │   - sellLpForSy   → unzapSyToHbar       │
+              │   X-3/X-4/X-5 audit hardenings live:    │
+              │     per-side _checkSize, registeredSy   │
+              │     adapter gate, isProtectedToken      │
+              │     rescue gate.                        │
               └─────────────────────────────────────────┘
                           │
                           ▼
               ┌─────────────────────────────────────────┐
               │   SY adapters  (Pendle-superset 5115)   │
-              │   - SY_HBARX           (Stader LST)     │
-              │   - SY_SaucerSwapV1LP  (HBAR-USDC LP)   │
-              │   - SY_BonzoUSDC       (lending)        │
+              │   - SaucerSwapLPYieldSource v2          │
+              │     (USDC/WHBAR V3 NPM-backed)          │
+              │     - sweepHbar() admin recovery        │
+              │     - maxAutomaticTokenAssociations=-1  │
               └─────────────────────────────────────────┘
                           │
                           ▼

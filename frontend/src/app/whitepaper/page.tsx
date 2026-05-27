@@ -173,18 +173,15 @@ export default function WhitepaperPage() {
 
         <Section title="High-level architecture">
           <p>
-            Nine contracts on Hedera mainnet, plus the AMM math:
+            Six contracts on Hedera mainnet, plus the AMM math:
           </p>
           <Arch
             rows={[
               ["FissionFactory", "Whitelists yield sources, deploys new markets per maturity date."],
-              ["FissionZap", "One-tx HBAR → SY. Handles the WHBAR wrap + USDC swap + V3 deposit."],
-              ["MegaZap", "One-tx HBAR → PT / YT / LP. Wraps the FissionZap + ActionRouter atomically."],
-              ["FissionUnzap", "One-tx PT / SY / LP → native HBAR. The exit counterpart of MegaZap."],
-              ["SY adapter", "Wraps the underlying yield source (V3 LP NFT). Mints share tokens."],
-              ["Market", "The logit-curve AMM where PT/YT/LP get minted and traded."],
-              ["ActionRouter v3", "Single entry point for swap / mint LP / redeem flows."],
-              ["FissionLens", "Read-only helper for batched on-chain reads (positions, market state)."],
+              ["FissionPeriphery", "Single user-facing entry point. Handles every Buy/Sell/Add-LP/Remove-LP flow as a deterministic 2-tx sequence (e.g. zapHbarToSy → buySyForPt). Consolidates what used to be FissionZap + MegaZap + FissionUnzap + Gateway + Router."],
+              ["SY adapter", "Wraps the underlying yield source (Uniswap-V3-style LP NFT). Mints SY share tokens. Includes sweepHbar() so refunded HBAR is always recoverable."],
+              ["Market", "The logit-curve AMM where PT/YT/LP get minted and traded. Post-expiry auto-redeems LP's PT share so exits don't race PT redeemers."],
+              ["FissionLens", "Read-only helper for batched on-chain reads (positions, market state, rates)."],
               ["Timelock + Threshold", "2-of-2 keys, 48-hour delay, govern any protocol changes."],
             ]}
           />

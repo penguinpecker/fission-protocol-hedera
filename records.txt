@@ -1,3 +1,33 @@
+═══════════════════════════════════════════════════════════════════════════════
+ CURRENT STATE — 2026-05-28
+═══════════════════════════════════════════════════════════════════════════════
+ This document is an append-only forensic log of every step from initial
+ rebuild planning forward. For canonical "what's live right now", see:
+   - contracts.txt   (current address list)
+   - README.md       (current trade surface + Sourcify links)
+   - deployments/295.json   (machine-readable source of truth)
+
+ Headline current-live set (Hedera mainnet, chain 295):
+   FissionFactory          0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f's factory
+                           = 0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c
+   FissionPeriphery v3     0x0000000000000000000000000000000000A02731
+   FissionLens             0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969
+   SaucerSwapLPYieldSource 0x0000000000000000000000000000000000A0289A  (with sweepHbar)
+   Live market             0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f
+                           USDC-WHBAR, expiry 2026-08-25
+
+ Operator currently holds 100% LP of the canonical market. Pool size
+ ~1,308 LP (≈$110-130 backing). All 5 orphan-cascade markets are drained
+ to zero LP; operator-side PT pending 2026-08-25 redeemAfterExpiry.
+
+ Sessions are HS256 JWTs with `jti` claim + public.sessions revocation
+ table (2026-05-28 hardening). Logout writes server-side revocation;
+ captured cookies die at logout, not at 7-day TTL.
+
+ Everything below is the historical play-by-play of how we got here.
+═══════════════════════════════════════════════════════════════════════════════
+
+
 CLEAN-SLATE REDEPLOY PLAN — 2026-05-27
 Last live commit at time of writing: 2624107 (main)
 
@@ -914,3 +944,55 @@ split+addLiquidity path.
 
 Pipeline: post-push watchdog will verify Vercel build green (per the
 "deploy a local agent to verify after push" rule).
+
+═══════════════════════════════════════════════════════════════════════════════
+SESSION REVOCATION HARDENING 2026-05-28
+═══════════════════════════════════════════════════════════════════════════════
+
+Bug discovered during the post-RLS auth E2E test: sessions were stateless
+HS256 JWTs with no server-side revocation. Logout cleared the browser cookie
+but a captured cookie remained cryptographically valid for the full 7-day TTL
+— /api/auth/me with a post-logout cookie still returned 200.
+
+Fix (commit 5c23a74):
+  - New public.sessions table (jti uuid pk, address, issued_at, expires_at,
+    revoked_at, user_agent_summary). RLS service-role-only.
+  - 3 indexes: jti partial (revoked_at IS NULL), address partial, expires.
+  - session.ts: signSession() generates UUID jti, INSERTs row before
+    issuing the cookie. verifySession() additionally queries the
+    sessions table — rejects if missing/revoked/expired/address-mismatch.
+  - /api/auth/logout extracts current jti, sets revoked_at, then clears
+    the cookie.
+  - Pre-jti tokens (older sessions) are now rejected — forces one re-login
+    for any active user. Only operator had a session, impact = one re-login.
+
+End-to-end verification:
+  verify status            : 200
+  /me before logout        : 200
+  /me AFTER logout (same cookie): 401  ← critical, was 200 pre-fix
+  Supabase row             : revoked_at populated immediately after logout
+
+Cost: +1 Supabase round-trip per authenticated request (~5-10ms).
+
+Migration: supabase/migrations/20260528000000_add_sessions_revocation.sql
+applied via Management API. Schema + indexes + RLS + grants verified.
+
+═══════════════════════════════════════════════════════════════════════════════
+DOC CLEANUP 2026-05-28 (per user: replace stale contract refs everywhere)
+═══════════════════════════════════════════════════════════════════════════════
+
+  - records.txt: prepended "CURRENT STATE" header so canonical addresses
+    are visible without parsing the whole forensic log.
+  - contracts.txt: full rewrite. Was describing the 2026-05-22 Ed25519
+    redeploy as "current"; now describes the 2026-05-27 + 2026-05-28
+    canonical set. Abandoned set explicitly listed.
+  - frontend/src/app/whitepaper/page.tsx: "Nine contracts… FissionZap +
+    MegaZap + FissionUnzap + ActionRouter v3" → "Six contracts…
+    FissionPeriphery (single consolidated entry point)". User-facing
+    whitepaper now describes the actual deployed shape.
+  - docs/ARCHITECTURE.md: ASCII architecture diagram updated. Replaced
+    the ActionRouter UUPS box with the FissionPeriphery v3 box; replaced
+    the "SY_HBARX / SY_BonzoUSDC" speculative SY adapter list with the
+    actually-deployed SaucerSwapLPYieldSource v2.
+  - README.md: already current per earlier work (2026-05-27 commit
+    6771f0c). No edits this pass.
