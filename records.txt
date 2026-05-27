@@ -520,3 +520,64 @@ FINAL BUG STATUS (X-1 .. X-11):
 
 ALL ACTIONABLE FIXES SHIPPED. X-7 + X-11 remaining concerns are by-design
 or unfixable-without-cascade, with mitigations applied where possible.
+
+═══════════════════════════════════════════════════════════════════════
+POST-CASCADE CLEANUP  (2026-05-27, items #2/#4/#5/#6/#7/#8)
+═══════════════════════════════════════════════════════════════════════
+
+ITEM #2 — Verify Vercel + Railway redeploys: PASS
+  Watchdog confirmed Vercel dpl 7kobydzu4 (commit 81584c1) Ready with
+  all 5 env vars baked into chunk 9609. Railway minute-cadence flowing.
+  Periphery v3 storage reads as expected: marketRegistered/registeredSyAdapter/
+  isProtectedToken all true for the live market+SY+tokens. New market
+  totalPt = totalSy = 581,638,254. SY v2 holds 5.11 HBAR stuck NPM
+  refunds — concrete demo of X-2 fix value.
+  Activity_log for operator was empty — non-blocking; indexer may need
+  backfill. Live txs visible via mirror node directly.
+
+ITEM #4 — ApprovalsCard (X-7 mitigation): SHIPPED
+  Profile sidebar now surfaces:
+    - market.isOperator(user, Periphery v3) with Revoke button
+    - SY-share / PT / LP allowance vs Periphery v3 with Revoke buttons
+  Revoke uses adapter.write({kind:"marketSetOperator"|"approveErc20"}).
+  ERC-20 approve(0) on HTS reverts (Hedera quirk) — card surfaces a
+  clarifying message and notes the standing allowance isn't exploitable.
+
+ITEM #5 — buySyForLp UI re-enabled: SHIPPED
+  ProvideLpForm.megaZapAvailable = isDeployed(ADDRESSES.periphery) (was
+  hardcoded false). HBAR-source flow is now 2-tx:
+    Tx 1: Periphery.zapHbarToSy
+    Tx 2: Periphery.buySyForLp(syIn, ptShareBps, ptOutFromSwap, ...)
+  Uses conservative ptOutFromSwap=syForPt (1:1) — undershoots safely.
+  Future improvement: Lens.previewSwapExactSyForPt binary search for
+  tighter pricing.
+
+ITEM #6 — Sourcify verification: ALL 7 VERIFIED on sourcify.dev
+  Path: forge verify-contract against https://sourcify.dev/server/
+  (Sourcify v2 endpoint), works perfectly even for via_ir contracts.
+  HashScan's own mirror (server-verify.hashscan.io) is a separate
+  Sourcify instance and does NOT auto-sync from sourcify.dev — that
+  explains the prior HTTP 500/400 failures. To get HashScan UI to
+  show "verified", a separate submission to its endpoint is needed.
+  Source is publicly verifiable at:
+    https://sourcify.dev/server/v2/contract/295/<address>
+    https://repo.sourcify.dev/contracts/full_match/295/<address>/
+  All 7 contracts (Factory, Lens, std/rwd deployers, SY v2, Market,
+  Periphery v3) report runtimeMatch=match.
+
+ITEM #7 — README + docs cleanup: SHIPPED
+  README.md "Live contracts" table replaced; trade surface rewritten
+  for 2-tx Periphery flow; Sourcify caveat updated.
+  docs/MAINNET_DEPLOY.md header block updated.
+  Footer.tsx Network links updated to current set (was pointing at
+  the dead Market 0 / Router v3 / Zap / old SY).
+
+ITEM #8 — Browser-level smoke: PARTIAL
+  opera-browser-cli open https://www.fissionp.com/markets succeeded;
+  /markets page renders, market list visible. Caught a stale-footer
+  bug (now fixed in 6771f0c). Full wallet-click flow not exercised
+  (requires interactive wallet sign-in).
+
+REMAINING (deferred by user):
+  #1 Funding gap (~2k HBAR to operator + redo addLiquidity)
+  #3 Timelock ownership handoff
