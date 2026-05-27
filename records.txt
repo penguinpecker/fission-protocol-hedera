@@ -581,3 +581,130 @@ ITEM #8 — Browser-level smoke: PARTIAL
 REMAINING (deferred by user):
   #1 Funding gap (~2k HBAR to operator + redo addLiquidity)
   #3 Timelock ownership handoff
+
+
+═══════════════════════════════════════════════════════════════════════════════
+PASS-3 WHOLE-PROJECT AUDIT (2026-05-27 evening, IST)
+═══════════════════════════════════════════════════════════════════════════════
+
+After user pushed back ("are u sure? if everything is done? check for whole
+project scope") on the post-cascade #1-#8 "done" claim, spawned parallel
+forensic agents covering contracts/, on-chain state, Supabase + indexer
+source. Surfaced 11 items below.
+
+REACT #310 (CRITICAL — landed before this pass)
+  WalletGate.tsx had useState() AFTER conditional early returns. Crashed
+  every page wrapped in <WalletGate> ( /markets/[addr] + subpages /lp /pt
+  /yt /sy, /profile) the moment wallet state transitioned. Caught via
+  opera-browser-cli console inspection.
+  Fix: move useState to top of function, before any returns. Standard
+  rules-of-hooks. Verified by downloading prod JS chunk
+  3798-fbf93ac3c8a1d41d.js and confirming all hooks are unconditional.
+  COMMIT: 4e84970 — "fix(WalletGate): React #310 hooks-rule violation"
+
+#1 — Supabase RLS hole on public.users (CRITICAL)
+  Original init.sql migration shipped `users_select_anyone` policy +
+  `grant select on users to anon`. Anon API key could SELECT * from users
+  table-wide — addresses, Twitter handles, last sign-in, sign-in count,
+  user_agent_summary of every signed-in wallet — public PII leak.
+  Frontend never reads users via anon client (all /api/* routes use
+  service role), so the lockdown has zero functional impact.
+  FIX written: supabase/migrations/20260527230000_lock_users_rls_and_nonces_cleanup.sql
+    - DROP POLICY users_select_anyone
+    - CREATE POLICY users_select_self (auth.jwt() ->> 'sub' = address)
+    - REVOKE SELECT ON users FROM anon
+  STATUS: file authored, NOT yet applied — Fission Supabase isn't
+  linked to the local CLI (only pengucrush is). User must apply via
+  Supabase Studio SQL Editor or set SUPABASE_DB_PASSWORD and run
+  `supabase db push`.
+
+#2 — Indexer stored long-zero alias, not ECDSA EVM alias (HIGH)
+  cron-indexer/index.js:229 did `address: (res.from ?? "").toLowerCase()`.
+  Mirror Node returns `from` as the long-zero alias (`0x000…00<num>`)
+  for Hedera-native accounts even when the account has an ECDSA EVM
+  alias. Frontend queries activity_log by ECDSA address → every row
+  for HashPack users was unfindable. The /api/activity route had been
+  patched with resolveAddressForms() as a *read-side* workaround; this
+  fix addresses the root cause at write time.
+  FIX: added resolveEvmAlias(addr) helper that hits Mirror
+  /accounts/{addr} once per address, caches the canonical EVM alias,
+  uses it as activity_log.address. Preserves the raw long-zero in
+  payload.from_raw for forensic traceability.
+
+#3 — Indexer market_address dead ternary (HIGH)
+  cron-indexer/index.js:235 was `market_address: c.market ? c.evm : c.evm`
+  — identical branches. Every row's market_address was set to the
+  calling contract's own EVM address (Periphery, Router, etc.) instead
+  of the actual market the user touched. UI filter-by-market was broken
+  for all router-mediated activity.
+  FIX: introduced MARKET_ARG0_SELECTORS + SY_ARG0_SELECTORS sets and
+  decodeArg0Address() helper that pulls the first calldata argument.
+  - Direct market calls (c.market === true) → c.evm
+  - Market-arg-0 selectors (buy/sell PT/YT/LP) → decoded arg-0
+  - SY-arg-0 selectors (zapHbarToSy, unzapSyToHbar) → null (action
+    isn't market-scoped; user is at the SY layer)
+  - Everything else → null
+
+#10 — Indexer tick() re-entry guard (MEDIUM)
+  setInterval(tick, INTERVAL_MS) is fire-and-forget. If one tick takes
+  longer than INTERVAL_MS, the next tick was racing knownKeys() against
+  in-flight inserts.
+  FIX: top-level isTicking flag; new tick logs "tick_skip_overlap"
+  and returns early if a previous tick is still running. Catch-up
+  happens naturally on the next interval via the cursor.
+
+#11 — Indexer cursor-based pagination (MEDIUM)
+  Was `?order=desc&limit=50` per contract per tick. On burst traffic
+  >50 tx in one INTERVAL_MS, older rows would silently fall off the
+  page and never get indexed.
+  FIX: first poll uses desc + limit (priming). Subsequent polls use
+  `timestamp=gt:<lastSeen>&order=asc&limit=N`. Cursor lives in an
+  in-memory Map keyed by contract EVM, advances on every poll regardless
+  of insert outcome. On Railway restart, the Supabase dedup key
+  (chain_id, tx_hash, event_type, address) prevents any double-insert
+  during the priming phase.
+
+#4 — ActionRouterV3.sol (V3 suffix) — DEFERRED, not a regression
+  Predates the 2026-05-27 "no version markers" rule. File is referenced
+  by FissionMegaZap (interface IActionRouterV3) and FissionUnzap (uses
+  ROUTER), both deployed legacy contracts still in the indexer watchlist
+  because users with old positions can still redeem. Renaming would
+  cascade through 4+ files. Acceptable to leave: rule is 2026-05-27
+  *onward* and these are pre-rebuild legacy. Will rename only if a
+  legacy redeploy happens.
+
+#5 — Slither baseline re-run vs Periphery v3 + SY v2 bytecode (MEDIUM)
+  See PASS-3 ITEM #5 below for outcome.
+
+#6 — isProtectedToken(SY) gap — FALSE POSITIVE
+  Audit agent reported `Periphery.isProtectedToken(0xA0289A) = false`.
+  But 0xA0289A is the SY adapter *contract*, not a token — protection
+  is irrelevant (rescueToken's IERC20.safeTransfer would fail on a
+  non-token address regardless). The actual SY share token that
+  holders own is 0xA0289B and IS protected (verified on-chain via
+  cast call). YT (0xa028aB) IS unprotected and represents a narrow
+  owner-only front-run vector during transient periphery YT custody
+  in sellYtForSy. Fix would require a Periphery v4 cascade (no
+  addProtectedToken setter exists in v3). Documented as backlog;
+  deferred since on-chain risk window is small + owner-only.
+
+#7 — records.txt update — this entry.
+
+#8 — ESLint v9 migration
+  ESLint 9.17.0 was installed but no flat config existed → `npx eslint`
+  errored with "couldn't find an eslint.config.(js|mjs|cjs) file". Lint
+  has been silently non-functional in CI/local dev.
+  FIX: frontend/eslint.config.mjs created using @eslint/eslintrc
+  FlatCompat to extend next/core-web-vitals + next/typescript, with
+  proper ignores for .next/playwright-report/test-results/node_modules.
+  Lint runs cleanly now and surfaces 37 pre-existing issues (33 errors,
+  4 warnings — all no-unused-vars + 1 explicit-any). Not blocking; lint
+  debt to be paid down separately, not part of this fix.
+
+#9 — auth_nonces cleanup primitives (LOW)
+  Same migration file as #1. Adds partial index
+  (address) WHERE consumed_at IS NULL for fast lookup; one-time DELETE
+  of stale rows. Periodic cleanup left to future /api/auth/cleanup
+  Vercel cron (gated by CRON_SECRET, route not yet built — backlog).
+
+═══════════════════════════════════════════════════════════════════════════════

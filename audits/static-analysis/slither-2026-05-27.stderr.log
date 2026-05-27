@@ -1,0 +1,445 @@
+'forge clean' running (wd: /Users/pp/Desktop/Projects/fission-protocol-hedera/contracts)
+'forge config --json' running
+'forge build --build-info --skip ./test/** ./script/** --force' running (wd: /Users/pp/Desktop/Projects/fission-protocol-hedera/contracts)
+
+Detector: arbitrary-send-eth
+FissionGateway.sellPtForHbar(address,uint256,uint256,uint256) (src/periphery/FissionGateway.sol#425-458) sends eth to arbitrary user
+	Dangerous calls:
+	- (ok,None) = address(msg.sender).call{value: hbarRedeemed}() (src/periphery/FissionGateway.sol#451)
+FissionGateway.sellLpForHbar(address,uint256,uint256,uint256) (src/periphery/FissionGateway.sol#463-509) sends eth to arbitrary user
+	Dangerous calls:
+	- (ok,None) = address(msg.sender).call{value: hbarRedeemed}() (src/periphery/FissionGateway.sol#503)
+FissionGateway.unzapSyForHbar(address,uint256,uint256) (src/periphery/FissionGateway.sol#521-543) sends eth to arbitrary user
+	Dangerous calls:
+	- (ok,None) = address(msg.sender).call{value: hbarRedeemed}() (src/periphery/FissionGateway.sol#538)
+FissionPeriphery.zapHbarToSy(address,address,uint256) (src/periphery/FissionPeriphery.sol#347-402) sends eth to arbitrary user
+	Dangerous calls:
+	- liquidity = ISYLiquidity(syAdapter).depositLiquidity{value: address(this).balance}(usdcBal,whbarBal,0,0,receiver,1) (src/periphery/FissionPeriphery.sol#387-394)
+FissionPeriphery.unzapSyToHbar(address,uint256,uint256,uint256) (src/periphery/FissionPeriphery.sol#610-637) sends eth to arbitrary user
+	Dangerous calls:
+	- (ok,None) = address(msg.sender).call{value: hbarTotal}() (src/periphery/FissionPeriphery.sol#629)
+FissionPeriphery._refundDust(address,address,address) (src/periphery/FissionPeriphery.sol#679-691) sends eth to arbitrary user
+	Dangerous calls:
+	- (ok,None) = address(msg.sender).call{value: hbarLeft}() (src/periphery/FissionPeriphery.sol#688)
+FissionUnzap.sellPtForHbar(address,uint256,uint256,address,uint256) (src/periphery/FissionUnzap.sol#183-223) sends eth to arbitrary user
+	Dangerous calls:
+	- (ok,None) = receiver.call{value: hbarRedeemed}() (src/periphery/FissionUnzap.sol#218)
+FissionUnzap.unzapSy(address,uint256,uint256,address) (src/periphery/FissionUnzap.sol#233-257) sends eth to arbitrary user
+	Dangerous calls:
+	- (ok,None) = receiver.call{value: hbarRedeemed}() (src/periphery/FissionUnzap.sol#252)
+FissionUnzap.sellLpForHbar(address,uint256,uint256,address,uint256) (src/periphery/FissionUnzap.sol#267-323) sends eth to arbitrary user
+	Dangerous calls:
+	- (ok,None) = receiver.call{value: hbarRedeemed}() (src/periphery/FissionUnzap.sol#316)
+FissionZap.zapHbarToSy(address,uint256,uint256,uint256,uint128,address) (src/periphery/FissionZap.sol#130-191) sends eth to arbitrary user
+	Dangerous calls:
+	- shares = ISYDepositLiquidity(sy).depositLiquidity{value: address(this).balance}(usdcBal,whbarBal,amount0Min,amount1Min,receiver,minShares) (src/periphery/FissionZap.sol#169-176)
+	- (ok,None) = address(msg.sender).call{value: hbarLeft}() (src/periphery/FissionZap.sol#188)
+SaucerSwapLPYieldSource.sweepHbar(address,uint256) (src/sy/SaucerSwapLPYieldSource.sol#171-177) sends eth to arbitrary user
+	Dangerous calls:
+	- (ok,None) = to.call{value: amount}() (src/sy/SaucerSwapLPYieldSource.sol#174)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#functions-that-send-ether-to-arbitrary-destinations
+
+Detector: reentrancy-balance
+Reentrancy in FissionPeriphery.buySyForLp(address,uint256,uint16,uint256,uint256,address,uint256) (src/periphery/FissionPeriphery.sol#476-527):
+	External call allowing reentrancy:
+	- m.swapExactSyForPt(syForPt,ptOutFromSwap,address(this)) (src/periphery/FissionPeriphery.sol#514)
+	Balance read before the call:
+	- ptBefore = IERC20(pt).balanceOf(address(this)) (src/periphery/FissionPeriphery.sol#513)
+	Possible stale balance used after the call in a condition:
+	- lpOut < minLpOut (src/periphery/FissionPeriphery.sol#518)
+		- stale variable `lpOut`
+Reentrancy in FissionPeriphery.buySyForLp(address,uint256,uint16,uint256,uint256,address,uint256) (src/periphery/FissionPeriphery.sol#476-527):
+	External call allowing reentrancy:
+	- lpOut = m.addLiquidity(syForLp,ptAcquired,minLpOut,receiver) (src/periphery/FissionPeriphery.sol#517)
+	Balance read before the call:
+	- ptBefore = IERC20(pt).balanceOf(address(this)) (src/periphery/FissionPeriphery.sol#513)
+	Possible stale balance used after the call in a condition:
+	- lpOut < minLpOut (src/periphery/FissionPeriphery.sol#518)
+		- stale variable `lpOut`
+Reentrancy in FissionPeriphery.buySyForLp(address,uint256,uint16,uint256,uint256,address,uint256) (src/periphery/FissionPeriphery.sol#476-527):
+	External call allowing reentrancy:
+	- lpOut = m.addLiquidity(syForLp,ptAcquired,minLpOut,receiver) (src/periphery/FissionPeriphery.sol#517)
+	Balance read before the call:
+	- ptAcquired = IERC20(pt).balanceOf(address(this)) - ptBefore (src/periphery/FissionPeriphery.sol#515)
+	Possible stale balance used after the call in a condition:
+	- lpOut < minLpOut (src/periphery/FissionPeriphery.sol#518)
+		- stale variable `lpOut`
+Reentrancy in FissionGateway.sweepAllToHbar(address,uint256,uint256) (src/periphery/FissionGateway.sol#556-610):
+	External call allowing reentrancy:
+	- (syFromLp,ptFromLp) = IActionRouter(ROUTER).removeLiquidityProportional(IFissionMarketCommon(market),lpPulled,1,1,address(this),deadline) (src/periphery/FissionGateway.sol#583-590)
+	Balance read before the call:
+	- lpPulled = _pullIfApproved(lp,msg.sender) (src/periphery/FissionGateway.sol#571)
+	Possible stale balance used after the call in a condition:
+	- hbarRedeemed < minHbarOut (src/periphery/FissionGateway.sol#603)
+		- stale variable `hbarRedeemed`
+Reentrancy in FissionGateway.sweepAllToHbar(address,uint256,uint256) (src/periphery/FissionGateway.sol#556-610):
+	External call allowing reentrancy:
+	- (syFromLp,ptFromLp) = IActionRouter(ROUTER).removeLiquidityProportional(IFissionMarketCommon(market),lpPulled,1,1,address(this),deadline) (src/periphery/FissionGateway.sol#583-590)
+	Balance read before the call:
+	- syPulled = _pullIfApproved(shareToken,msg.sender) (src/periphery/FissionGateway.sol#572)
+	Possible stale balance used after the call in a condition:
+	- hbarRedeemed < minHbarOut (src/periphery/FissionGateway.sol#603)
+		- stale variable `hbarRedeemed`
+Reentrancy in FissionGateway.sweepAllToHbar(address,uint256,uint256) (src/periphery/FissionGateway.sol#556-610):
+	External call allowing reentrancy:
+	- (syFromLp,ptFromLp) = IActionRouter(ROUTER).removeLiquidityProportional(IFissionMarketCommon(market),lpPulled,1,1,address(this),deadline) (src/periphery/FissionGateway.sol#583-590)
+	Balance read before the call:
+	- ptPulled = _pullIfApproved(pt,msg.sender) (src/periphery/FissionGateway.sol#570)
+	Possible stale balance used after the call in a condition:
+	- hbarRedeemed < minHbarOut (src/periphery/FissionGateway.sol#603)
+		- stale variable `hbarRedeemed`
+Reentrancy in FissionGateway.sweepAllToHbar(address,uint256,uint256) (src/periphery/FissionGateway.sol#556-610):
+	External call allowing reentrancy:
+	- totalSy += IActionRouter(ROUTER).swapExactPtForSy(market,ptPulled,1,address(this),deadline) (src/periphery/FissionGateway.sol#598)
+	Balance read before the call:
+	- lpPulled = _pullIfApproved(lp,msg.sender) (src/periphery/FissionGateway.sol#571)
+	Possible stale balance used after the call in a condition:
+	- hbarRedeemed < minHbarOut (src/periphery/FissionGateway.sol#603)
+		- stale variable `hbarRedeemed`
+Reentrancy in FissionGateway.sweepAllToHbar(address,uint256,uint256) (src/periphery/FissionGateway.sol#556-610):
+	External call allowing reentrancy:
+	- totalSy += IActionRouter(ROUTER).swapExactPtForSy(market,ptPulled,1,address(this),deadline) (src/periphery/FissionGateway.sol#598)
+	Balance read before the call:
+	- syPulled = _pullIfApproved(shareToken,msg.sender) (src/periphery/FissionGateway.sol#572)
+	Possible stale balance used after the call in a condition:
+	- hbarRedeemed < minHbarOut (src/periphery/FissionGateway.sol#603)
+		- stale variable `hbarRedeemed`
+Reentrancy in FissionGateway.sweepAllToHbar(address,uint256,uint256) (src/periphery/FissionGateway.sol#556-610):
+	External call allowing reentrancy:
+	- totalSy += IActionRouter(ROUTER).swapExactPtForSy(market,ptPulled,1,address(this),deadline) (src/periphery/FissionGateway.sol#598)
+	Balance read before the call:
+	- ptPulled = _pullIfApproved(pt,msg.sender) (src/periphery/FissionGateway.sol#570)
+	Possible stale balance used after the call in a condition:
+	- hbarRedeemed < minHbarOut (src/periphery/FissionGateway.sol#603)
+		- stale variable `hbarRedeemed`
+Reentrancy in FissionGateway.sweepAllToHbar(address,uint256,uint256) (src/periphery/FissionGateway.sol#556-610):
+	External call allowing reentrancy:
+	- (usdcOut,whbarOut,hbarRedeemed) = _redeemSyToHbar(syAdapter,totalSy) (src/periphery/FissionGateway.sol#602)
+		- (amount0,amount1) = ISYExtended(syAdapter).redeemLiquidity(sharesIn,0,0,address(this)) (src/periphery/FissionGateway.sol#678)
+		- whbarFromSwap = ISaucerSwapV2Router(SAUCER_V2_ROUTER).exactInputSingle(ISaucerSwapV2Router.ExactInputSingleParams({tokenIn:USDC,tokenOut:WHBAR,fee:POOL_FEE,recipient:address(this),deadline:block.timestamp,amountIn:usdcRedeemed,amountOutMinimum:0,sqrtPriceLimitX96:0})) (src/periphery/FissionGateway.sol#684-695)
+		- IWHBAR(WHBAR_CONTRACT).withdraw(whbarRedeemed) (src/periphery/FissionGateway.sol#702)
+	Balance read before the call:
+	- lpPulled = _pullIfApproved(lp,msg.sender) (src/periphery/FissionGateway.sol#571)
+	Possible stale balance used after the call in a condition:
+	- hbarRedeemed < minHbarOut (src/periphery/FissionGateway.sol#603)
+		- stale variable `hbarRedeemed`
+Reentrancy in FissionGateway.sweepAllToHbar(address,uint256,uint256) (src/periphery/FissionGateway.sol#556-610):
+	External call allowing reentrancy:
+	- (usdcOut,whbarOut,hbarRedeemed) = _redeemSyToHbar(syAdapter,totalSy) (src/periphery/FissionGateway.sol#602)
+		- (amount0,amount1) = ISYExtended(syAdapter).redeemLiquidity(sharesIn,0,0,address(this)) (src/periphery/FissionGateway.sol#678)
+		- whbarFromSwap = ISaucerSwapV2Router(SAUCER_V2_ROUTER).exactInputSingle(ISaucerSwapV2Router.ExactInputSingleParams({tokenIn:USDC,tokenOut:WHBAR,fee:POOL_FEE,recipient:address(this),deadline:block.timestamp,amountIn:usdcRedeemed,amountOutMinimum:0,sqrtPriceLimitX96:0})) (src/periphery/FissionGateway.sol#684-695)
+		- IWHBAR(WHBAR_CONTRACT).withdraw(whbarRedeemed) (src/periphery/FissionGateway.sol#702)
+	Balance read before the call:
+	- syPulled = _pullIfApproved(shareToken,msg.sender) (src/periphery/FissionGateway.sol#572)
+	Possible stale balance used after the call in a condition:
+	- hbarRedeemed < minHbarOut (src/periphery/FissionGateway.sol#603)
+		- stale variable `hbarRedeemed`
+Reentrancy in FissionGateway.sweepAllToHbar(address,uint256,uint256) (src/periphery/FissionGateway.sol#556-610):
+	External call allowing reentrancy:
+	- (usdcOut,whbarOut,hbarRedeemed) = _redeemSyToHbar(syAdapter,totalSy) (src/periphery/FissionGateway.sol#602)
+		- (amount0,amount1) = ISYExtended(syAdapter).redeemLiquidity(sharesIn,0,0,address(this)) (src/periphery/FissionGateway.sol#678)
+		- whbarFromSwap = ISaucerSwapV2Router(SAUCER_V2_ROUTER).exactInputSingle(ISaucerSwapV2Router.ExactInputSingleParams({tokenIn:USDC,tokenOut:WHBAR,fee:POOL_FEE,recipient:address(this),deadline:block.timestamp,amountIn:usdcRedeemed,amountOutMinimum:0,sqrtPriceLimitX96:0})) (src/periphery/FissionGateway.sol#684-695)
+		- IWHBAR(WHBAR_CONTRACT).withdraw(whbarRedeemed) (src/periphery/FissionGateway.sol#702)
+	Balance read before the call:
+	- ptPulled = _pullIfApproved(pt,msg.sender) (src/periphery/FissionGateway.sol#570)
+	Possible stale balance used after the call in a condition:
+	- hbarRedeemed < minHbarOut (src/periphery/FissionGateway.sol#603)
+		- stale variable `hbarRedeemed`
+Reentrancy in FissionGateway.zapHbarToLp(address,uint16,uint256,uint256) (src/periphery/FissionGateway.sol#344-402):
+	External call allowing reentrancy:
+	- IFissionZap(FISSION_ZAP).zapHbarToSy{value: msg.value}(syAdapter,0,0,0,1,address(this)) (src/periphery/FissionGateway.sol#362)
+	Balance read before the call:
+	- sharesBefore = IERC20(shareToken).balanceOf(address(this)) (src/periphery/FissionGateway.sol#361)
+	Possible stale balance used after the call in a condition:
+	- lpOut < minLpOut (src/periphery/FissionGateway.sol#393)
+		- stale variable `lpOut`
+	- syAcquired == 0 (src/periphery/FissionGateway.sol#364)
+		- stale variable `syAcquired`
+Reentrancy in FissionGateway.zapHbarToLp(address,uint16,uint256,uint256) (src/periphery/FissionGateway.sol#344-402):
+	External call allowing reentrancy:
+	- IActionRouter(ROUTER).swapExactSyForPt(IFissionMarketCommon(market),syForPt,1,address(this),deadline) (src/periphery/FissionGateway.sol#374-380)
+	Balance read before the call:
+	- sharesBefore = IERC20(shareToken).balanceOf(address(this)) (src/periphery/FissionGateway.sol#361)
+	Possible stale balance used after the call in a condition:
+	- lpOut < minLpOut (src/periphery/FissionGateway.sol#393)
+		- stale variable `lpOut`
+Reentrancy in FissionGateway.zapHbarToLp(address,uint16,uint256,uint256) (src/periphery/FissionGateway.sol#344-402):
+	External call allowing reentrancy:
+	- IActionRouter(ROUTER).swapExactSyForPt(IFissionMarketCommon(market),syForPt,1,address(this),deadline) (src/periphery/FissionGateway.sol#374-380)
+	Balance read before the call:
+	- syAcquired = IERC20(shareToken).balanceOf(address(this)) - sharesBefore (src/periphery/FissionGateway.sol#363)
+	Possible stale balance used after the call in a condition:
+	- lpOut < minLpOut (src/periphery/FissionGateway.sol#393)
+		- stale variable `lpOut`
+Reentrancy in FissionGateway.zapHbarToLp(address,uint16,uint256,uint256) (src/periphery/FissionGateway.sol#344-402):
+	External call allowing reentrancy:
+	- lpOut = IActionRouter(ROUTER).addLiquidityProportional(IFissionMarketCommon(market),syForLp,ptAcquired,minLpOut,msg.sender,deadline) (src/periphery/FissionGateway.sol#385-392)
+	Balance read before the call:
+	- syAcquired = IERC20(shareToken).balanceOf(address(this)) - sharesBefore (src/periphery/FissionGateway.sol#363)
+	Possible stale balance used after the call in a condition:
+	- lpOut < minLpOut (src/periphery/FissionGateway.sol#393)
+		- stale variable `lpOut`
+Reentrancy in FissionGateway.zapHbarToLp(address,uint16,uint256,uint256) (src/periphery/FissionGateway.sol#344-402):
+	External call allowing reentrancy:
+	- lpOut = IActionRouter(ROUTER).addLiquidityProportional(IFissionMarketCommon(market),syForLp,ptAcquired,minLpOut,msg.sender,deadline) (src/periphery/FissionGateway.sol#385-392)
+	Balance read before the call:
+	- ptAcquired = IERC20(pt).balanceOf(address(this)) (src/periphery/FissionGateway.sol#381)
+	Possible stale balance used after the call in a condition:
+	- lpOut < minLpOut (src/periphery/FissionGateway.sol#393)
+		- stale variable `lpOut`
+Reentrancy in FissionGateway.zapHbarToLp(address,uint16,uint256,uint256) (src/periphery/FissionGateway.sol#344-402):
+	External call allowing reentrancy:
+	- lpOut = IActionRouter(ROUTER).addLiquidityProportional(IFissionMarketCommon(market),syForLp,ptAcquired,minLpOut,msg.sender,deadline) (src/periphery/FissionGateway.sol#385-392)
+	Balance read before the call:
+	- sharesBefore = IERC20(shareToken).balanceOf(address(this)) (src/periphery/FissionGateway.sol#361)
+	Possible stale balance used after the call in a condition:
+	- lpOut < minLpOut (src/periphery/FissionGateway.sol#393)
+		- stale variable `lpOut`
+Reentrancy in FissionGateway.zapHbarToPt(address,uint256,uint256) (src/periphery/FissionGateway.sol#250-292):
+	External call allowing reentrancy:
+	- IFissionZap(FISSION_ZAP).zapHbarToSy{value: msg.value}(syAdapter,0,0,0,1,address(this)) (src/periphery/FissionGateway.sol#265)
+	Balance read before the call:
+	- sharesBefore = IERC20(ISYExtended(syAdapter).shareToken()).balanceOf(address(this)) (src/periphery/FissionGateway.sol#264)
+	Possible stale balance used after the call in a condition:
+	- syAcquired == 0 (src/periphery/FissionGateway.sol#267)
+		- stale variable `syAcquired`
+Reentrancy in FissionPeriphery.zapHbarToSy(address,address,uint256) (src/periphery/FissionPeriphery.sol#347-402):
+	External call allowing reentrancy:
+	- liquidity = ISYLiquidity(syAdapter).depositLiquidity{value: address(this).balance}(usdcBal,whbarBal,0,0,receiver,1) (src/periphery/FissionPeriphery.sol#387-394)
+	Balance read before the call:
+	- usdcBal = IERC20(USDC).balanceOf(address(this)) (src/periphery/FissionPeriphery.sol#385)
+	Possible stale balance used after the call in a condition:
+	- sharesOut == 0 (src/periphery/FissionPeriphery.sol#396)
+		- stale variable `sharesOut`
+Reentrancy in FissionPeriphery.zapHbarToSy(address,address,uint256) (src/periphery/FissionPeriphery.sol#347-402):
+	External call allowing reentrancy:
+	- liquidity = ISYLiquidity(syAdapter).depositLiquidity{value: address(this).balance}(usdcBal,whbarBal,0,0,receiver,1) (src/periphery/FissionPeriphery.sol#387-394)
+	Balance read before the call:
+	- whbarBal = IERC20(WHBAR).balanceOf(address(this)) (src/periphery/FissionPeriphery.sol#386)
+	Possible stale balance used after the call in a condition:
+	- sharesOut == 0 (src/periphery/FissionPeriphery.sol#396)
+		- stale variable `sharesOut`
+Reentrancy in FissionGateway.zapHbarToYt(address,uint256,uint256) (src/periphery/FissionGateway.sol#301-334):
+	External call allowing reentrancy:
+	- IFissionZap(FISSION_ZAP).zapHbarToSy{value: msg.value}(syAdapter,0,0,0,1,address(this)) (src/periphery/FissionGateway.sol#316)
+	Balance read before the call:
+	- sharesBefore = IERC20(shareToken).balanceOf(address(this)) (src/periphery/FissionGateway.sol#315)
+	Possible stale balance used after the call in a condition:
+	- syAcquired == 0 (src/periphery/FissionGateway.sol#318)
+		- stale variable `syAcquired`
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities
+
+Detector: reentrancy-eth
+Reentrancy in SY_SaucerSwapV2LP.depositLiquidity(uint256,uint256,uint256,uint256,address,uint128) (src/sy/SY_SaucerSwapV2LP.sol#230-317):
+	External calls:
+	- (newTokenId,liquidity,amount0Used,amount1Used) = npm.mint{value: msg.value}(mp) (src/sy/SY_SaucerSwapV2LP.sol#274)
+	State variables written after the call(s):
+	- positionTokenId = newTokenId (src/sy/SY_SaucerSwapV2LP.sol#276)
+	SY_SaucerSwapV2LP.positionTokenId (src/sy/SY_SaucerSwapV2LP.sol#73) can be used in cross function reentrancies:
+	- SY_SaucerSwapV2LP._harvest() (src/sy/SY_SaucerSwapV2LP.sol#500-519)
+	- SY_SaucerSwapV2LP.positionTokenId (src/sy/SY_SaucerSwapV2LP.sol#73)
+Reentrancy in SaucerSwapLPYieldSource.depositLiquidity(uint256,uint256,uint256,uint256,address,uint128) (src/sy/SaucerSwapLPYieldSource.sol#226-300):
+	External calls:
+	- (newTokenId,liquidity,amount0Used,amount1Used) = npm.mint{value: msg.value}(mp) (src/sy/SaucerSwapLPYieldSource.sol#265)
+	State variables written after the call(s):
+	- positionTokenId = newTokenId (src/sy/SaucerSwapLPYieldSource.sol#267)
+	SaucerSwapLPYieldSource.positionTokenId (src/sy/SaucerSwapLPYieldSource.sol#59) can be used in cross function reentrancies:
+	- SaucerSwapLPYieldSource._harvest() (src/sy/SaucerSwapLPYieldSource.sol#446-465)
+	- SaucerSwapLPYieldSource.positionTokenId (src/sy/SaucerSwapLPYieldSource.sol#59)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-1
+
+Detector: unchecked-transfer
+FissionZap.zapHbarToSy(address,uint256,uint256,uint256,uint128,address) (src/periphery/FissionZap.sol#130-191) ignores return value by IHTSERC20(USDC).transfer(msg.sender,dust0) (src/periphery/FissionZap.sol#183)
+FissionZap.zapHbarToSy(address,uint256,uint256,uint256,uint128,address) (src/periphery/FissionZap.sol#130-191) ignores return value by IHTSERC20(WHBAR).transfer(msg.sender,dust1) (src/periphery/FissionZap.sol#184)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unchecked-transfer
+
+Detector: divide-before-multiply
+FissionMarket.setTokens(string,string,string,string,string,string) (src/core/FissionMarket.sol#208-243) performs a multiplication on the result of a division:
+	- perToken = msg.value / 3 (src/core/FissionMarket.sol#226)
+	- lp = _createHtsToken(lpName,lpSymbol,false,true,18,msg.value - 2 * perToken) (src/core/FissionMarket.sol#235)
+FissionMarketRewards.setTokens(string,string,string,string,string,string) (src/core/FissionMarketRewards.sol#199-231) performs a multiplication on the result of a division:
+	- perToken = msg.value / 3 (src/core/FissionMarketRewards.sol#215)
+	- lp = _createHtsToken(lpName,lpSymbol,false,true,18,msg.value - 2 * perToken) (src/core/FissionMarketRewards.sol#222)
+FissionRewardsMarket.setTokens(string,string,string,string,string,string) (src/core/FissionRewardsMarket.sol#190-215) performs a multiplication on the result of a division:
+	- perToken = msg.value / 3 (src/core/FissionRewardsMarket.sol#204)
+	- lp = _createHtsToken(lpName,lpSymbol,false,true,18,msg.value - 2 * perToken) (src/core/FissionRewardsMarket.sol#208)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#divide-before-multiply
+
+Detector: incorrect-equality
+FissionGateway._pullIfApproved(address,address) (src/periphery/FissionGateway.sol#615-622) uses a dangerous strict equality:
+	- bal == 0 (src/periphery/FissionGateway.sol#617)
+FissionGateway.sweepAllToHbar(address,uint256,uint256) (src/periphery/FissionGateway.sol#556-610) uses a dangerous strict equality:
+	- ptPulled == 0 && lpPulled == 0 && syPulled == 0 (src/periphery/FissionGateway.sol#574)
+FissionGateway.zapHbarToLp(address,uint16,uint256,uint256) (src/periphery/FissionGateway.sol#344-402) uses a dangerous strict equality:
+	- syAcquired == 0 (src/periphery/FissionGateway.sol#364)
+FissionGateway.zapHbarToPt(address,uint256,uint256) (src/periphery/FissionGateway.sol#250-292) uses a dangerous strict equality:
+	- syAcquired == 0 (src/periphery/FissionGateway.sol#267)
+FissionGateway.zapHbarToYt(address,uint256,uint256) (src/periphery/FissionGateway.sol#301-334) uses a dangerous strict equality:
+	- syAcquired == 0 (src/periphery/FissionGateway.sol#318)
+FissionMegaZap.zapHbarToLp(IFissionMarketCommon,IStandardizedYield,uint16,uint256,address,uint256) (src/periphery/FissionMegaZap.sol#228-307) uses a dangerous strict equality:
+	- syAcquired == 0 (src/periphery/FissionMegaZap.sol#254)
+FissionMegaZap.zapHbarToLp(IFissionMarketCommon,IStandardizedYield,uint16,uint256,address,uint256) (src/periphery/FissionMegaZap.sol#228-307) uses a dangerous strict equality:
+	- syForSwap == 0 || syForSwap >= syAcquired (src/periphery/FissionMegaZap.sol#259)
+FissionMegaZap.zapHbarToLp(IFissionMarketCommon,IStandardizedYield,uint16,uint256,address,uint256) (src/periphery/FissionMegaZap.sol#228-307) uses a dangerous strict equality:
+	- syOnHand == 0 || ptOnHand == 0 (src/periphery/FissionMegaZap.sol#275)
+FissionMegaZap.zapHbarToPt(IFissionMarketCommon,IStandardizedYield,uint256,address,uint256) (src/periphery/FissionMegaZap.sol#128-178) uses a dangerous strict equality:
+	- syAcquired == 0 (src/periphery/FissionMegaZap.sol#152)
+FissionMegaZap.zapHbarToYt(IFissionMarketCommon,IStandardizedYield,uint256,address,uint256) (src/periphery/FissionMegaZap.sol#184-216) uses a dangerous strict equality:
+	- syAcquired == 0 (src/periphery/FissionMegaZap.sol#204)
+FissionPeriphery.zapHbarToSy(address,address,uint256) (src/periphery/FissionPeriphery.sol#347-402) uses a dangerous strict equality:
+	- sharesOut == 0 (src/periphery/FissionPeriphery.sol#396)
+SYBase.deposit(address,address,uint256,uint256) (src/sy/SYBase.sol#205-233) uses a dangerous strict equality:
+	- sharesOut == 0 (src/sy/SYBase.sol#229)
+SY_SaucerSwapV2LP._harvest() (src/sy/SY_SaucerSwapV2LP.sol#500-519) uses a dangerous strict equality:
+	- positionTokenId == 0 (src/sy/SY_SaucerSwapV2LP.sol#501)
+SY_SaucerSwapV2LP._harvest() (src/sy/SY_SaucerSwapV2LP.sol#500-519) uses a dangerous strict equality:
+	- c0 == 0 && c1 == 0 (src/sy/SY_SaucerSwapV2LP.sol#513)
+SY_SaucerSwapV2LP.depositLiquidity(uint256,uint256,uint256,uint256,address,uint128) (src/sy/SY_SaucerSwapV2LP.sol#230-317) uses a dangerous strict equality:
+	- newTokenId == 0 (src/sy/SY_SaucerSwapV2LP.sol#275)
+SY_SaucerSwapV2LP.depositLiquidity(uint256,uint256,uint256,uint256,address,uint128) (src/sy/SY_SaucerSwapV2LP.sol#230-317) uses a dangerous strict equality:
+	- liquidity == 0 (src/sy/SY_SaucerSwapV2LP.sol#299)
+SaucerSwapLPYieldSource._harvest() (src/sy/SaucerSwapLPYieldSource.sol#446-465) uses a dangerous strict equality:
+	- positionTokenId == 0 (src/sy/SaucerSwapLPYieldSource.sol#447)
+SaucerSwapLPYieldSource._harvest() (src/sy/SaucerSwapLPYieldSource.sol#446-465) uses a dangerous strict equality:
+	- c0 == 0 && c1 == 0 (src/sy/SaucerSwapLPYieldSource.sol#459)
+SaucerSwapLPYieldSource.depositLiquidity(uint256,uint256,uint256,uint256,address,uint128) (src/sy/SaucerSwapLPYieldSource.sol#226-300) uses a dangerous strict equality:
+	- newTokenId == 0 (src/sy/SaucerSwapLPYieldSource.sol#266)
+SaucerSwapLPYieldSource.depositLiquidity(uint256,uint256,uint256,uint256,address,uint128) (src/sy/SaucerSwapLPYieldSource.sol#226-300) uses a dangerous strict equality:
+	- liquidity == 0 (src/sy/SaucerSwapLPYieldSource.sol#287)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#dangerous-strict-equalities
+
+Detector: reentrancy-no-eth
+Reentrancy in FissionMarket._burnYt(address,uint256) (src/core/FissionMarket.sol#323-341):
+	External calls:
+	- HtsHelpers.unfreeze(yt,from) (src/core/FissionMarket.sol#328)
+	- HtsHelpers.wipeFrom(yt,from,amount) (src/core/FissionMarket.sol#329)
+	State variables written after the call(s):
+	- _ytFrozen[from] = false (src/core/FissionMarket.sol#336)
+	FissionMarket._ytFrozen (src/core/FissionMarket.sol#75) can be used in cross function reentrancies:
+	- FissionMarket._burnYt(address,uint256) (src/core/FissionMarket.sol#323-341)
+Reentrancy in FissionMarketRewards._burnYt(address,uint256) (src/core/FissionMarketRewards.sol#298-321):
+	External calls:
+	- HtsHelpers.unfreeze(yt,from) (src/core/FissionMarketRewards.sol#306)
+	- HtsHelpers.wipeFrom(yt,from,amount) (src/core/FissionMarketRewards.sol#307)
+	State variables written after the call(s):
+	- _ytFrozen[from] = false (src/core/FissionMarketRewards.sol#316)
+	FissionMarketRewards._ytFrozen (src/core/FissionMarketRewards.sol#81) can be used in cross function reentrancies:
+	- FissionMarketRewards._burnYt(address,uint256) (src/core/FissionMarketRewards.sol#298-321)
+Reentrancy in FissionMarket._mintYt(address,uint256) (src/core/FissionMarket.sol#307-318):
+	External calls:
+	- HtsHelpers.mintToTreasury(yt,amount) (src/core/FissionMarket.sol#308)
+	- HtsHelpers.unfreeze(yt,to) (src/core/FissionMarket.sol#311)
+	- HtsHelpers.transfer(yt,address(this),to,amount) (src/core/FissionMarket.sol#313)
+	- HtsHelpers.freeze(yt,to) (src/core/FissionMarket.sol#314)
+	State variables written after the call(s):
+	- _ytFrozen[to] = true (src/core/FissionMarket.sol#315)
+	FissionMarket._ytFrozen (src/core/FissionMarket.sol#75) can be used in cross function reentrancies:
+	- FissionMarket._burnYt(address,uint256) (src/core/FissionMarket.sol#323-341)
+Reentrancy in FissionMarketRewards._mintYt(address,uint256) (src/core/FissionMarketRewards.sol#285-296):
+	External calls:
+	- HtsHelpers.mintToTreasury(yt,amount) (src/core/FissionMarketRewards.sol#286)
+	- HtsHelpers.unfreeze(yt,to) (src/core/FissionMarketRewards.sol#289)
+	- HtsHelpers.transfer(yt,address(this),to,amount) (src/core/FissionMarketRewards.sol#291)
+	- HtsHelpers.freeze(yt,to) (src/core/FissionMarketRewards.sol#292)
+	State variables written after the call(s):
+	- _ytFrozen[to] = true (src/core/FissionMarketRewards.sol#293)
+	FissionMarketRewards._ytFrozen (src/core/FissionMarketRewards.sol#81) can be used in cross function reentrancies:
+	- FissionMarketRewards._burnYt(address,uint256) (src/core/FissionMarketRewards.sol#298-321)
+Reentrancy in FissionPeriphery._registerMarket(address) (src/periphery/FissionPeriphery.sol#246-279):
+	External calls:
+	- HtsHelpers.associateIfNeeded(address(this),shareToken) (src/periphery/FissionPeriphery.sol#258)
+	- HtsHelpers.associateIfNeeded(address(this),pt) (src/periphery/FissionPeriphery.sol#259)
+	- HtsHelpers.associateIfNeeded(address(this),lp) (src/periphery/FissionPeriphery.sol#260)
+	State variables written after the call(s):
+	- marketRegistered[market] = true (src/periphery/FissionPeriphery.sol#272)
+	FissionPeriphery.marketRegistered (src/periphery/FissionPeriphery.sol#130) can be used in cross function reentrancies:
+	- FissionPeriphery._registerMarket(address) (src/periphery/FissionPeriphery.sol#246-279)
+	- FissionPeriphery.marketRegistered (src/periphery/FissionPeriphery.sol#130)
+Reentrancy in FissionFactory.createMarket(address,uint256,int256,string) (src/core/FissionFactory.sol#144-185):
+	External calls:
+	- m = standardDeployer.deploy(sy,expiry,scalarRoot,marketAdmin,marketTreasury,dec,address(this)) (src/core/FissionFactory.sol#159-167)
+	State variables written after the call(s):
+	- markets.push(address(m)) (src/core/FissionFactory.sol#169)
+	FissionFactory.markets (src/core/FissionFactory.sol#51) can be used in cross function reentrancies:
+	- FissionFactory.createMarket(address,uint256,int256,string) (src/core/FissionFactory.sol#144-185)
+	- FissionFactory.createRewardsMarket(address,uint256,int256,string) (src/core/FissionFactory.sol#189-230)
+	- FissionFactory.getMarkets(uint256,uint256) (src/core/FissionFactory.sol#238-247)
+	- FissionFactory.marketCount() (src/core/FissionFactory.sol#234-236)
+	- FissionFactory.markets (src/core/FissionFactory.sol#51)
+Reentrancy in FissionFactory.createRewardsMarket(address,uint256,int256,string) (src/core/FissionFactory.sol#189-230):
+	External calls:
+	- m = rewardsDeployer.deploy(sy,expiry,scalarRoot,marketAdmin,marketTreasury,dec,address(this)) (src/core/FissionFactory.sol#204-212)
+	State variables written after the call(s):
+	- markets.push(address(m)) (src/core/FissionFactory.sol#214)
+	FissionFactory.markets (src/core/FissionFactory.sol#51) can be used in cross function reentrancies:
+	- FissionFactory.createMarket(address,uint256,int256,string) (src/core/FissionFactory.sol#144-185)
+	- FissionFactory.createRewardsMarket(address,uint256,int256,string) (src/core/FissionFactory.sol#189-230)
+	- FissionFactory.getMarkets(uint256,uint256) (src/core/FissionFactory.sol#238-247)
+	- FissionFactory.marketCount() (src/core/FissionFactory.sol#234-236)
+	- FissionFactory.markets (src/core/FissionFactory.sol#51)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-2
+
+Detector: uninitialized-local
+FissionMarket.previewYield(address).extra (src/core/FissionMarket.sol#782) is a local variable never initialized
+SY_HBARX._medianExcludingNewest().tmp (src/sy/SY_HBARX.sol#290) is a local variable never initialized
+FissionMarket._createHtsToken(string,string,bool,bool,uint8,uint256).idx (src/core/FissionMarket.sol#257) is a local variable never initialized
+SY_HBARX._median(uint256).tmp (src/sy/SY_HBARX.sol#258) is a local variable never initialized
+FissionMarketRewards._createHtsToken(string,string,bool,bool,uint8,uint256).idx (src/core/FissionMarketRewards.sol#243) is a local variable never initialized
+FissionMarketRewards._harvestRewards().amounts (src/core/FissionMarketRewards.sol#701) is a local variable never initialized
+FissionRewardsMarket._createHtsToken(string,string,bool,bool,uint8,uint256).idx (src/core/FissionRewardsMarket.sol#227) is a local variable never initialized
+SY_HBARX._medianExcludingNewest().k (src/sy/SY_HBARX.sol#291) is a local variable never initialized
+FissionRewardsMarket._harvestRewards().amounts (src/core/FissionRewardsMarket.sol#625) is a local variable never initialized
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#uninitialized-local-variables
+
+Detector: unused-return
+FissionFactory.createMarket(address,uint256,int256,string) (src/core/FissionFactory.sol#144-185) ignores return value by (None,None,dec) = syIface.assetInfo() (src/core/FissionFactory.sol#157)
+FissionFactory.createRewardsMarket(address,uint256,int256,string) (src/core/FissionFactory.sol#189-230) ignores return value by (None,None,dec) = syIface.assetInfo() (src/core/FissionFactory.sol#202)
+FissionMarket._mintPt(address,uint256) (src/core/FissionMarket.sol#287-292) ignores return value by HtsHelpers.mintToTreasury(pt,amount) (src/core/FissionMarket.sol#288)
+FissionMarket._burnPt(address,uint256) (src/core/FissionMarket.sol#295-301) ignores return value by HtsHelpers.burnFromTreasury(pt,amount) (src/core/FissionMarket.sol#297)
+FissionMarket._mintYt(address,uint256) (src/core/FissionMarket.sol#307-318) ignores return value by HtsHelpers.mintToTreasury(yt,amount) (src/core/FissionMarket.sol#308)
+FissionMarket._burnYt(address,uint256) (src/core/FissionMarket.sol#323-341) ignores return value by HtsHelpers.burnFromTreasury(yt,amount) (src/core/FissionMarket.sol#325)
+FissionMarket._mintLp(address,uint256) (src/core/FissionMarket.sol#352-357) ignores return value by HtsHelpers.mintToTreasury(lp,amount) (src/core/FissionMarket.sol#353)
+FissionMarket._burnLp(address,uint256) (src/core/FissionMarket.sol#360-366) ignores return value by HtsHelpers.burnFromTreasury(lp,amount) (src/core/FissionMarket.sol#362)
+FissionMarket.addLiquidity(uint256,uint256,uint256,address) (src/core/FissionMarket.sol#639-665) ignores return value by (lpToMint,syUsed,ptUsed,None) = MarketMath.addLiquidityCore(ms,int256(syIn),int256(ptIn)) (src/core/FissionMarket.sol#651-652)
+FissionMarketRewards._mintPt(address,uint256) (src/core/FissionMarketRewards.sol#270-275) ignores return value by HtsHelpers.mintToTreasury(pt,amount) (src/core/FissionMarketRewards.sol#271)
+FissionMarketRewards._burnPt(address,uint256) (src/core/FissionMarketRewards.sol#277-283) ignores return value by HtsHelpers.burnFromTreasury(pt,amount) (src/core/FissionMarketRewards.sol#279)
+FissionMarketRewards._mintYt(address,uint256) (src/core/FissionMarketRewards.sol#285-296) ignores return value by HtsHelpers.mintToTreasury(yt,amount) (src/core/FissionMarketRewards.sol#286)
+FissionMarketRewards._burnYt(address,uint256) (src/core/FissionMarketRewards.sol#298-321) ignores return value by HtsHelpers.burnFromTreasury(yt,amount) (src/core/FissionMarketRewards.sol#300)
+FissionMarketRewards._mintLp(address,uint256) (src/core/FissionMarketRewards.sol#331-336) ignores return value by HtsHelpers.mintToTreasury(lp,amount) (src/core/FissionMarketRewards.sol#332)
+FissionMarketRewards._burnLp(address,uint256) (src/core/FissionMarketRewards.sol#338-344) ignores return value by HtsHelpers.burnFromTreasury(lp,amount) (src/core/FissionMarketRewards.sol#340)
+FissionMarketRewards.addLiquidity(uint256,uint256,uint256,address) (src/core/FissionMarketRewards.sol#603-629) ignores return value by (lpToMint,syUsed,ptUsed,None) = MarketMath.addLiquidityCore(ms,int256(syIn),int256(ptIn)) (src/core/FissionMarketRewards.sol#615-616)
+FissionRewardsMarket._mintPt(address,uint256) (src/core/FissionRewardsMarket.sol#258-263) ignores return value by HtsHelpers.mintToTreasury(pt,amount) (src/core/FissionRewardsMarket.sol#259)
+FissionRewardsMarket._burnPt(address,uint256) (src/core/FissionRewardsMarket.sol#265-271) ignores return value by HtsHelpers.burnFromTreasury(pt,amount) (src/core/FissionRewardsMarket.sol#267)
+FissionRewardsMarket._mintYt(address,uint256) (src/core/FissionRewardsMarket.sol#273-284) ignores return value by HtsHelpers.mintToTreasury(yt,amount) (src/core/FissionRewardsMarket.sol#274)
+FissionRewardsMarket._burnYt(address,uint256) (src/core/FissionRewardsMarket.sol#286-302) ignores return value by HtsHelpers.burnFromTreasury(yt,amount) (src/core/FissionRewardsMarket.sol#288)
+FissionRewardsMarket._mintLp(address,uint256) (src/core/FissionRewardsMarket.sol#304-309) ignores return value by HtsHelpers.mintToTreasury(lp,amount) (src/core/FissionRewardsMarket.sol#305)
+FissionRewardsMarket._burnLp(address,uint256) (src/core/FissionRewardsMarket.sol#311-317) ignores return value by HtsHelpers.burnFromTreasury(lp,amount) (src/core/FissionRewardsMarket.sol#313)
+FissionRewardsMarket.addLiquidity(uint256,uint256,uint256,address) (src/core/FissionRewardsMarket.sol#550-576) ignores return value by (lpToMint,syUsed,ptUsed,None) = MarketMath.addLiquidityCore(ms,int256(syIn),int256(ptIn)) (src/core/FissionRewardsMarket.sol#562-563)
+ActionRouter.depositAndSplit(IFissionMarketCommon,address,uint256,uint256,address,uint256) (src/periphery/ActionRouter.sol#45-79) ignores return value by market.splitTo(shares,receiver,receiver) (src/periphery/ActionRouter.sol#74)
+ActionRouter.buyYT(IFissionMarketCommon,uint256,uint256,address,uint256) (src/periphery/ActionRouter.sol#142-172) ignores return value by market.splitTo(syBudget,address(this),receiver) (src/periphery/ActionRouter.sol#166)
+ActionRouterV3.depositAndSplit(IFissionMarketCommon,address,uint256,uint256,address,uint256) (src/periphery/ActionRouterV3.sol#42-70) ignores return value by market.splitTo(shares,receiver,receiver) (src/periphery/ActionRouterV3.sol#65)
+ActionRouterV3.buyYT(IFissionMarketCommon,uint256,uint256,address,uint256) (src/periphery/ActionRouterV3.sol#128-154) ignores return value by market.splitTo(syBudget,address(this),receiver) (src/periphery/ActionRouterV3.sol#149)
+FissionGateway.zapHbarToPt(address,uint256,uint256) (src/periphery/FissionGateway.sol#250-292) ignores return value by IFissionZap(FISSION_ZAP).zapHbarToSy{value: msg.value}(syAdapter,0,0,0,1,address(this)) (src/periphery/FissionGateway.sol#265)
+FissionGateway.zapHbarToYt(address,uint256,uint256) (src/periphery/FissionGateway.sol#301-334) ignores return value by IFissionZap(FISSION_ZAP).zapHbarToSy{value: msg.value}(syAdapter,0,0,0,1,address(this)) (src/periphery/FissionGateway.sol#316)
+FissionGateway.zapHbarToLp(address,uint16,uint256,uint256) (src/periphery/FissionGateway.sol#344-402) ignores return value by IFissionZap(FISSION_ZAP).zapHbarToSy{value: msg.value}(syAdapter,0,0,0,1,address(this)) (src/periphery/FissionGateway.sol#362)
+FissionGateway.zapHbarToLp(address,uint16,uint256,uint256) (src/periphery/FissionGateway.sol#344-402) ignores return value by IActionRouter(ROUTER).swapExactSyForPt(IFissionMarketCommon(market),syForPt,1,address(this),deadline) (src/periphery/FissionGateway.sol#374-380)
+FissionLens.previewSwapExactYtForSy(address,uint256) (src/periphery/FissionLens.sol#29-44) ignores return value by (netSy,None,None,None) = MarketMath.executeTradeCore(ms,pre,int256(ytIn),block.timestamp) (src/periphery/FissionLens.sol#39)
+FissionLens.previewSwapExactPtForSy(address,uint256) (src/periphery/FissionLens.sol#47-60) ignores return value by (netSy,None,None,None) = MarketMath.executeTradeCore(ms,pre,- int256(ptIn),block.timestamp) (src/periphery/FissionLens.sol#57)
+FissionLens.previewSwapExactSyForPt(address,uint256) (src/periphery/FissionLens.sol#65-78) ignores return value by (netSy,None,None,None) = MarketMath.executeTradeCore(ms,pre,int256(ptOut),block.timestamp) (src/periphery/FissionLens.sol#75)
+FissionMegaZap.zapHbarToPt(IFissionMarketCommon,IStandardizedYield,uint256,address,uint256) (src/periphery/FissionMegaZap.sol#128-178) ignores return value by zap.zapHbarToSy{value: msg.value}(address(sy),0,0,0,1,address(this)) (src/periphery/FissionMegaZap.sol#146)
+FissionMegaZap.zapHbarToYt(IFissionMarketCommon,IStandardizedYield,uint256,address,uint256) (src/periphery/FissionMegaZap.sol#184-216) ignores return value by zap.zapHbarToSy{value: msg.value}(address(sy),0,0,0,1,address(this)) (src/periphery/FissionMegaZap.sol#200)
+FissionMegaZap.zapHbarToLp(IFissionMarketCommon,IStandardizedYield,uint16,uint256,address,uint256) (src/periphery/FissionMegaZap.sol#228-307) ignores return value by zap.zapHbarToSy{value: msg.value}(address(sy),0,0,0,1,address(this)) (src/periphery/FissionMegaZap.sol#248)
+FissionMegaZap.zapHbarToLp(IFissionMarketCommon,IStandardizedYield,uint16,uint256,address,uint256) (src/periphery/FissionMegaZap.sol#228-307) ignores return value by router.swapExactSyForPt(market,syForSwap,1,address(this),deadline) (src/periphery/FissionMegaZap.sol#268)
+FissionPeriphery.zapHbarToSy(address,address,uint256) (src/periphery/FissionPeriphery.sol#347-402) ignores return value by ISaucerSwapV2Router(V2_ROUTER).exactInputSingle(ISaucerSwapV2Router.ExactInputSingleParams({tokenIn:WHBAR,tokenOut:USDC,fee:POOL_FEE,recipient:address(this),deadline:block.timestamp,amountIn:swapAmount,amountOutMinimum:0,sqrtPriceLimitX96:0})) (src/periphery/FissionPeriphery.sol#371-382)
+FissionPeriphery.buySyForYt(address,uint256,uint256,address,uint256) (src/periphery/FissionPeriphery.sol#438-469) ignores return value by m.splitTo(syIn,address(this),receiver) (src/periphery/FissionPeriphery.sol#462)
+FissionPeriphery.buySyForLp(address,uint256,uint16,uint256,uint256,address,uint256) (src/periphery/FissionPeriphery.sol#476-527) ignores return value by m.swapExactSyForPt(syForPt,ptOutFromSwap,address(this)) (src/periphery/FissionPeriphery.sol#514)
+FissionZap.zapHbarToSy(address,uint256,uint256,uint256,uint128,address) (src/periphery/FissionZap.sol#130-191) ignores return value by IHTSERC20(WHBAR).approve(SAUCER_V2_ROUTER,swapAmount) (src/periphery/FissionZap.sol#149)
+FissionZap.zapHbarToSy(address,uint256,uint256,uint256,uint128,address) (src/periphery/FissionZap.sol#130-191) ignores return value by ISaucerSwapV2Router(SAUCER_V2_ROUTER).exactInputSingle(params) (src/periphery/FissionZap.sol#160)
+FissionZap.zapHbarToSy(address,uint256,uint256,uint256,uint128,address) (src/periphery/FissionZap.sol#130-191) ignores return value by IHTSERC20(USDC).approve(sy,usdcBal) (src/periphery/FissionZap.sol#166)
+FissionZap.zapHbarToSy(address,uint256,uint256,uint256,uint128,address) (src/periphery/FissionZap.sol#130-191) ignores return value by IHTSERC20(WHBAR).approve(sy,whbarBal) (src/periphery/FissionZap.sol#167)
+SYBase._mintShares(address,uint256) (src/sy/SYBase.sol#149-156) ignores return value by HtsHelpers.mintToTreasury(shareToken,amount) (src/sy/SYBase.sol#152)
+SYBase._burnShares(address,uint256) (src/sy/SYBase.sol#162-170) ignores return value by HtsHelpers.burnFromTreasury(shareToken,amount) (src/sy/SYBase.sol#166)
+SY_SaucerSwapV2LP.redeemLiquidity(uint256,uint256,uint256,address) (src/sy/SY_SaucerSwapV2LP.sol#328-363) ignores return value by npm.collect(IUniswapV3PositionManager.CollectParams({tokenId:positionTokenId,recipient:receiver,amount0Max:type()(uint128).max,amount1Max:type()(uint128).max})) (src/sy/SY_SaucerSwapV2LP.sol#355-360)
+SaucerSwapLPYieldSource.redeemLiquidity(uint256,uint256,uint256,address) (src/sy/SaucerSwapLPYieldSource.sol#303-334) ignores return value by npm.collect(IUniswapV3PositionManager.CollectParams({tokenId:positionTokenId,recipient:receiver,amount0Max:type()(uint128).max,amount1Max:type()(uint128).max})) (src/sy/SaucerSwapLPYieldSource.sol#326-331)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-return
+. analyzed (77 contracts with 58 detectors), 125 result(s) found

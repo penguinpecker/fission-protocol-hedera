@@ -141,12 +141,66 @@ const SELECTOR_TO_EVENT = {
   "0x047a7060": "redeem",             // unzapSyToHbar(address,uint256,uint256,uint256)
 };
 
+// Selectors whose first argument is the *market* address (decoded into
+// activity_log.market_address so the UI can filter rows by market).
+const MARKET_ARG0_SELECTORS = new Set([
+  "0xbf35db06","0x690b343f","0xc158091f","0x15ee88c3","0xcff15d64","0xd1e04b89","0x82b1d54d",
+  "0x2704fe5e","0x56cb65ef","0x38307f7b","0x151bf8f1","0x485eb750",
+  "0x3ab0458a","0xa6be33fe","0xcbf84c49","0x171109ef","0x33b1da21","0x01829011","0xde01e48e",
+]);
+
+// Selectors whose first argument is a *SY adapter* address (not a market).
+// We leave market_address NULL for these — the action isn't market-scoped.
+const SY_ARG0_SELECTORS = new Set([
+  "0xe056955f","0x05b74d3d","0x5cd4b2ba","0x047a7060",
+]);
+
 function decodeSelector(callData) {
   if (!callData) return { selector: null, event: null };
   const sel = callData.startsWith("0x")
     ? callData.slice(0, 10).toLowerCase()
     : `0x${callData.slice(0, 8).toLowerCase()}`;
   return { selector: sel, event: SELECTOR_TO_EVENT[sel] ?? null };
+}
+
+// First-arg address decode. callData = `0xSSSS....` where SSSS is the 4-byte
+// selector. Arg-0 (if address) lives at bytes 4..36 of the raw payload, i.e.
+// hex chars 10..74 of the `0x...` string. Address occupies the rightmost 20
+// bytes (40 hex) of that 32-byte slot.
+function decodeArg0Address(callData) {
+  if (!callData || callData.length < 74) return null;
+  const slot = callData.startsWith("0x") ? callData.slice(10, 74) : callData.slice(8, 72);
+  if (slot.length !== 64) return null;
+  const addr = `0x${slot.slice(24).toLowerCase()}`;
+  if (!/^0x[0-9a-f]{40}$/.test(addr)) return null;
+  if (addr === "0x0000000000000000000000000000000000000000") return null;
+  return addr;
+}
+
+// Mirror Node returns `from` as the long-zero alias (`0x000…00<num>`) for
+// Hedera-native accounts even when the account has an ECDSA EVM alias. The
+// frontend queries activity_log by the user's ECDSA address, so storing the
+// long-zero loses every row. Resolve once via `/accounts/{from}` and cache.
+const evmAliasCache = new Map();
+async function resolveEvmAlias(addr) {
+  if (!addr) return addr;
+  const lower = addr.toLowerCase();
+  if (evmAliasCache.has(lower)) return evmAliasCache.get(lower);
+  try {
+    const r = await fetch(`${MIRROR}/accounts/${lower}`);
+    if (!r.ok) {
+      evmAliasCache.set(lower, lower);
+      return lower;
+    }
+    const j = await r.json();
+    const alias = (j?.evm_address ?? "").toLowerCase();
+    const canonical = /^0x[0-9a-f]{40}$/.test(alias) ? alias : lower;
+    evmAliasCache.set(lower, canonical);
+    return canonical;
+  } catch {
+    evmAliasCache.set(lower, lower);
+    return lower;
+  }
 }
 
 // Convert mirror's "seconds.nanos" string to an ISO timestamptz.
@@ -210,8 +264,17 @@ async function knownKeys(rows) {
   return new Set(existing.map((r) => `${r.tx_hash}|${r.event_type}|${r.address}`));
 }
 
+// Cursor: last consensus timestamp ("seconds.nanos") we've seen per contract.
+// On first poll we go desc + limit; subsequent polls use timestamp=gt:<last>
+// + order=asc so we never drop rows under burst load.
+const lastSeenTsByContract = new Map();
+
 async function pollContract(c) {
-  const r = await fetch(`${MIRROR}/contracts/${c.evm}/results?order=desc&limit=${PER_CONTRACT_LIMIT}`);
+  const lastSeen = lastSeenTsByContract.get(c.evm);
+  const url = lastSeen
+    ? `${MIRROR}/contracts/${c.evm}/results?timestamp=gt:${lastSeen}&order=asc&limit=${PER_CONTRACT_LIMIT}`
+    : `${MIRROR}/contracts/${c.evm}/results?order=desc&limit=${PER_CONTRACT_LIMIT}`;
+  const r = await fetch(url);
   if (!r.ok) {
     console.error(JSON.stringify({ t: new Date().toISOString(), step: "fetch_mirror", contract: c.name, status: r.status }));
     return { fetched: 0, inserted: 0, skipped: 0 };
@@ -219,24 +282,39 @@ async function pollContract(c) {
   const j = await r.json();
   const results = j.results ?? [];
   let skipped = 0;
-  const candidates = results.map((res) => {
+  const candidates = await Promise.all(results.map(async (res) => {
     const { selector, event } = decodeSelector(res.function_parameters);
     if (!event) {
       skipped++;
       return null;
     }
+    // Resolve from → ECDSA EVM alias (Mirror returns long-zero alias for
+    // Hedera-native accounts, which the frontend can't query by).
+    const fromRaw = (res.from ?? "").toLowerCase();
+    const address = fromRaw ? await resolveEvmAlias(fromRaw) : "";
+
+    // Decode market_address. Direct market call → c.evm. Router-mediated →
+    // first arg of the call data when it's an address. Otherwise NULL.
+    let marketAddress = null;
+    if (c.market) {
+      marketAddress = c.evm;
+    } else if (MARKET_ARG0_SELECTORS.has(selector)) {
+      marketAddress = decodeArg0Address(res.function_parameters);
+    }
+    // SY_ARG0_SELECTORS deliberately leave market_address NULL — the user
+    // is interacting with the SY layer, not a specific market.
+
     return {
-      address: (res.from ?? "").toLowerCase(),
+      address,
       chain_id: CHAIN_ID,
       tx_hash: res.hash,
       event_type: event,
-      // When called via the market itself, log against that market;
-      // otherwise log against the calling contract for grouping.
-      market_address: c.market ? c.evm : c.evm,
+      market_address: marketAddress,
       payload: {
         contract: c.name,
         contract_evm: c.evm,
         selector,
+        from_raw: fromRaw,
         to: res.to,
         amount_tinybars: res.amount,
         gas_used: res.gas_used,
@@ -247,10 +325,25 @@ async function pollContract(c) {
       },
       block_number: res.block_number ?? null,
       block_timestamp: mirrorTsToIso(res.timestamp),
+      _ts_raw: res.timestamp,
     };
-  }).filter((row) => row && row.tx_hash);
+  })).then((arr) => arr.filter((row) => row && row.tx_hash));
+
+  // Advance the cursor regardless of insert outcome — we don't want to
+  // re-fetch the same rows next tick. Use the max timestamp from results
+  // (works for both asc and desc orderings).
+  const allTimestamps = results.map((res) => res.timestamp).filter(Boolean);
+  if (allTimestamps.length) {
+    const maxTs = allTimestamps.reduce((a, b) => (Number(a) > Number(b) ? a : b));
+    const existing = lastSeenTsByContract.get(c.evm);
+    if (!existing || Number(maxTs) > Number(existing)) {
+      lastSeenTsByContract.set(c.evm, maxTs);
+    }
+  }
 
   if (!candidates.length) return { fetched: results.length, inserted: 0, skipped };
+  // Strip _ts_raw before insert (column doesn't exist).
+  candidates.forEach((row) => delete row._ts_raw);
   const seen = await knownKeys(candidates);
   const fresh = candidates.filter((row) => !seen.has(`${row.tx_hash}|${row.event_type}|${row.address}`));
   if (!fresh.length) return { fetched: results.length, inserted: 0, skipped };
@@ -259,18 +352,32 @@ async function pollContract(c) {
   return { fetched: results.length, inserted: fresh.length, skipped };
 }
 
+// Re-entry guard. If a tick runs longer than INTERVAL_MS, setInterval would
+// otherwise launch a concurrent tick — racing knownKeys() against in-flight
+// inserts and (worst case) double-inserting the same rows. Skip rather than
+// queue: the next tick will catch up via the cursor.
+let isTicking = false;
 async function tick() {
+  if (isTicking) {
+    console.warn(JSON.stringify({ t: new Date().toISOString(), msg: "tick_skip_overlap" }));
+    return;
+  }
+  isTicking = true;
   const started = Date.now();
   let totalFetched = 0, totalInserted = 0, totalSkipped = 0;
-  for (const c of CONTRACTS) {
-    try {
-      const { fetched, inserted, skipped } = await pollContract(c);
-      totalFetched += fetched;
-      totalInserted += inserted;
-      totalSkipped += skipped;
-    } catch (e) {
-      console.error(JSON.stringify({ t: new Date().toISOString(), contract: c.name, error: e instanceof Error ? e.message : String(e) }));
+  try {
+    for (const c of CONTRACTS) {
+      try {
+        const { fetched, inserted, skipped } = await pollContract(c);
+        totalFetched += fetched;
+        totalInserted += inserted;
+        totalSkipped += skipped;
+      } catch (e) {
+        console.error(JSON.stringify({ t: new Date().toISOString(), contract: c.name, error: e instanceof Error ? e.message : String(e) }));
+      }
     }
+  } finally {
+    isTicking = false;
   }
   const ms = Date.now() - started;
   console.log(JSON.stringify({ t: new Date().toISOString(), fetched: totalFetched, inserted: totalInserted, skipped: totalSkipped, ms }));
