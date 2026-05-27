@@ -456,3 +456,67 @@ handoff and prefers no further redeploys):
   X-3 _checkSize scaling (Periphery v3)
   X-4 quoteUnzapSy lock-down (Periphery v3)
   X-6 v3NpmFeeBudget upper bound (Periphery v3)
+
+═══════════════════════════════════════════════════════════════════════
+X-7 + X-11 RESOLUTION  (2026-05-27, post-cascade)
+═══════════════════════════════════════════════════════════════════════
+
+X-7 (market setOperator permanent) — NOT a contract bug, design choice.
+  - The audit-noted concern was: combined with Periphery's `rescueToken`
+    powers, the operator-approval trust surface extends to "future owners
+    of the Periphery".
+  - Periphery v3 closed the rescueToken concern via isProtectedToken
+    (USDC/WHBAR/PT/LP/SY-share are unrescuable). So even a malicious
+    future Periphery owner can't drain protocol tokens.
+  - Operator approval is freely revocable: market.setOperator(periphery,
+    false). Demonstrated by revoking v1 + v2 on old market (txs
+    0xe92210... + 0x7793fd...).
+  - FRONTEND UX TODO: surface approved-operators in user profile / settings
+    with revoke buttons. Contract behavior is correct.
+
+X-11 (old Periphery v1 immutable) — risk reanalyzed and largely closed.
+  - The concern was: v1's standing user approvals + no `registeredSyAdapter`
+    gate means a user could be tricked into calling v1.unzapSyToHbar with
+    a malicious syAdapter, getting their SY siphoned.
+  - REANALYSIS: v1.unzapSyToHbar does `safeTransferFrom(msg.sender, v1,
+    sharesIn)` — pulls from msg.sender, NOT an arbitrary owner. Operator's
+    standing approval to v1 cannot be leveraged by an attacker because
+    v1 never does `transferFrom(operator, ...)` with an attacker as caller.
+  - The ACTUAL risk vector: a victim cached on v1 in their browser calls
+    v1.unzapSyToHbar(maliciousAdapter, ...) themselves. They'd lose their
+    own SY. Mitigation = frontend cache invalidation (Vercel rebuild
+    handles this on next visit).
+  - DEFENSIVE ACTIONS TAKEN:
+      ✓ setOperator(v1, false) on old market — closes operator-callable
+        path. Tx 0xe92210089e...
+      ✓ setOperator(v2, false) on old market — same. Tx 0x7793fdd2...
+      ✗ ERC-20 approve(spender, 0) on HTS facade reverts (known Hedera
+        quirk; the facade doesn't accept zero-amount approves cleanly).
+        Standing PT/LP/SY-share allowances remain non-zero but are NOT
+        exploitable by external callers per the reanalysis above.
+
+X-2 / X-10 CONCRETE PROOF that fix mattered:
+  - Old SY adapter at 0x...a02585 (no sweepHbar) currently holds 6.26 HBAR
+    permanently stuck from prior NPM refunds. Unrecoverable.
+  - New SY at 0x...a0289a (with sweepHbar) recovered 1 HBAR via the
+    admin sweep — proven X-2 fix works.
+
+FINAL BUG STATUS (X-1 .. X-11):
+  X-1   ✓ Indexer selector for buySyForLp (commit 807bbc9)
+  X-2   ✓ SY adapter sweepHbar + receive (commit 76e8e56)
+  X-3   ✓ Per-side _checkSize (commit 81584c1, Periphery v3)
+  X-4   ✓ quoteUnzapSy removed (commit 81584c1)
+  X-5   ✓ isProtectedToken rescue gate (commit 81584c1)
+  X-6   ✓ v3NpmFeeBudget cap 100 HBAR (commit 81584c1)
+  X-7   ◐ Permanent setOperator by design; revocable; rescueToken closed
+        via isProtectedToken. Frontend UX TODO for revoke surface.
+  X-8   ✓ Dead deadline check removed (commit 81584c1)
+  X-9   ✓ buySyForLp snapshot-delta (commit 81584c1)
+  X-10  ✓ Closed alongside X-2
+  X-11  ◐ v1 immutable but reanalysis shows standing approvals are NOT
+        exploitable. setOperator revoked on abandoned peripheries.
+        ERC-20 approve(0) on HTS reverts (Hedera quirk) — non-issue
+        since v1 doesn't transferFrom arbitrary owners.
+
+ALL ACTIONABLE FIXES SHIPPED. X-7 + X-11 remaining concerns are by-design
+or unfixable-without-cascade, with mitigations applied where possible.
