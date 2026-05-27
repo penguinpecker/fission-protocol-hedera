@@ -708,3 +708,25 @@ REACT #310 (CRITICAL — landed before this pass)
   Vercel cron (gated by CRON_SECRET, route not yet built — backlog).
 
 ═══════════════════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════════════════
+MIGRATION APPLIED 2026-05-27 22:30 IST (16:00 UTC)
+═══════════════════════════════════════════════════════════════════════════════
+
+supabase/migrations/20260527230000_lock_users_rls_and_nonces_cleanup.sql
+applied via Supabase Management API (POST /v1/projects/<ref>/database/query)
+using user-supplied Personal Access Token (token NOT logged here).
+
+Verified end-to-end:
+  - pg_policies: users_select_anyone DROPPED, users_select_self CREATED
+    (SELECT, authenticated only, USING (lower(address) = public.jwt_address()))
+  - information_schema.role_table_grants: anon SELECT on public.users REVOKED
+    (grantee=anon → empty result)
+  - public.auth_nonces_active_idx CREATED (partial: WHERE consumed_at IS NULL)
+  - public.auth_nonces: 115 → 0 rows (all consumed; 1-day TTL deletion)
+  - End-to-end: anon REST `GET /rest/v1/users?select=address,twitter_handle`
+    returns HTTP 401-equiv: 42501 "permission denied for table users"
+    (was leaking 8 rows pre-lockdown). PII closed.
+
+Backlog still open: schedule periodic auth_nonces cleanup
+(Vercel cron route `/api/auth/cleanup` gated by CRON_SECRET, not yet built).
