@@ -730,3 +730,57 @@ Verified end-to-end:
 
 Backlog still open: schedule periodic auth_nonces cleanup
 (Vercel cron route `/api/auth/cleanup` gated by CRON_SECRET, not yet built).
+
+═══════════════════════════════════════════════════════════════════════════════
+PASS-4 (whole-project scope, third "are u sure" probe)
+═══════════════════════════════════════════════════════════════════════════════
+
+Stale-closure exhaustive-deps warnings (3) — REAL but practically inert:
+  - SellPtForm.tsx:194 `runApprove` deps had `parsedPt` (unused in body)
+    → removed
+  - SellYtForm.tsx:271 `runSell` deps missed `detail.sy` (used at line 91
+    in `args: [detail.sy, ...]`) → added
+  - sy/page.tsx:246 unzap callback deps missed `detail.sy` (used at line 58
+    in `args: [detail.sy, ...]`) → added
+  In-practice impact zero because the form components remount on URL
+  change (route param `[address]`), so detail.sy reference is fresh per
+  mount. But the rule was right; closures should always pin their deps.
+  Local `npm run build` passes, lint = 0 errors / 1 warning (the
+  layout.tsx Google-Fonts <link> tag, perf-only).
+
+Other Railway services in the user's workspace (discovered, NOT new):
+  - `fission-indexer` (project: fission-indexer) — the activity-log poller
+  - `fission-cache-cron` (project: fission-cache-cron) — separate
+    Railway worker that POSTs /api/markets/refresh every 60s with
+    CRON_SECRET. Verified live: 200 OK every minute, refreshes 6 markets
+    (latest seen 16:54 UTC).
+  These are two different Railway *projects* (not services within one
+  project) so `railway status` inside `cron-indexer/` only sees the
+  fission-indexer service. Worth documenting because future investigation
+  by anyone (myself included) will look at one project and conclude the
+  cache cron is missing — it isn't.
+
+Dead code in repo (legacy, kept for source-history reasons):
+  - `keeper/` — "Off-chain rate poster for Fission SY adapters. Reads
+    source-of-truth rates from Stader / SaucerSwap V1 / Bonzo and posts
+    to the on-chain SY contracts with bps + interval gating." Written
+    for the old SY architecture that needed off-chain rate oracles.
+    The current SY (SaucerSwapLPYieldSource v2) derives rate from LP
+    token value on-chain — no off-chain posting needed. NOT deployed to
+    any Railway service. Safe to delete on next cleanup pass; left in
+    tree because deletion is irreversible and there's no urgency.
+
+CI status: NOT enabled
+  `.github/workflows/` does not exist. `.ci-staging/workflows/` contains
+  contracts.yml + frontend.yml but they've never been activated. So
+  `gh run list` returns empty — no CI to fail, but also no automated
+  verification on push. Lint + typecheck + build now ALL pass locally;
+  copying the staged workflows to .github/workflows/ would enable a
+  proper CI gate. Deferred — user-call to activate (visible-state change).
+
+PAT exposure check:
+  `git grep "sbp_d6e0"` → nothing
+  `grep "sbp_d6e0" records.txt` → nothing
+  `git log -S "sbp_d6e0"` → nothing
+  PAT exists ONLY in this Claude Code conversation transcript. User
+  should rotate at https://supabase.com/dashboard/account/tokens.

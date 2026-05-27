@@ -191,7 +191,7 @@ export function SellPtForm({ market, detail, user }: Props) {
       setFlowState({ kind: "error", message: msg, failedAt: "approve" });
       return false;
     }
-  }, [adapter, detail.pt, parsedPt, ptRead, spender, user]);
+  }, [adapter, detail.pt, ptRead, spender, user]);
 
   const runSell = useCallback(async (): Promise<bigint | null> => {
     // Tx 1: PT → SY via Periphery.sellPtForSy. Returns SY shares the user just received.

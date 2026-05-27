@@ -268,7 +268,7 @@ export function SellYtForm({ market, detail, user }: Props) {
     } finally {
       chainInFlight.current = false;
     }
-  }, [adapter, detail.syShare, expired, insufficient, market, minSyOut, parsedYt, sizeLimit.exceeded, syAllowance, syAllowanceRead, user]);
+  }, [adapter, detail.sy, detail.syShare, expired, insufficient, market, minSyOut, parsedYt, sizeLimit.exceeded, syAllowance, syAllowanceRead, user]);
 
   const isPending =
     adapter.isWritePending ||

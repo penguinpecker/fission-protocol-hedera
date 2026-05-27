@@ -243,7 +243,7 @@ function SellSyForm({ market, detail, user }: FormProps) {
       setWriteError(msg);
       setFlowState({ kind: "error", message: msg, failedAt: needsApprove ? "approve" : "sell" });
     }
-  }, [adapter, detail.syShare, insufficient, minHbarOutTinybar, needsApprove, parsedSy, reads, unzapDeployed, user]);
+  }, [adapter, detail.sy, detail.syShare, insufficient, minHbarOutTinybar, needsApprove, parsedSy, reads, unzapDeployed, user]);
 
   /* ─────────────────────────── UI */
 
