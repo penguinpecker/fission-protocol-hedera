@@ -799,3 +799,46 @@ CI staged workflows — DO NOT ACTIVATE without rewriting first:
     `forge fmt --check` step.
   Net: copying these to .github/workflows/ as-is would mean every push
   goes red. Defer activation until rewrites are made.
+
+═══════════════════════════════════════════════════════════════════════════════
+ORPHAN-MARKET DRAIN 2026-05-27 22:50 IST
+═══════════════════════════════════════════════════════════════════════════════
+
+Initial scope estimate was ~$8 — wrong by 200x. Actual on-chain LP holdings
+across the 3 orphan markets totaled ~$1,682 in SY-share face value. User
+confirmed "drain SY now, hold PT for expiry" so the AMM was not touched.
+
+Drained 3 orphans via operator-keyed market.removeLiquidity + sy.redeemLiquidity:
+  - Market 0x3aCDD09b (SY=0x...a02585 OLD)  LP=69,892,233 → 0
+  - Market 0x556938Ac (SY=0x...a02585 OLD)  LP=1,456,754,373 → 0
+  - Market 0x15DeA525 (SY=0x...A0289A NEW)  LP=145,913,300 → 0
+
+Key script-logic correction during dry-run: original script read operator's
+TOTAL shareToken balance after removeLiquidity and would have passed that
+to sy.redeemLiquidity — which would have ALSO drained the operator's
+intentional canonical-market SY position (1.3B shares). Fixed to snapshot
+balance pre-removeLiquidity and redeem only the delta.
+
+Recovered now (operator wallet, post-drain): 49.27 USDC + 578.06 WHBAR
+  ≈ $78 USD-equiv (HBAR≈$0.05). Lower than the $1,682 SY-face-value because
+  the V3 NPM positions backing the orphan SY adapters are partially
+  depleted relative to their share-supply (cascade iterations seeded with
+  partial liquidity). The drain extracted everything extractable now.
+
+PT held by operator (await 2026-08-25 expiry, then redeemAfterExpiry):
+  - 0x...A02589 (m1):    70,039,373 PT
+  - 0x...a0259F (m2): 1,447,576,920 PT
+  - 0x...A0289d (m3): 1,459,142,007 PT
+  Total: 2,976,758,300 PT. Face value at expiry: each PT redeems 1:1 for SY
+  which unwinds via the V3 NFT. Estimated max ~$1,563 if NPM positions still
+  contain proportional underlying — real recovery may be less.
+
+Script: scripts/drain-orphans.mjs (driven by NEW_DEPLOYER_KEY).
+6 contract-execute txs total: 3× removeLiquidity + 3× redeemLiquidity.
+All SUCCESS per receipts.
+
+Backlog: post-2026-08-25 second-leg drain
+  Around 2026-08-25 (expiries: 04:14 UTC / 04:33 UTC / 19:30 UTC), call
+  market.redeemAfterExpiry for each of the 3 PT holdings → operator gets
+  SY shares → sy.redeemLiquidity → operator gets USDC + WHBAR. Add a
+  reminder.
