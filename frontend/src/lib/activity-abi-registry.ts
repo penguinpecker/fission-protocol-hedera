@@ -24,6 +24,7 @@ import {
   fissionZapAbi,
   syWriteAbi,
   marketWriteAbi,
+  fissionPeripheryAbi,
 } from "./abis-write";
 
 // viem's `decodeFunctionData` only needs the *function* entries — it ignores
@@ -42,14 +43,23 @@ export interface RegistryEntry {
   abi: AbiList;
 }
 
+// ─── current live contracts (2026-05-27 cascade) ───
+const FACTORY_V3 = "0x799549f698bbbac90b9e1c37ef3946a1a1d3397c";
+const PERIPHERY_V3 = "0x0000000000000000000000000000000000a02731";
+const LENS_V3 = "0xa1aafc8c11a686a3dee5dfe8b19d9eb43d321969";
+const MARKET_V3 = "0xfd33ccb2385ec20c4b7bc682712fb92e01e87d5f";
+const SY_V3 = "0x0000000000000000000000000000000000a0289a";
+const SY_SHARE_V3 = "0x0000000000000000000000000000000000a0289b";
+const PT_V3 = "0x0000000000000000000000000000000000a028aa";
+const YT_V3 = "0x0000000000000000000000000000000000a028ab";
+const LP_V3 = "0x0000000000000000000000000000000000a028ac";
+
+// ─── legacy contracts (still on-chain for archived activity rows) ───
 const ROUTER = "0x00000000000000000000000000000000009fd993";
 const FACTORY = "0x00000000000000000000000000000000009fb0b3";
 const ZAP = "0x00000000000000000000000000000000009fd984";
-
-// Market 0 is reachable via two EVM addresses (see file header).
 const MARKET_0_CREATE2 = "0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d";
 const MARKET_0_LONGZERO = "0x00000000000000000000000000000000009fb0b4";
-
 const SY_LP = "0x00000000000000000000000000000000009fb089";
 const SY_SHARE_TOKEN = "0x00000000000000000000000000000000009fb08b";
 const PT_TOKEN = "0x00000000000000000000000000000000009fb0b5";
@@ -67,16 +77,27 @@ const syAbiAll: AbiList = merge(syAbi, syWriteAbi);
 const erc20AbiAll: AbiList = merge(erc20Abi, erc20WriteAbi);
 
 export const ACTIVITY_REGISTRY: Record<string, RegistryEntry> = {
-  [ROUTER]: { name: "ActionRouter", abi: routerAbi },
-  [FACTORY]: { name: "FissionFactory", abi: factoryAbi },
-  [ZAP]: { name: "FissionZap", abi: fissionZapAbi },
-  [MARKET_0_CREATE2]: { name: "Market 0", abi: marketAbiAll },
-  [MARKET_0_LONGZERO]: { name: "Market 0", abi: marketAbiAll },
-  [SY_LP]: { name: "SY adapter", abi: syAbiAll },
-  [SY_SHARE_TOKEN]: { name: "SY share token", abi: erc20AbiAll },
-  [PT_TOKEN]: { name: "PT-SS-V2-90D", abi: erc20AbiAll },
-  [YT_TOKEN]: { name: "YT-SS-V2-90D", abi: erc20AbiAll },
-  [LP_TOKEN]: { name: "LP-SS-V2-90D", abi: erc20AbiAll },
+  // Current live (2026-05-27 cascade)
+  [FACTORY_V3]: { name: "FissionFactory", abi: factoryAbi },
+  [PERIPHERY_V3]: { name: "FissionPeriphery", abi: fissionPeripheryAbi },
+  [LENS_V3]: { name: "FissionLens", abi: marketAbi /* placeholder */ },
+  [MARKET_V3]: { name: "Market", abi: marketAbiAll },
+  [SY_V3]: { name: "SY adapter", abi: syAbiAll },
+  [SY_SHARE_V3]: { name: "SY-USDC-WHBAR", abi: erc20AbiAll },
+  [PT_V3]: { name: "PT-USDC-WHBAR-v3", abi: erc20AbiAll },
+  [YT_V3]: { name: "YT-USDC-WHBAR-v3", abi: erc20AbiAll },
+  [LP_V3]: { name: "LP-USDC-WHBAR-v3", abi: erc20AbiAll },
+  // Legacy (kept so archived activity rows still decode)
+  [ROUTER]: { name: "ActionRouter (archived)", abi: routerAbi },
+  [FACTORY]: { name: "FissionFactory (archived)", abi: factoryAbi },
+  [ZAP]: { name: "FissionZap (archived)", abi: fissionZapAbi },
+  [MARKET_0_CREATE2]: { name: "Market 0 (archived)", abi: marketAbiAll },
+  [MARKET_0_LONGZERO]: { name: "Market 0 (archived)", abi: marketAbiAll },
+  [SY_LP]: { name: "SY adapter (archived)", abi: syAbiAll },
+  [SY_SHARE_TOKEN]: { name: "SY share (archived)", abi: erc20AbiAll },
+  [PT_TOKEN]: { name: "PT-SS-V2-90D (archived)", abi: erc20AbiAll },
+  [YT_TOKEN]: { name: "YT-SS-V2-90D (archived)", abi: erc20AbiAll },
+  [LP_TOKEN]: { name: "LP-SS-V2-90D (archived)", abi: erc20AbiAll },
 };
 
 export function lookupContract(address: string | undefined | null): {
@@ -118,11 +139,19 @@ export interface TokenInfo {
 const SS_SUFFIX = "SS-V2-90D";
 
 export const TOKEN_INFO: Record<string, TokenInfo> = {
+  // Current live (2026-05-27 cascade)
+  [SY_SHARE_V3]: { symbol: "fSY-USDC-WHBAR", decimals: 18, kind: "sy" },
+  [SY_V3]: { symbol: "fSY-USDC-WHBAR", decimals: 18, kind: "sy" },
+  [PT_V3]: { symbol: "fPT-USDC-WHBAR", decimals: 18, kind: "pt" },
+  [YT_V3]: { symbol: "fYT-USDC-WHBAR", decimals: 18, kind: "yt" },
+  [LP_V3]: { symbol: "fLP-USDC-WHBAR", decimals: 18, kind: "lp" },
+  // Legacy tokens (still pricable for archived activity)
   [SY_SHARE_TOKEN]: { symbol: `SY-${SS_SUFFIX}`, decimals: 18, kind: "sy" },
   [SY_LP]: { symbol: `SY-${SS_SUFFIX}`, decimals: 18, kind: "sy" },
   [PT_TOKEN]: { symbol: `PT-${SS_SUFFIX}`, decimals: 18, kind: "pt" },
   [YT_TOKEN]: { symbol: `YT-${SS_SUFFIX}`, decimals: 18, kind: "yt" },
   [LP_TOKEN]: { symbol: `LP-${SS_SUFFIX}`, decimals: 18, kind: "lp" },
+  // External
   "0x000000000000000000000000000000000006f89a": { symbol: "USDC", decimals: 6, kind: "usdc" },
   "0x0000000000000000000000000000000000163b5a": { symbol: "WHBAR", decimals: 8, kind: "whbar" },
   "0x0000000000000000000000000000000000163b59": { symbol: "WHBAR", decimals: 8, kind: "whbar" },
@@ -178,7 +207,29 @@ export function actionLabel(contractLabel: string, functionName: string): string
     case "claimRewards":
       return "Claim rewards";
     case "zapHbarToSy":
-      return "Zap HBAR → SY";
+      return "Mint SY";
+    // Periphery v3 (2026-05-27)
+    case "buySyForPt":
+      return "Buy PT";
+    case "buySyForYt":
+      return "Buy YT";
+    case "buySyForLp":
+      return "Add liquidity";
+    case "sellPtForSy":
+      return "Sell PT";
+    case "sellYtForSy":
+      return "Sell YT";
+    case "sellLpForSy":
+      return "Remove liquidity";
+    case "unzapSyToHbar":
+      return "Unzap SY → HBAR";
+    case "marketSetOperator":
+    case "setOperator":
+      return "Set operator";
+    case "registerMarket":
+      return "Register market";
+    case "sweepHbar":
+      return "Sweep HBAR";
     case "approve":
       return `Approve ${contractLabel}`;
     case "transfer":
@@ -342,12 +393,53 @@ export function pickPrimaryArg(
     case "claimRewards":
       return null;
 
-    // ── FissionZap ──
+    // ── FissionZap (legacy) ──
     case "zapHbarToSy":
-      // (sy, usdcMinOut, amount0Min, amount1Min, minShares, receiver) — input is msg.value (HBAR),
-      // not in the calldata. Mirror Node's `amount` field on the tx is in tinybars; the route
-      // pulls that and overrides this branch. Return null here so the caller knows to use
-      // the msg.value path.
+      // Periphery v3 signature is zapHbarToSy(market, receiver, deadline) —
+      // input is msg.value (HBAR), not calldata. The route handles HBAR-in
+      // separately via Mirror Node's `amount` field.
+      return null;
+
+    // ── FissionPeriphery v3 (2026-05-27) ──
+    case "buySyForPt":
+    case "buySyForYt":
+    case "buySyForLp": {
+      // (market, syIn, ...) — syIn is index 1
+      const raw = bi(args[1]);
+      if (raw === null) return null;
+      // For the live market, surface SY-share as the spent token. For other
+      // markets the registry would need a market→shareToken lookup; v1 lives
+      // with one market so the constant is fine.
+      return { raw: raw.toString(), tokenAddress: SY_SHARE_V3 as `0x${string}`, side: "out" };
+    }
+    case "sellPtForSy": {
+      // (market, ptIn, minSyOut, receiver, deadline)
+      const raw = bi(args[1]);
+      if (raw === null) return null;
+      return { raw: raw.toString(), tokenAddress: PT_V3 as `0x${string}`, side: "out" };
+    }
+    case "sellYtForSy": {
+      // (market, ytIn, minSyOut, receiver, deadline)
+      const raw = bi(args[1]);
+      if (raw === null) return null;
+      return { raw: raw.toString(), tokenAddress: YT_V3 as `0x${string}`, side: "out" };
+    }
+    case "sellLpForSy": {
+      // (market, lpIn, minSyOut, receiver, deadline)
+      const raw = bi(args[1]);
+      if (raw === null) return null;
+      return { raw: raw.toString(), tokenAddress: LP_V3 as `0x${string}`, side: "out" };
+    }
+    case "unzapSyToHbar": {
+      // (syAdapter, sharesIn, minHbarOut, deadline)
+      const raw = bi(args[1]);
+      if (raw === null) return null;
+      return { raw: raw.toString(), tokenAddress: SY_SHARE_V3 as `0x${string}`, side: "out" };
+    }
+    case "marketSetOperator":
+    case "registerMarket":
+    case "sweepHbar":
+      // Admin ops — no user amount to display
       return null;
 
     // ── ERC-20 / HTS facade ──
