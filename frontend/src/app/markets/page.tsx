@@ -143,7 +143,7 @@ function MarketsBody() {
                   <Th>Market</Th>
                   <Th>Underlying</Th>
                   <Th align="right">Maturity</Th>
-                  <Th align="right">Implied APY</Th>
+                  <Th align="right" title="What PT buyers lock in at today's curve price. Like Pendle, this is curve-derived — moves with every trade, not a guaranteed yield.">PT Fixed APY</Th>
                   <Th align="right">Liquidity</Th>
                   <Th align="right">PT Price</Th>
                   <Th align="right">Vol 24h</Th>
@@ -195,6 +195,11 @@ interface MarketRow {
   expiryDate: string;
   expired: boolean;
   isRewards: boolean;
+  /** True when pool is operator-seeded only (no real market trades yet). UI
+   *  dims the implied APY in this state because the curve is calibration-
+   *  driven, not market-discovered. Pendle handles this the same way.
+   */
+  seeded: boolean;
 }
 
 function MarketRow({
@@ -302,7 +307,14 @@ function MarketRow({
         <span className="font-mono text-[13px] text-text">{underlying}</span>
       </Td>
       <NumTd dim={row.expired}>{row.expired ? "—" : `${row.daysLeft}d · ${row.expiryDate}`}</NumTd>
-      <NumTd accent>{row.expired ? "—" : `${row.impliedApy.toFixed(2)}%`}</NumTd>
+      <NumTd accent={!row.seeded} dim={row.seeded}>
+        {row.expired ? "—" : (
+          <span title={row.seeded ? "Pool is operator-seeded only. The curve hasn't seen real trades yet, so this rate is calibration-only and will move once organic Buy/Sell flow starts." : undefined}>
+            {`${row.impliedApy.toFixed(2)}%`}
+            {row.seeded && <span className="ml-1 text-[9px] uppercase tracking-[1.5px] text-warning">seed</span>}
+          </span>
+        )}
+      </NumTd>
       <NumTd>{tvlDisplay}</NumTd>
       <NumTd dim={row.expired}>{row.expired ? "—" : `${ptInSy.toFixed(4)} SY`}</NumTd>
       <NumTd dim>$—</NumTd>
@@ -494,12 +506,13 @@ function SideRow({ k, v }: { k: string; v: string }) {
   );
 }
 
-function Th({ children, align }: { children: React.ReactNode; align?: "right" }) {
+function Th({ children, align, title }: { children: React.ReactNode; align?: "right"; title?: string }) {
   return (
     <th
+      title={title}
       className={`whitespace-nowrap border-b border-border px-3 py-3.5 font-mono text-[10px] font-medium uppercase tracking-[0.2em] text-textDim sm:px-[18px] ${
         align === "right" ? "text-right" : "text-left"
-      }`}
+      } ${title ? "cursor-help" : ""}`}
     >
       {children}
     </th>
@@ -658,6 +671,10 @@ function buildRowsFromCache(
         : "—",
       expired,
       isRewards: m.market_type === "rewards",
+      // Heuristic for "operator-seeded only": tiny pool relative to a
+      // baseline (1B raw shares ≈ $1k backing at typical SY rates). Below
+      // this, the implied rate is calibration noise, not a market signal.
+      seeded: (m.total_sy_shares ? BigInt(m.total_sy_shares) : 0n) < 2_000_000_000n,
     };
   });
 }
@@ -706,6 +723,7 @@ function buildMarketRows(
       }),
       expired,
       isRewards: symbol.toLowerCase().includes("rwd"),
+      seeded: totalSy < 2_000_000_000n,
     });
   }
   return rows;
