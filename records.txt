@@ -995,3 +995,114 @@ DOC CLEANUP 2026-05-28 (per user: replace stale contract refs everywhere)
     actually-deployed SaucerSwapLPYieldSource v2.
   - README.md: already current per earlier work (2026-05-27 commit
     6771f0c). No edits this pass.
+
+═══════════════════════════════════════════════════════════════════════════════
+ SESSION SUMMARY 2026-05-27 → 2026-05-28 (consolidated)
+═══════════════════════════════════════════════════════════════════════════════
+
+Commits shipped this session (in order):
+  4e84970  fix(WalletGate): React #310 hooks-rule violation
+  42e2306  audit pass-3 — indexer fixes + RLS migration + lint + slither refresh
+  b0d4ef2  fix(frontend): unblock Vercel build after ESLint v9 migration
+  7f3a95d  records: log applied supabase RLS lockdown migration
+  4bccdf1  fix(forms): pin detail.sy in 2 stale-closure deps + remove unused parsedPt
+  f2db7ad  records: document why staged CI workflows aren't activated yet
+  a4f9e1d  scripts: drain-orphans.mjs + log 3-market drain outcomes
+  538962b  scripts: unwind-to-hbar.mjs — consolidate WHBAR+USDC back to native HBAR
+  37cfea5  scripts: add-canonical-lp.mjs + finish-canonical-lp.mjs — top up canonical
+  5c23a74  auth: server-side session revocation via public.sessions + jti claim
+  afefc7c  docs: replace stale contract refs with current canonical set
+  fbc4999  records: fix Factory address line in CURRENT STATE header
+
+What changed at the protocol/data layer:
+
+A. Smart contracts — UNCHANGED (no on-chain redeploys this session). The
+   canonical set from 2026-05-27 morning rebuild is still live:
+   Factory 0x799549F…, Periphery v3 0x…A02731, Lens 0xa1aAfc8…,
+   SY adapter 0x…A0289A, Market 0xfD33CCB….
+
+B. On-chain operator actions:
+   1. Drained 3 orphan markets (0x3aCDD09b, 0x556938Ac, 0x15DeA525) of all
+      operator LP. Recovered ~$78 USDC+WHBAR immediately. PT held for
+      Aug-25 redeemAfterExpiry second leg.
+   2. Unwound operator wallet to pure HBAR: USDC → WHBAR (SaucerSwap V2)
+      → native HBAR via WHBAR.withdraw. Net +1,152 HBAR to wallet.
+   3. Topped up canonical market LP by 1,000 HBAR: zapHbarToSy then
+      market.split + market.addLiquidity (buySyForLp couldn't run because
+      pool was too small for the AMM swap step). Pool grew 2.23x —
+      totalSy/totalPt/lpSupply all +123%.
+
+C. Frontend / database hardenings:
+   - Fixed React #310 in WalletGate (useState after early return).
+   - Supabase RLS lockdown on public.users (was anon-readable, now self-only).
+   - Indexer: long-zero → ECDSA alias resolution; market_address from
+     calldata arg-0 (was dead ternary); tick re-entry guard; cursor
+     pagination via timestamp=gt:.
+   - ESLint v9 migrated to flat config; pre-existing lint debt cleaned.
+   - Server-side session revocation: new public.sessions table tracking
+     every JWT by uuid `jti`. /api/auth/logout now revokes before
+     clearing cookie — captured cookies can't outlive logout. Verified
+     end-to-end: /me with same cookie after logout returns 401 (was 200).
+   - 3 stale-closure useCallback deps fixed (SellPtForm, SellYtForm,
+     sy/page.tsx).
+
+D. Docs / ops:
+   - records.txt prepended CURRENT STATE header (this header was added
+     2026-05-28).
+   - contracts.txt fully rewritten — was claiming pre-rebuild set as
+     "current"; now describes the 2026-05-27/28 canonical.
+   - frontend whitepaper page: "Nine contracts … FissionZap + MegaZap +
+     FissionUnzap + ActionRouter v3" → "Six contracts … FissionPeriphery
+     (single consolidated entry point)".
+   - docs/ARCHITECTURE.md ASCII diagram: ActionRouter UUPS box →
+     FissionPeriphery v3 box with the 6 deterministic 2-tx flows.
+
+E. Wallet state (operator 0.0.10495279 / 0xa7e1…11a7) at end of session:
+   HBAR        : ~262
+   USDC        : 0
+   WHBAR       : 0
+   LP (canonical): 1,307.92  (100% of pool supply 1,307.93)
+   SY-shares (loose): 1,308.46  (current SY adapter shareToken 0x…A0289B)
+   YT (canonical): 1,308.14
+   PT (canonical): 11.46  (dust from addLiquidity refund)
+   PT (orphans): 70.04 + 1,447.58 + 1,459.14 = 2,976.76 face value,
+                 redeemable at 2026-08-25 expiry
+
+F. Pending / deferred (your strategic calls):
+   - Funding gap: another 2-5k HBAR top-up would deepen canonical to
+     where $50-200 trades feel smooth.
+   - Timelock ownership handoff (FissionPeriphery owner = operator EOA;
+     should transfer to 2-of-2 ThresholdKey).
+   - 2026-08-25 calendar reminder: redeemAfterExpiry on 3 orphan PTs +
+     canonical LP exit decision.
+   - PAT rotation at https://supabase.com/dashboard/account/tokens —
+     the sbp_d6e0… token was shared in chat.
+   - CI workflows in .ci-staging/ — need rewrite (pnpm→npm + drop
+     forge-fmt + add slither config) before activation.
+
+G. Subagent watchdogs deployed this session (some, not all — user
+   explicitly flagged the gap mid-session):
+   - 4e84970 ✓  42e2306 ✓  b0d4ef2 ✓  37cfea5 ✓  5c23a74 ✓  fbc4999 ✓
+   - 7f3a95d, 4bccdf1, f2db7ad, a4f9e1d, 538962b, afefc7c missed.
+   Memory feedback updated 2026-05-28 with stronger no-skip language.
+
+H. Bugs found mid-execution + how they got caught:
+   - React #310 in WalletGate — caught by opera-browser-cli console probe,
+     not by build/lint (the code compiled fine).
+   - Supabase users PII leak — caught by anon REST query exposing 8 rows.
+   - Indexer's market_address dead ternary (c.market?c.evm:c.evm) —
+     caught by code review during sub-agent audit.
+   - ESLint v9 silently broken (no config) — caught when migration
+     surfaced 33 pre-existing errors that broke build.
+   - Stateless-session no-revoke — caught by E2E test where /me after
+     logout returned 200.
+   - Pre-flight orphan-drain script would have redeemed operator's
+     intentional canonical SY position too — caught in dry-run.
+   - WHBAR.withdraw needs HTS allowance from operator (unlike WETH9) —
+     caught when first withdraw attempt reverted TOKEN_NOT_ASSOCIATED.
+   - buySyForLp swap portion exceeds totalPt on tiny pool — caught when
+     1,453 SY zap was too big for the AMM, switched to split+addLiquidity.
+
+   Pattern: every bug found was discovered by ACTUALLY RUNNING the
+   thing end-to-end, not by reasoning at it. Browser-probe, on-chain
+   tx, REST query, dry-run — these are the safety net.
