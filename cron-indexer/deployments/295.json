@@ -29,9 +29,14 @@
     "evm": "0xa1aafc8c11a686a3dee5dfe8b19d9eb43d321969"
   },
   "sy_saucer_v2_lp": {
+    "id": "0.0.10496154",
+    "evm": "0x0000000000000000000000000000000000a0289a",
+    "notes": "SaucerSwapLPYieldSource v2 (X-2 fix): adds sweepHbar() so stuck NPM-refund HBAR is recoverable. Same source file. Old SY at 0x...a02585 abandoned."
+  },
+  "sy_saucer_v2_lp_v1_abandoned": {
     "id": "0.0.10495365",
     "evm": "0x0000000000000000000000000000000000a02585",
-    "notes": "SaucerSwapLPYieldSource. maxAutoAssoc=-1, NPM pre-approved at initShareToken."
+    "reason": "X-2 fix needed admin sweepHbar; v1 immutable. Superseded by 0x...a0289a."
   },
   "standard_deployer": {
     "id": "0.0.10495325",
@@ -43,13 +48,19 @@
   },
   "markets": [
     {
-      "id": "0.0.10495370",
-      "evm": "0x556938acfda70df2a32ea97e6b6862b874d93ef9",
-      "suffix": "USDC-WHBAR-2026-08-24-v2",
-      "expiry": 1787602983,
-      "sy": "0x0000000000000000000000000000000000a02585",
+      "id": "0.0.10496157",
+      "evm": "0xfd33ccb2385ec20c4b7bc682712fb92e01e87d5f",
+      "suffix": "USDC-WHBAR-2026-08-25-v3",
+      "expiry": 1787689574,
+      "sy": "0x0000000000000000000000000000000000a0289a",
       "anchor": "1.2e18",
       "scalarRoot": "5e18"
+    }
+  ],
+  "markets_archived": [
+    {
+      "evm": "0x556938acfda70df2a32ea97e6b6862b874d93ef9",
+      "reason": "Superseded by v3 market 0xfd33ccb2... after X-2 SY adapter fix"
     }
   ],
   "abandoned": {

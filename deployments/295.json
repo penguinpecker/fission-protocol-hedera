@@ -14,16 +14,16 @@
     "standardMarketDeployer": "0xdbDf8da50240F21DFc1ed6c44e3a5806AFDcC9bF",
     "rewardsMarketDeployer": "0x63A75EaaB07feeBc48226A6eaF3Cbb057614e537",
     "factory": "0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c",
-    "saucerSwapLPYieldSource": "0x0000000000000000000000000000000000a02585",
+    "saucerSwapLPYieldSource": "0x0000000000000000000000000000000000A0289A",
     "lens": "0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969",
     "periphery": "0x0000000000000000000000000000000000A02731"
   },
   "market": {
-    "address": "0x556938AcfDa70dF2A32ea97e6B6862B874d93ef9",
-    "expiry": "1787602983",
+    "address": "0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f",
+    "expiry": "1787657819",
     "scalarRoot": "5000000000000000000",
-    "suffix": "USDC-WHBAR-2026-08-24-v2",
-    "anchor": "1200000000000000000"
+    "suffix": "USDC-WHBAR-2026-08-25-v3",
+    "anchor": "1.2e18"
   },
   "previousMarkets": [
     {
@@ -52,5 +52,15 @@
       "X-9 buySyForLp delta-only"
     ],
     "previousPeriphery": "0x0000000000000000000000000000000000a025c1"
+  },
+  "previousSY": "0x0000000000000000000000000000000000a02585",
+  "previousMarket": "0x556938AcfDa70dF2A32ea97e6B6862B874d93ef9",
+  "xFixes_2_10_cascade": {
+    "ts": "2026-05-27T11:38:28.372Z",
+    "newSy": "0x0000000000000000000000000000000000A0289A",
+    "newMarket": "0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f",
+    "oldSy": "0x0000000000000000000000000000000000a02585",
+    "oldMarket": "0x556938AcfDa70dF2A32ea97e6B6862B874d93ef9",
+    "reason": "X-2 / X-10 fix: SY adapter now has sweepHbar() + receive() so stuck HBAR is recoverable."
   }
 }

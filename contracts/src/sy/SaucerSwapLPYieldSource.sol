@@ -155,6 +155,32 @@ contract SaucerSwapLPYieldSource is SYBase {
         emit ApprovedNpm(token1, MAX_HTS_APPROVE);
     }
 
+    // ───────────────────── admin: HBAR sweep (X-2 fix) ─────────────────────
+
+    error HbarSweepFailed();
+    event HbarSwept(address indexed to, uint256 amount);
+
+    /// @notice Sweep HBAR that accumulates in this contract from depositLiquidity
+    ///         flows where the V3 NPM consumed less mint fee than the caller
+    ///         forwarded. The Periphery sizes msg.value at v3NpmFeeBudget which
+    ///         is a conservative upper bound; the excess lands here and stays
+    ///         unrecoverable without this function.
+    /// @dev    Admin-only. Trust-equivalent to the Market's admin role; for
+    ///         the current single-admin operator this is the deployer. Transfer
+    ///         to Timelock when scaling user TVL.
+    function sweepHbar(address payable to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (to == address(0)) revert ZeroAddress();
+        if (amount == 0 || amount > address(this).balance) revert AmountZero();
+        (bool ok, ) = to.call{value: amount}("");
+        if (!ok) revert HbarSweepFailed();
+        emit HbarSwept(to, amount);
+    }
+
+    /// @dev Accept HBAR refunded by the V3 NPM mint flow (the NPM checks
+    ///      SELFBALANCE against the tinycents-priced mint fee; whatever
+    ///      remains stays here).
+    receive() external payable {}
+
     // ───────────────────── ERC-5115 deposit/redeem (disabled) ─────────────────────
 
     function deposit(address, address, uint256, uint256)
