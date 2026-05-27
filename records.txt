@@ -784,3 +784,18 @@ PAT exposure check:
   `git log -S "sbp_d6e0"` → nothing
   PAT exists ONLY in this Claude Code conversation transcript. User
   should rotate at https://supabase.com/dashboard/account/tokens.
+
+CI staged workflows — DO NOT ACTIVATE without rewriting first:
+  - .ci-staging/workflows/frontend.yml uses pnpm + frontend/pnpm-lock.yaml
+    but the project ships npm + package-lock.json → install step would
+    fail immediately. Rewrite needed: actions/setup-node with npm cache,
+    `npm ci`, then npm run typecheck/lint/build.
+    Also: `next lint` is deprecated in Next 16; should switch to
+    `npx eslint src` (config is already at frontend/eslint.config.mjs).
+  - .ci-staging/workflows/contracts.yml references
+    `.github/slither.config.json` (does not exist) and runs
+    `forge fmt --check` which currently has diffs in src/sy/* and likely
+    other files. Either fix-and-commit a forge-fmt pass OR drop the
+    `forge fmt --check` step.
+  Net: copying these to .github/workflows/ as-is would mean every push
+  goes red. Defer activation until rewrites are made.
