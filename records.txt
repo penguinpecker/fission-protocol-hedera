@@ -842,3 +842,31 @@ Backlog: post-2026-08-25 second-leg drain
   market.redeemAfterExpiry for each of the 3 PT holdings → operator gets
   SY shares → sy.redeemLiquidity → operator gets USDC + WHBAR. Add a
   reminder.
+
+═══════════════════════════════════════════════════════════════════════════════
+WALLET UNWIND TO HBAR 2026-05-28 (~04:18 IST)
+═══════════════════════════════════════════════════════════════════════════════
+
+Per user "swap WHBAR + USDC back to HBAR", consolidated operator wallet to
+native HBAR only.
+
+Steps:
+  1. USDC.approve(V2_ROUTER, int64.max)              ✓
+  2. SaucerSwapV2.exactInputSingle(USDC → WHBAR,     ✓
+        fee=1500 0.15% pool 0xC5B707…0e7B11d,
+        amountIn=49,272,145 raw, ≈$49.27)
+     → received ~574 WHBAR (~0.5% pool fee + slippage)
+  3. WHBAR_TOKEN.approve(WHBAR_CONTRACT, int64.max)  ✓
+        (Hedera WHBAR wrapper uses transferFrom under the hood — HTS
+         allowance required, unlike WETH9 which just decrements balanceOf.
+         First withdraw attempt reverted with TOKEN_NOT_ASSOCIATED_TO_ACCOUNT
+         /Safe token transfer failed! — this approve fixed it.)
+  4. WHBAR_CONTRACT.withdraw(1153.32 WHBAR)          ✓
+     → received native HBAR
+
+Result:
+  Before:  115.00 HBAR + 578.06 WHBAR + 49.27 USDC
+  After:   1,266.64 HBAR + 0 WHBAR + 0 USDC
+  Net HBAR gained: 1,152.53 HBAR ≈ $98.61 at $0.0855/HBAR
+
+Script: scripts/unwind-to-hbar.mjs (driven by NEW_DEPLOYER_KEY).
