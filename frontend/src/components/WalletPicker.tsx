@@ -61,11 +61,17 @@ export function WalletPicker({ open, onClose, onConnectStarted }: Props) {
   const handleHashPack = async () => {
     setPickError(null);
     onConnectStarted?.();
+    // Close the picker BEFORE awaiting hedera.connect() — that call opens
+    // the WalletConnect QR/deeplink modal, which would otherwise overlap
+    // visually with our picker. Errors thrown by hedera.connect() will be
+    // surfaced through the provider's error state on the next render.
+    onClose();
     try {
       await hedera.connect();
-      onClose();
     } catch (e) {
-      setPickError(e instanceof Error ? e.message.slice(0, 200) : String(e));
+      // Picker is already closed; log to console for debugging but don't
+      // try to re-open just to show the error.
+      console.error("[WalletPicker] HashPack connect:", e);
     }
   };
 

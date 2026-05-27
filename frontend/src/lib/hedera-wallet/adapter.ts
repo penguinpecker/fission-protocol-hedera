@@ -699,18 +699,20 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
         4_500_000,
       );
     case "zapHbarToSy":
-      // Routed through FissionGateway v2. Gateway internally forwards
-      // msg.value to FissionZap with the right NPM-fee handling. The
-      // op.zap field is preserved on WriteOp for backward compat but
-      // ignored here — we always go through ADDRESSES.fissionGateway.
+      // Post-rebuild 2026-05-27: routed through FissionPeriphery v3 with
+      // signature zapHbarToSy(market, receiver, deadline). FissionGateway
+      // was abandoned in the consolidation. msg.value is the full HBAR
+      // amount — Periphery reserves its v3NpmFeeBudget internally so we
+      // no longer add the +5 buffer.
       return exec(
-        ADDRESSES.fissionGateway,
+        ADDRESSES.periphery,
         "zapHbarToSy",
         new ContractFunctionParameters()
-          .addAddress(op.sy)
-          .addAddress(op.receiver),
-        op.hbarIn + 5, // user input + 5 HBAR NPM buffer
-        14_500_000,
+          .addAddress(ADDRESSES.market.replace(/^0x/, ""))
+          .addAddress(op.receiver.replace(/^0x/, ""))
+          .addUint256(toBN(0n)),
+        op.hbarIn,
+        15_000_000,
       );
     case "depositLiquidity":
       return exec(

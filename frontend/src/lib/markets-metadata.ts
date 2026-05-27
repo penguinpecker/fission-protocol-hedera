@@ -27,11 +27,11 @@ export interface MarketDisplay {
 }
 
 const REGISTRY: Record<string, MarketDisplay> = {
-  // Market — SaucerSwap V2 USDC/WHBAR LP, 90-day term, expires 2026-08-19.
-  // Ed25519-fixed redeploy 2026-05-22 (replaces the legacy 0xfa90…8a6d market
-  // which is archived in markets_cache and no longer surfaced).
-  "0x36ed8f34c9bfc0004f107153b1a16099f8910b58": {
-    displayName: "SaucerSwap USDC/WHBAR · 90D",
+  // CANONICAL — post-rebuild 2026-05-27, the live market the dApp routes to.
+  // SaucerSwap V2 USDC/WHBAR LP at 0.15% pool fee, ~90-day term, expires
+  // 2026-08-25.
+  "0xfd33ccb2385ec20c4b7bc682712fb92e01e87d5f": {
+    displayName: "SaucerSwap USDC/WHBAR · Aug 25",
     shortName: "SaucerSwap USDC/WHBAR",
     assets: ["USDC", "WHBAR"],
     protocol: "SaucerSwap V2",
@@ -39,9 +39,19 @@ const REGISTRY: Record<string, MarketDisplay> = {
     yieldSource: "0.15% pool fees from USDC↔WHBAR swaps",
     protocolLink: "https://www.saucerswap.finance/pools",
   },
-  // Legacy market (kept for deep-link compatibility — `/markets/[address]/...`
-  // pages still resolve display strings via this map even though the market
-  // is archived in markets_cache and absent from the /markets list view).
+
+  // ── archived / deep-link compatibility (no longer surfaced in list) ──
+  // 2026-05-22 Ed25519-fixed market — replaced by the 2026-05-27 canonical.
+  "0x36ed8f34c9bfc0004f107153b1a16099f8910b58": {
+    displayName: "SaucerSwap USDC/WHBAR · 90D (archived)",
+    shortName: "SaucerSwap USDC/WHBAR (archived)",
+    assets: ["USDC", "WHBAR"],
+    protocol: "SaucerSwap V2",
+    poolFeePct: 0.15,
+    yieldSource: "0.15% pool fees from USDC↔WHBAR swaps",
+    protocolLink: "https://www.saucerswap.finance/pools",
+  },
+  // Legacy market 0 from the original 2026-05-07 deploy. Bricked at 98% PT.
   "0xfa903b938b3bbb0d2836010e5f45edc95fd08a6d": {
     displayName: "SaucerSwap USDC/WHBAR · 90D (archived)",
     shortName: "SaucerSwap USDC/WHBAR (archived)",

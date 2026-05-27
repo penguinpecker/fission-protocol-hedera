@@ -236,7 +236,10 @@ function MarketRow({
       ? 1 / (1 + (row.impliedApy / 100) * (row.daysLeft / 365))
       : 1;
 
-  const subLabel = row.isRewards ? "Market 0 · Rewards" : meta?.protocol ?? row.symbol;
+  // Prefer the metadata's protocol label (e.g. "SaucerSwap V2") over the
+  // generic "Market N · Rewards" placeholder. The placeholder was a legacy
+  // string from when there was a single hand-named market.
+  const subLabel = meta?.protocol ?? (row.isRewards ? "Rewards market" : row.symbol);
   const router = useRouter();
   const href = `/markets/${row.address}`;
 
