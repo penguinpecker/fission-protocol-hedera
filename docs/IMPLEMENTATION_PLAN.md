@@ -19,7 +19,7 @@ Build order. Each phase has explicit exit criteria — no moving on until they'r
 | 10 — **Mainnet deploy** | **live (PARTIAL — markets pending 7d window)** | Router + 2 SY adapters + 2 deployers + Factory all on chain 295. proposeSY done for both SYs at 2026-05-04T20:13Z; **confirm window opens 2026-05-11T20:13Z**. See `deployments/295.json`. |
 
 **Tests:** 265 passing on `main` (post-pass-2 + V2-LP integration; verified 2026-05-06).
-**Mainnet addresses:** see `deployments/295.json`. Operator EOA `0x32e8…ab90` / `0.0.10463169` is solo admin pending Safe + Timelock provisioning.
+**Mainnet addresses:** see `deployments/295.json`. Operator EOA is currently the solo admin pending Safe + Timelock provisioning; use `deployments/295.json` for the exact address.
 **Open gaps:** mutation testing, external audit, Hedera 2-of-2 ThresholdKey account + 48h OZ Timelock provisioning (no Safe contract — HTS-native governance), Sourcify full-match (currently `bytecode_hash = "none"` so only partial-match material is produced).
 
 The unchecked `[ ]` boxes below are the *original 2026-04 build plan* — preserved for historical reference. Treat the table above as the authoritative status snapshot.

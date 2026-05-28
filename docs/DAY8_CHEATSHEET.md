@@ -158,22 +158,26 @@ git push origin main
 ## 7. Vercel env-var update + redeploy
 
 ```sh
-# Update .env.local with new addresses:
+# Update .env.local with new addresses.
+# On macOS use `sed -i '' ...`; on Linux use `sed -i ...`; on Windows edit `frontend/.env.local` manually or use PowerShell.
+# macOS:
 sed -i '' "s|^NEXT_PUBLIC_FACTORY_ADDRESS=.*|NEXT_PUBLIC_FACTORY_ADDRESS=$NEW_FACTORY|" frontend/.env.local
 sed -i '' "s|^NEXT_PUBLIC_SY_SAUCER_V2_LP_ADDRESS=.*|NEXT_PUBLIC_SY_SAUCER_V2_LP_ADDRESS=$SY_SAUCER|" frontend/.env.local
+# Linux:
+sed -i "s|^NEXT_PUBLIC_FACTORY_ADDRESS=.*|NEXT_PUBLIC_FACTORY_ADDRESS=$NEW_FACTORY|" frontend/.env.local
+sed -i "s|^NEXT_PUBLIC_SY_SAUCER_V2_LP_ADDRESS=.*|NEXT_PUBLIC_SY_SAUCER_V2_LP_ADDRESS=$SY_SAUCER|" frontend/.env.local
 # (NEXT_PUBLIC_ROUTER_ADDRESS is unchanged — router is reused.)
 
 bash scripts/deploy-vercel.sh prod
 ```
 
-**Expected:** new deploy at https://frontend-nine-red-31.vercel.app pointing at
-the new prod factory + market. `vercel ls --prod` shows the new deployment Ready.
+**Expected:** new deploy at your Vercel project URL pointing at the new prod factory + market. `vercel ls --prod` shows the new deployment Ready.
 
 ---
 
 ## 8. Smoke test the live UI
 
-- Open https://frontend-nine-red-31.vercel.app
+- Open your deployed Vercel app URL
 - Connect wallet (HashPack)
 - Open the new market's page; deposit a tiny amount; split → swap → claim
 - Confirm flow end-to-end before announcing publicly
