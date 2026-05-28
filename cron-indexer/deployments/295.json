@@ -48,16 +48,24 @@
   },
   "markets": [
     {
-      "id": "0.0.10496157",
-      "evm": "0xfd33ccb2385ec20c4b7bc682712fb92e01e87d5f",
-      "suffix": "USDC-WHBAR-2026-08-25-v3",
-      "expiry": 1787689574,
+      "evm": "0x781382351c9ed32df3110b8d805d3c8c3dbfe046",
+      "suffix": "USDC-WHBAR-2026-08-25-fix8",
+      "expiry": 1787657819,
       "sy": "0x0000000000000000000000000000000000a0289a",
-      "anchor": "1.2e18",
-      "scalarRoot": "5e18"
+      "anchor": "1.01898e18",
+      "scalarRoot": "5e18",
+      "notes": "Correct 8% APY anchor (anchor = exp(ln(1.08) * timeToExpiry/yearSec)). Live since 2026-05-28."
     }
   ],
   "markets_archived": [
+    {
+      "evm": "0xfd33ccb2385ec20c4b7bc682712fb92e01e87d5f",
+      "reason": "anchor=1.2e18 misconfigured (20% APY); rebalance attempts drove rate to 141%. Replaced 2026-05-28."
+    },
+    {
+      "evm": "0x432e552aa1988542da05d192a7b62b0292216032",
+      "reason": "First fix attempt: anchor=1.08e18 was a per-year factor (not annualized), produced 37% APY. Replaced same day with correct formula."
+    },
     {
       "evm": "0x556938acfda70df2a32ea97e6b6862b874d93ef9",
       "reason": "Superseded by v3 market 0xfd33ccb2... after X-2 SY adapter fix"

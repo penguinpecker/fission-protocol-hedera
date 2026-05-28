@@ -27,12 +27,34 @@ export interface MarketDisplay {
 }
 
 const REGISTRY: Record<string, MarketDisplay> = {
-  // CANONICAL — post-rebuild 2026-05-27, the live market the dApp routes to.
-  // SaucerSwap V2 USDC/WHBAR LP at 0.15% pool fee, ~90-day term, expires
-  // 2026-08-25.
-  "0xfd33ccb2385ec20c4b7bc682712fb92e01e87d5f": {
+  // CANONICAL — 2026-05-28 re-anchor to correct 8% APY (matches observed
+  // ~9.7% SaucerSwap pool yield).
+  "0x781382351c9ed32df3110b8d805d3c8c3dbfe046": {
     displayName: "SaucerSwap USDC/WHBAR · Aug 25",
     shortName: "SaucerSwap USDC/WHBAR",
+    assets: ["USDC", "WHBAR"],
+    protocol: "SaucerSwap V2",
+    poolFeePct: 0.15,
+    yieldSource: "0.15% pool fees from USDC↔WHBAR swaps",
+    protocolLink: "https://www.saucerswap.finance/pools",
+  },
+
+  // ── archived ──
+  // Previous canonical with anchor=1.2e18 (20% APY) — rate drifted to 141%
+  // after my rebalance error; replaced 2026-05-28.
+  "0xfd33ccb2385ec20c4b7bc682712fb92e01e87d5f": {
+    displayName: "SaucerSwap USDC/WHBAR · Aug 25 (archived)",
+    shortName: "SaucerSwap USDC/WHBAR (archived)",
+    assets: ["USDC", "WHBAR"],
+    protocol: "SaucerSwap V2",
+    poolFeePct: 0.15,
+    yieldSource: "0.15% pool fees from USDC↔WHBAR swaps",
+    protocolLink: "https://www.saucerswap.finance/pools",
+  },
+  // First fix attempt — anchor=1.08e18 was a per-year factor, produced 37% APY.
+  "0x432e552aa1988542da05d192a7b62b0292216032": {
+    displayName: "SaucerSwap USDC/WHBAR · Aug 25 (archived)",
+    shortName: "SaucerSwap USDC/WHBAR (archived)",
     assets: ["USDC", "WHBAR"],
     protocol: "SaucerSwap V2",
     poolFeePct: 0.15,

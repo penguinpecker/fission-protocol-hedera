@@ -20,13 +20,13 @@ Lens / read-helper
 SY adapter (current, with sweepHbar X-2 fix)
 - SaucerSwapLPYieldSource 0.0.10496154   0x0000000000000000000000000000000000A0289A
 
-Live market — USDC/WHBAR, expiry 2026-08-25
-- Market                  0.0.10496157   0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f
+Live market — USDC/WHBAR, expiry 2026-08-25, anchor=1.019e18 (8% APY)
+- Market                  0.0.10564845   0x781382351c9Ed32df3110B8d805D3C8C3dBFe046
 - SY share token          0.0.10496155   0x0000000000000000000000000000000000A0289B
-- PT  (USDC-WHBAR-2026-08-25-v3)
-                          0.0.10496170   0x0000000000000000000000000000000000A028Aa
-- YT                      0.0.10496171   0x0000000000000000000000000000000000A028aB
-- LP                      0.0.10496172   0x0000000000000000000000000000000000A028ac
+- PT  (USDC-WHBAR-2026-08-25-fix8)
+                          0.0.10564846   0x0000000000000000000000000000000000A034EE
+- YT                      0.0.10564847   0x0000000000000000000000000000000000A034Ef
+- LP                      0.0.10564848   0x0000000000000000000000000000000000A034f0
 
 Governance  (operator-keyed today; multisig handoff is the final step)
 - Timelock (48h)          0.0.10469824   0x00000000000000000000000000000000009fc1c0
@@ -53,6 +53,10 @@ Pre-canonical market iterations from the 2026-05-27 cascade
 - Market 0x15DeA525b88E18c4696CCd358979477F7F52d4BE
 - Market 0xA9040C794bbF74D7c7d9D095aA68a64746e7a390  (zero-state)
 - Market 0xb50372dA60888975696CF6d3b6899d367805444b  (zero-state)
+
+Replaced 2026-05-28 (APY misconfiguration: anchor was per-year, not annualized)
+- Market 0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f  (anchor=1.2e18 → 20% init, drifted to 141% after smoke + rebalance error)
+- Market 0x432E552AA1988542Da05D192A7B62b0292216032  (anchor=1.08e18 → 37% APY; per-year factor misunderstanding)
 
 Pre-rebuild Periphery iterations (replaced by FissionPeriphery v3)
 - Periphery v1            0x8ce95cef2c521df83f346b579de84fa4aa8f50aa

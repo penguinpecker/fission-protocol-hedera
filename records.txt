@@ -1106,3 +1106,44 @@ H. Bugs found mid-execution + how they got caught:
    Pattern: every bug found was discovered by ACTUALLY RUNNING the
    thing end-to-end, not by reasoning at it. Browser-probe, on-chain
    tx, REST query, dry-run — these are the safety net.
+
+═══════════════════════════════════════════════════════════════════════════════
+CANONICAL MARKET REDEPLOY: 8% APY 2026-05-28
+═══════════════════════════════════════════════════════════════════════════════
+
+The previous canonical (0xfd33ccb…) had anchor=1.2e18 set at deploy
+(20% initial APY — already misaligned with the observed ~9.7%
+SaucerSwap LP yield). Subsequent smoke tests + a botched rebalance
+attempt drove lastLnImpliedRate to 0.879 = 141% APY. User flagged the
+display as broken (rightfully — Pendle-style markets should track
+underlying yield within reason).
+
+Two-step redeploy:
+
+Step 1: created 0x432E552A… with anchor=1.08e18, expecting 8% APY.
+        Got 37% APY instead because Pendle V2 treats `anchor` as a
+        per-year-period rate factor, NOT annualized APY. The contract
+        annualizes it via (yearSec / timeToExpiry). With 89 days left,
+        1.08 → 1.08^(365/89) ≈ 37%.
+
+Step 2: created 0x781382351c9Ed32df3110B8d805D3C8C3dBFe046 with
+        anchor=1.018934e18 (computed as exp(ln(1.08) × timeToExpiry / yearSec)).
+        → Initial lastLnImpliedRate = 0.077 = 8.00% APY ✓
+        → totalSy = totalPt = 208,533,424 (operator funded 100% LP)
+
+Math for the future: to seed a market at APY A with `t` seconds to expiry,
+        anchor = exp(ln(1+A) × t / yearSec)
+                                            ; for 8% APY at 89d → 1.019e18
+                                            ; for 8% APY at 365d → 1.08e18
+
+Operator final position on new market:
+  - 100% LP ownership
+  - 208M YT (operator-only yield exposure)
+  - Old market PT/YT still held — claim at Aug-25 expiry via redeemAfterExpiry
+  - Failed-attempt PT/YT still held — same Aug-25 expiry
+
+Scripts: redeploy-canonical-8pct.mjs (failed-37%-attempt) +
+         redeploy-canonical-8pct-precise.mjs (succeeded).
+
+Total HBAR cost across both attempts: ~140 HBAR (~$12) — pure Hedera
+HTS-create tax for two market deploys (4 HTS tokens each).
