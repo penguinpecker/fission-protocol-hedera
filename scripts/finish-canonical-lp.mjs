@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// HISTORICAL — targets the OLD canonical market 0xfd33ccb...87d5f, which
+// was replaced 2026-05-28 by 0x781382351c9...DBFe046. Do not re-run unless
+// you are intentionally interacting with the archived market state.
 // finish-canonical-lp.mjs — operator already zapped 1000 HBAR → 1,453 SY shares
 // in the first run. The pool is too small for AMM-mediated buySyForLp
 // (swap portion would exceed totalPt). Use direct market.split → addLiquidity.
