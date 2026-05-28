@@ -61,6 +61,10 @@ contract FissionRewardsMarket is
     address public yt;
     address public lp;
 
+    /// @dev Cached after setTokens so we skip 11 staticcalls to `sy.shareToken()`
+    ///      across the swap/split/merge/redeem paths and shave bytecode.
+    address public shareToken;
+
     /// @dev Set after Market freezes this account on YT (mint side-effect).
     mapping(address => bool) internal _ytFrozen;
 
@@ -155,14 +159,7 @@ contract FissionRewardsMarket is
     /// @dev ptDelta sign: positive = user buying PT; negative = user selling PT.
     event Swap(address indexed user, address indexed receiver, int256 ptDelta, int256 syDelta, int256 syFee, int256 syToReserve);
     event RewardsClaimed(address indexed user, address indexed receiver, uint256 amount0, uint256 amount1);
-    event PtAmmRewardsClaimed(address indexed user, address indexed receiver, uint256 amount);
-    event YtAmmRewardsClaimed(address indexed user, address indexed receiver, uint256 amount);
-    /// @dev Per-swap breakdown: deployerCut + ptCut + ytCut == netSyFee (rounding to last byte).
-    event AmmFeeDistributed(int256 netSyFee, uint256 deployerCut, uint256 ptCut, uint256 ytCut);
     event RedeemedAfterExpiry(address indexed user, address indexed receiver, uint256 ptIn, uint256 syOut);
-    event TreasuryUpdated(address indexed prev, address indexed next);
-    event FeeUpdated(int256 lnFeeRateRoot, uint256 reserveFeePercent);
-    event OperatorSet(address indexed owner, address indexed operator, bool approved);
 
     // ───────────────────── construction ─────────────────────
 
@@ -206,7 +203,6 @@ contract FissionRewardsMarket is
     function setOperator(address operator, bool approved) external {
         if (operator == address(0)) revert ZeroAddress();
         isOperator[msg.sender][operator] = approved;
-        emit OperatorSet(msg.sender, operator, approved);
     }
 
     function _requireOwnerOrOperator(address owner) internal view {
@@ -237,7 +233,9 @@ contract FissionRewardsMarket is
         yt = _createHtsToken(ytName, ytSymbol, true, true, _assetDecimals, perToken);
         lp = _createHtsToken(lpName, lpSymbol, false, true, 18, msg.value - 2 * perToken);
 
-        HtsHelpers.associateIfNeeded(address(this), sy.shareToken());
+        address st = sy.shareToken();
+        shareToken = st;
+        HtsHelpers.associateIfNeeded(address(this), st);
         HtsHelpers.associateIfNeeded(address(this), rewardToken0);
         HtsHelpers.associateIfNeeded(address(this), rewardToken1);
 
@@ -363,7 +361,7 @@ contract FissionRewardsMarket is
         uint256 syIndexU = sy.exchangeRate();
         if (syIndexU < PMath.ONE) revert SYRateBelowOne();
 
-        IERC20(sy.shareToken()).safeTransferFrom(msg.sender, address(this), syIn);
+        IERC20(shareToken).safeTransferFrom(msg.sender, address(this), syIn);
         IERC20(pt).safeTransferFrom(msg.sender, address(this), ptIn);
 
         uint256 lpRaw = PMath.sqrt(syIn * ptIn);
@@ -414,7 +412,7 @@ contract FissionRewardsMarket is
         _settlePtAmm(ptReceiver);
         _settleYtAmm(ytReceiver);
 
-        IERC20(sy.shareToken()).safeTransferFrom(msg.sender, address(this), amount);
+        IERC20(shareToken).safeTransferFrom(msg.sender, address(this), amount);
         _mintPt(ptReceiver, amount);
         _mintYt(ytReceiver, amount);
 
@@ -439,7 +437,7 @@ contract FissionRewardsMarket is
 
         _burnPt(msg.sender, amount);
         _burnYt(msg.sender, amount);
-        IERC20(sy.shareToken()).safeTransfer(msg.sender, amount);
+        IERC20(shareToken).safeTransfer(msg.sender, amount);
 
         emit Merge(msg.sender, amount);
         return amount;
@@ -477,7 +475,7 @@ contract FissionRewardsMarket is
         totalSy -= syOut;
         lastLnImpliedRate = newRate;
 
-        IERC20(sy.shareToken()).safeTransfer(receiver, syOut);
+        IERC20(shareToken).safeTransfer(receiver, syOut);
 
         // 99% to PT+YT, 1% to deployer — see `_distributeAmmFee` and the
         // AMM_FEE_*_BPS constants.
@@ -552,7 +550,7 @@ contract FissionRewardsMarket is
         _burnPt(address(this), ytIn);
         _burnYt(owner, ytIn);
 
-        IERC20(sy.shareToken()).safeTransfer(receiver, syOut);
+        IERC20(shareToken).safeTransfer(receiver, syOut);
 
         if (netSyFee > 0) {
             totalSy -= uint256(netSyFee);
@@ -590,7 +588,7 @@ contract FissionRewardsMarket is
         syIn = uint256(-netSy);
         if (syIn > syInMax) revert InsufficientOutput();
 
-        IERC20(sy.shareToken()).safeTransferFrom(msg.sender, address(this), syIn);
+        IERC20(shareToken).safeTransferFrom(msg.sender, address(this), syIn);
         IERC20(pt).safeTransfer(receiver, ptOut);
 
         totalPt -= ptOut;
@@ -635,7 +633,7 @@ contract FissionRewardsMarket is
         lpOut = uint256(lpToMint);
         if (lpOut < minLpOut) revert InsufficientOutput();
 
-        IERC20(sy.shareToken()).safeTransferFrom(msg.sender, address(this), uint256(syUsed));
+        IERC20(shareToken).safeTransferFrom(msg.sender, address(this), uint256(syUsed));
         IERC20(pt).safeTransferFrom(msg.sender, address(this), uint256(ptUsed));
 
         totalSy += uint256(syUsed);
@@ -679,7 +677,7 @@ contract FissionRewardsMarket is
             revert InsufficientOutput();
         }
 
-        IERC20(sy.shareToken()).safeTransfer(receiver, syOut);
+        IERC20(shareToken).safeTransfer(receiver, syOut);
         if (ptOut > 0) {
             IERC20(pt).safeTransfer(receiver, ptOut);
             // Mark receiver's PT-AMM index to current (skip-credit) on the
@@ -788,48 +786,51 @@ contract FissionRewardsMarket is
         uint256 ptCut       = (fee * AMM_FEE_PT_BPS)       / AMM_FEE_BPS_DENOM;
         uint256 ytCut       = fee - deployerCut - ptCut; // dust to YT
 
-        address shareToken = sy.shareToken();
-
         // 1% to deployer (immediate transfer)
         if (deployerCut > 0) {
             IERC20(shareToken).safeTransfer(treasury, deployerCut);
         }
 
         // 49.5% to PT holders (accrue via index; stays in contract until claim)
+        // Denominator is PT.totalSupply() — same shape as the YT side. The
+        // pool's own PT (held at address(this)) also accrues via this index
+        // but `_settlePtAmm` skips address(this), so that slice is forfeit
+        // (stays in contract; bounded by pool-PT / totalSupply). Using
+        // `totalPt` here would over-distribute when outstanding user-PT
+        // exceeds pool-PT, since users would each claim more than their
+        // proportional slice.
         if (ptCut > 0) {
-            uint256 tPt = totalPt;
-            if (tPt > 0) {
-                ptAmmRewardIndex += (ptCut * REWARD_SCALE) / tPt;
+            address ptToken = pt;
+            uint256 ptTs;
+            if (ptToken != address(0)) {
+                ptTs = IERC20(ptToken).totalSupply();
             }
-            // else: orphan dust — contract retains, future owner action recoverable via rescueToken (which gates by isProtectedToken; shareToken IS protected, so this is bounded forfeit, acceptable edge case)
+            if (ptTs > 0) {
+                ptAmmRewardIndex += (ptCut * REWARD_SCALE) / ptTs;
+            }
         }
 
         // 49.5% to YT holders (accrue via index)
         if (ytCut > 0) {
             uint256 ytTs;
-            address ytAddr = yt;
-            if (ytAddr != address(0)) {
-                ytTs = IERC20(ytAddr).totalSupply();
+            address ytToken = yt;
+            if (ytToken != address(0)) {
+                ytTs = IERC20(ytToken).totalSupply();
             }
             if (ytTs > 0) {
                 ytAmmRewardIndex += (ytCut * REWARD_SCALE) / ytTs;
             }
         }
-
-        emit AmmFeeDistributed(netSyFee, deployerCut, ptCut, ytCut);
     }
 
-    /// @notice Settle pending PT-side AMM rewards for a user up to the
-    ///         current `ptAmmRewardIndex`. Tolerates Ed25519 long-zero
-    ///         users (HTS facade balanceOf reverts) by treating their
-    ///         balance as 0 — they forfeit PT-AMM accrual but can still
-    ///         redeem PT at expiry normally.
+    /// @dev Settle pending PT-side AMM rewards for `user`. Skips address(this)
+    ///      so pool-held PT doesn't accrue to the contract. Ed25519 users
+    ///      whose HTS facade balanceOf reverts forfeit accrual (bal=0).
     function _settlePtAmm(address user) internal {
-        if (user == address(0) || user == address(0xdEaD) || user == address(this)) return;
-        if (pt == address(0)) return;
+        if (user == address(this)) return;
 
-        uint256 bal = 0;
-        try IERC20(pt).balanceOf(user) returns (uint256 b) { bal = b; } catch { bal = 0; }
+        uint256 bal;
+        try IERC20(pt).balanceOf(user) returns (uint256 b) { bal = b; } catch {}
 
         uint256 g = ptAmmRewardIndex;
         uint256 u = userPtAmmIndex[user];
@@ -839,13 +840,10 @@ contract FissionRewardsMarket is
         userPtAmmIndex[user] = g;
     }
 
-    /// @notice Settle pending YT-side AMM rewards for a user up to the
-    ///         current `ytAmmRewardIndex`. Uses internal `_ytBal` mirror
-    ///         (same as V3-yield settlement), so Ed25519 users are
-    ///         fully supported.
+    /// @dev Settle pending YT-side AMM rewards. Uses `_ytBal` mirror so Ed25519
+    ///      users are supported.
     function _settleYtAmm(address user) internal {
-        if (user == address(0) || user == address(0xdEaD) || user == address(this)) return;
-        if (yt == address(0)) return;
+        if (user == address(this)) return;
 
         uint256 bal = _ytBal[user];
         uint256 g = ytAmmRewardIndex;
@@ -856,58 +854,38 @@ contract FissionRewardsMarket is
         userYtAmmIndex[user] = g;
     }
 
-    /// @notice Mark user's PT-AMM index to current WITHOUT crediting accrual.
-    ///         Used after a trade so the user doesn't claim back a slice of
-    ///         the fee they themselves just paid. Caller must have already
-    ///         called `_settlePtAmm(user)` immediately before the trade.
+    /// @dev Mark user's index to current WITHOUT crediting accrual. Callers
+    ///      have already filtered dead addresses via the prior `_settle*` call,
+    ///      so we skip the redundant check here to save bytecode.
     function _markPtAmmIndex(address user) internal {
-        if (user == address(0) || user == address(0xdEaD) || user == address(this)) return;
+        if (user == address(this)) return;
         userPtAmmIndex[user] = ptAmmRewardIndex;
     }
 
     function _markYtAmmIndex(address user) internal {
-        if (user == address(0) || user == address(0xdEaD) || user == address(this)) return;
+        if (user == address(this)) return;
         userYtAmmIndex[user] = ytAmmRewardIndex;
     }
 
-    /// @notice Claim accrued PT-side AMM rewards (paid in SY-share units).
-    function claimPtAmmRewards(address receiver) external nonReentrant returns (uint256 amount) {
+    /// @notice Claim accrued PT-side AND YT-side AMM rewards (paid in SY-share).
+    ///         Returns the amounts paid for each side. Pass receiver = msg.sender
+    ///         to claim to self. Frontend can preview by reading
+    ///         `userAccruedPtAmm(user) + ptUnsettled` (and YT analogue) directly.
+    function claimAmmRewards(address receiver) external nonReentrant returns (uint256 ptAmount, uint256 ytAmount) {
         if (receiver == address(0)) revert ZeroAddress();
+
         _settlePtAmm(msg.sender);
-        amount = userAccruedPtAmm[msg.sender];
-        if (amount > 0) {
-            userAccruedPtAmm[msg.sender] = 0;
-            IERC20(sy.shareToken()).safeTransfer(receiver, amount);
-        }
-        emit PtAmmRewardsClaimed(msg.sender, receiver, amount);
-    }
+        ptAmount = userAccruedPtAmm[msg.sender];
+        if (ptAmount > 0) userAccruedPtAmm[msg.sender] = 0;
 
-    /// @notice Claim accrued YT-side AMM rewards (paid in SY-share units).
-    function claimYtAmmRewards(address receiver) external nonReentrant returns (uint256 amount) {
-        if (receiver == address(0)) revert ZeroAddress();
         _settleYtAmm(msg.sender);
-        amount = userAccruedYtAmm[msg.sender];
-        if (amount > 0) {
-            userAccruedYtAmm[msg.sender] = 0;
-            IERC20(sy.shareToken()).safeTransfer(receiver, amount);
+        ytAmount = userAccruedYtAmm[msg.sender];
+        if (ytAmount > 0) userAccruedYtAmm[msg.sender] = 0;
+
+        uint256 total = ptAmount + ytAmount;
+        if (total > 0) {
+            IERC20(shareToken).safeTransfer(receiver, total);
         }
-        emit YtAmmRewardsClaimed(msg.sender, receiver, amount);
-    }
-
-    function previewPtAmmRewards(address user) external view returns (uint256) {
-        if (pt == address(0)) return userAccruedPtAmm[user];
-        uint256 bal = 0;
-        try IERC20(pt).balanceOf(user) returns (uint256 b) { bal = b; } catch {}
-        uint256 g = ptAmmRewardIndex;
-        uint256 u = userPtAmmIndex[user];
-        return userAccruedPtAmm[user] + (bal > 0 && g > u ? (bal * (g - u)) / REWARD_SCALE : 0);
-    }
-
-    function previewYtAmmRewards(address user) external view returns (uint256) {
-        uint256 bal = _ytBal[user];
-        uint256 g = ytAmmRewardIndex;
-        uint256 u = userYtAmmIndex[user];
-        return userAccruedYtAmm[user] + (bal > 0 && g > u ? (bal * (g - u)) / REWARD_SCALE : 0);
     }
 
     // ───────────────────── post-expiry redemption ─────────────────────
@@ -931,7 +909,7 @@ contract FissionRewardsMarket is
         _burnPt(msg.sender, ptIn);
         syOut = ptIn;
 
-        IERC20(sy.shareToken()).safeTransfer(receiver, syOut);
+        IERC20(shareToken).safeTransfer(receiver, syOut);
         emit RedeemedAfterExpiry(msg.sender, receiver, ptIn, syOut);
     }
 
@@ -939,7 +917,6 @@ contract FissionRewardsMarket is
 
     function setTreasury(address newTreasury) external onlyRole(ADMIN_ROLE) {
         if (newTreasury == address(0)) revert ZeroAddress();
-        emit TreasuryUpdated(treasury, newTreasury);
         treasury = newTreasury;
     }
 
@@ -948,7 +925,6 @@ contract FissionRewardsMarket is
         if (reserveFeePercent_ > MAX_RESERVE_FEE_PERCENT) revert ReserveFeeTooHigh();
         lnFeeRateRoot = lnFeeRateRoot_;
         reserveFeePercent = reserveFeePercent_;
-        emit FeeUpdated(lnFeeRateRoot_, reserveFeePercent_);
     }
 
     function pause() external onlyRole(PAUSER_ROLE) {

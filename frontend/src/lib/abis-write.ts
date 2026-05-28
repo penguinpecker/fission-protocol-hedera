@@ -469,6 +469,28 @@ export const marketWriteAbi = [
       { name: "ptOut", type: "uint256" },
     ],
   },
+  // ── AMM-fee redirect (2026-05-29) ──
+  // 99% of swap fees flow to PT+YT holders (49.5% each); 1% to deployer.
+  // Reward token is shareToken (SY-share). Frontend previews accrual by
+  // reading: userAccruedPtAmm + (ptBal * (ptAmmRewardIndex - userPtAmmIndex)) / 1e18.
+  // (For YT, use ytBalanceOf() since HTS facade balanceOf reverts for Ed25519.)
+  {
+    type: "function",
+    name: "claimAmmRewards",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "receiver", type: "address" }],
+    outputs: [
+      { name: "ptAmount", type: "uint256" },
+      { name: "ytAmount", type: "uint256" },
+    ],
+  },
+  { type: "function", name: "ptAmmRewardIndex", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "ytAmmRewardIndex", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "userPtAmmIndex",  stateMutability: "view", inputs: [{ name: "user", type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "userYtAmmIndex",  stateMutability: "view", inputs: [{ name: "user", type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "userAccruedPtAmm",stateMutability: "view", inputs: [{ name: "user", type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "userAccruedYtAmm",stateMutability: "view", inputs: [{ name: "user", type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "ytBalanceOf",     stateMutability: "view", inputs: [{ name: "user", type: "address" }], outputs: [{ type: "uint256" }] },
 ] as const;
 
 /**

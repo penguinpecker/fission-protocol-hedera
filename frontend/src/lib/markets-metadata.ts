@@ -27,21 +27,31 @@ export interface MarketDisplay {
 }
 
 const REGISTRY: Record<string, MarketDisplay> = {
-  // CANONICAL — 2026-05-28 re-anchor to correct 8% APY (matches observed
-  // ~9.7% SaucerSwap pool yield).
-  "0x781382351c9ed32df3110b8d805d3c8c3dbfe046": {
+  // CANONICAL — 2026-05-29 fresh factory + market with AMM fee redirect
+  // (49.5% PT / 49.5% YT / 1% deployer). 8% APY anchor.
+  "0xfecfc0bb57dd668ff37f2a232b208584e5feae53": {
     displayName: "SaucerSwap USDC/WHBAR · Aug 25",
     shortName: "SaucerSwap USDC/WHBAR",
+    assets: ["USDC", "WHBAR"],
+    protocol: "SaucerSwap V2",
+    poolFeePct: 0.15,
+    yieldSource: "0.15% pool fees from USDC↔WHBAR swaps + 99% of AMM trading fees",
+    protocolLink: "https://www.saucerswap.finance/pools",
+  },
+
+  // ── archived ──
+  // Previous canonical 2026-05-28 — re-anchor to correct 8% APY; replaced
+  // 2026-05-29 to land the AMM fee redirect for PT+YT holders.
+  "0x781382351c9ed32df3110b8d805d3c8c3dbfe046": {
+    displayName: "SaucerSwap USDC/WHBAR · Aug 25 (archived)",
+    shortName: "SaucerSwap USDC/WHBAR (archived)",
     assets: ["USDC", "WHBAR"],
     protocol: "SaucerSwap V2",
     poolFeePct: 0.15,
     yieldSource: "0.15% pool fees from USDC↔WHBAR swaps",
     protocolLink: "https://www.saucerswap.finance/pools",
   },
-
-  // ── archived ──
-  // Previous canonical with anchor=1.2e18 (20% APY) — rate drifted to 141%
-  // after my rebalance error; replaced 2026-05-28.
+  // anchor=1.2e18 (20% APY) — rate drifted to 141% after rebalance error.
   "0xfd33ccb2385ec20c4b7bc682712fb92e01e87d5f": {
     displayName: "SaucerSwap USDC/WHBAR · Aug 25 (archived)",
     shortName: "SaucerSwap USDC/WHBAR (archived)",

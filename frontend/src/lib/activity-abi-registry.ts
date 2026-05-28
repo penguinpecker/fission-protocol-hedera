@@ -43,20 +43,21 @@ export interface RegistryEntry {
   abi: AbiList;
 }
 
-// ─── current canonical (2026-05-28 anchor=1.019e18, 8% APY) ───
-const FACTORY_V3 = "0x799549f698bbbac90b9e1c37ef3946a1a1d3397c";
+// ─── current canonical (2026-05-29 fresh factory + AMM fee redirect) ───
+const FACTORY_V3 = "0xc6e077bfd0b2dfc2bf5694219242ef11aa46086d";
 const PERIPHERY_V3 = "0x0000000000000000000000000000000000a02731";
 const LENS_V3 = "0xa1aafc8c11a686a3dee5dfe8b19d9eb43d321969";
-const MARKET_V3 = "0x781382351c9ed32df3110b8d805d3c8c3dbfe046";
+const MARKET_V3 = "0xfecfc0bb57dd668ff37f2a232b208584e5feae53";
 const SY_V3 = "0x0000000000000000000000000000000000a0289a";
 const SY_SHARE_V3 = "0x0000000000000000000000000000000000a0289b";
-const PT_V3 = "0x0000000000000000000000000000000000a034ee";
-const YT_V3 = "0x0000000000000000000000000000000000a034ef";
-const LP_V3 = "0x0000000000000000000000000000000000a034f0";
+const PT_V3 = "0x0000000000000000000000000000000000a03ae6";
+const YT_V3 = "0x0000000000000000000000000000000000a03ae7";
+const LP_V3 = "0x0000000000000000000000000000000000a03ae8";
 
-// Archived canonical markets (replaced 2026-05-28):
-//   0xfd33ccb… — anchor=1.2e18 misconfig, drifted to 141% APY
-//   0x432e552a… — failed first-fix attempt with per-year-factor confusion
+// Archived canonical markets (each replaced as the build evolved):
+//   0x781382351c9… — 2026-05-28, replaced by AMM fee redirect 2026-05-29
+//   0xfd33ccb…    — anchor=1.2e18 misconfig, drifted to 141% APY
+//   0x432e552a…   — failed first-fix attempt with per-year-factor confusion
 // Their PT/YT/LP token addresses are intentionally NOT registered here;
 // historical txs against those markets show "unknown token" in the activity
 // feed, which is acceptable for retired markets. Operator-side PT redemption
