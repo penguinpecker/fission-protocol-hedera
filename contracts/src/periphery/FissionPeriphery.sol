@@ -243,6 +243,30 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         _registerMarket(market);
     }
 
+    /// @notice Re-prime allowances + associations for an already-registered
+    ///         market. Useful as an escape hatch if approvals ever need
+    ///         refreshing (e.g. governance migration) — the idempotent
+    ///         silent-noop in `_registerMarket` makes re-calling it useless
+    ///         after first register.
+    /// @dev    Owner-only. Does NOT toggle `marketRegistered` or re-emit
+    ///         MarketRegistered (which fires only on first registration).
+    function refreshMarketApprovals(address market) external onlyOwner {
+        if (market == address(0)) revert ZeroAddress();
+        if (!marketRegistered[market]) revert MarketNotRegistered(market);
+
+        IFissionMarketExt m = IFissionMarketExt(market);
+        address syAdapter = address(m.sy());
+        address shareToken = ISYLiquidity(syAdapter).shareToken();
+        address pt = m.pt();
+        address lp = m.lp();
+
+        IERC20(shareToken).forceApprove(market, MAX_HTS_APPROVE);
+        IERC20(pt).forceApprove(market, MAX_HTS_APPROVE);
+        IERC20(lp).forceApprove(market, MAX_HTS_APPROVE);
+        IERC20(USDC).forceApprove(syAdapter, MAX_HTS_APPROVE);
+        IERC20(WHBAR).forceApprove(syAdapter, MAX_HTS_APPROVE);
+    }
+
     function _registerMarket(address market) internal {
         if (market == address(0)) revert ZeroAddress();
         if (marketRegistered[market]) return;
@@ -251,6 +275,7 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         address syAdapter = address(m.sy());
         address shareToken = ISYLiquidity(syAdapter).shareToken();
         address pt = m.pt();
+        address yt = m.yt();
         address lp = m.lp();
 
         // Associate the per-market tokens so the contract can custody them
@@ -271,11 +296,16 @@ contract FissionPeriphery is ReentrancyGuardTransient {
 
         marketRegistered[market] = true;
         registeredSyAdapter[syAdapter] = true;
-        // X-5: protect the market's PT/LP and SY's share token from rescue.
+        // X-5: protect the market's tokens from rescue. YT is included even
+        // though current flows route YT directly to the user (never custodied
+        // here) — belt-and-suspenders against future flows that buffer YT
+        // mid-tx. The flag costs one SSTORE per market init; an external
+        // invariant test verifies `IERC20(yt).balanceOf(periphery) == 0`.
         isProtectedToken[shareToken] = true;
         isProtectedToken[pt] = true;
+        isProtectedToken[yt] = true;
         isProtectedToken[lp] = true;
-        emit MarketRegistered(market, syAdapter, pt, m.yt(), lp);
+        emit MarketRegistered(market, syAdapter, pt, yt, lp);
     }
 
     function setMaxTradeBps(uint16 bps) external onlyOwner {

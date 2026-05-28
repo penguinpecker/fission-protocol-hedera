@@ -1147,3 +1147,53 @@ Scripts: redeploy-canonical-8pct.mjs (failed-37%-attempt) +
 
 Total HBAR cost across both attempts: ~140 HBAR (~$12) — pure Hedera
 HTS-create tax for two market deploys (4 HTS tokens each).
+
+═══════════════════════════════════════════════════════════════════════════════
+SOURCE IMPROVEMENTS — POST-AUDIT FINDINGS FROM 2026-05-28
+═══════════════════════════════════════════════════════════════════════════════
+
+After the line-by-line contract review post-canonical-redeploy, three
+source-level improvements landed (will deploy on next cascade — live
+Periphery is unchanged because it's immutable):
+
+#1 — YT now included in isProtectedToken on _registerMarket
+    File: contracts/src/periphery/FissionPeriphery.sol
+    Change: `isProtectedToken[yt] = true` added alongside shareToken/pt/lp.
+    MarketRegistered event already includes `yt`; now matches state.
+    Rationale: belt-and-suspenders. Current flows route YT directly to
+    `receiver` so YT is never custodied by Periphery, but if a future flow
+    buffers YT mid-tx the rescue gate would have left it exposed. Cost:
+    one SSTORE per market init (~5k gas).
+
+    LIVE-CHAIN STATUS: Periphery 0x...A02731 still has YT unprotected.
+    Not currently exploitable. Will be protected when this updated source
+    is deployed in a future Periphery cascade.
+
+#2 — NatSpec warning on SaucerSwapLPYieldSource.redeemLiquidity
+    File: contracts/src/sy/SaucerSwapLPYieldSource.sol
+    Change: doc block flagging the `amount0Min/amount1Min = 0` risk for
+    direct callers who bypass the Periphery. If the V3 pool position is
+    drained (other LPs pulled out, emergency rescue, etc.) NPM's
+    decreaseLiquidity can return (0, 0); shares get burned for nothing.
+    FissionPeriphery.unzapSyToHbar already enforces minHbarOut downstream
+    so periphery flows are safe; direct integrators are warned.
+
+#3 — Added refreshMarketApprovals(market) admin escape hatch
+    File: contracts/src/periphery/FissionPeriphery.sol
+    Change: new external onlyOwner function to re-prime allowances on
+    an already-registered market. `_registerMarket` is silently
+    idempotent (line 248 `if (marketRegistered[market]) return`) which
+    means a re-call doesn't refresh approvals. The new function lifts
+    that limitation without violating the idempotent registration
+    semantic. Does not toggle marketRegistered or emit the registration
+    event.
+
+#4 — Operator HBAR LOW
+    Operator balance: 68 HBAR (~$5.84). After today's deploys + drains
+    + rebalances. Insufficient to deploy a new Periphery (~100 HBAR
+    minimum for the contract + HTS associations on init). Top up before
+    any future cascade.
+
+Tests: forge test → 322 passed, 0 failed, 3 skipped. Same as pre-edit.
+
+═══════════════════════════════════════════════════════════════════════════════

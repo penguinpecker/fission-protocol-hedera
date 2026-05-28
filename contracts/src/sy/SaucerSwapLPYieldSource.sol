@@ -300,6 +300,15 @@ contract SaucerSwapLPYieldSource is SYBase {
     }
 
     /// @notice Burn `shares` and pay out the corresponding (amount0, amount1) to receiver.
+    /// @dev    SECURITY WARNING for direct callers (bypassing FissionPeriphery):
+    ///         pass non-zero `amount0Min` / `amount1Min` floors. If the underlying
+    ///         V3 pool position is drained (e.g. all underlying USDC + WHBAR has
+    ///         been pulled out by other LPs or via emergency rescue), NPM
+    ///         `decreaseLiquidity` may return (0, 0). Combined with `*Min = 0`,
+    ///         the shares are burned for nothing.
+    ///         FissionPeriphery's `unzapSyToHbar` enforces its own `minHbarOut`
+    ///         downstream so this revert-protects the periphery flows. Direct
+    ///         integrations must replicate that floor at the V3 level.
     function redeemLiquidity(uint256 shares, uint256 amount0Min, uint256 amount1Min, address receiver)
         external
         nonReentrant
