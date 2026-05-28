@@ -43,16 +43,24 @@ export interface RegistryEntry {
   abi: AbiList;
 }
 
-// ─── current live contracts (2026-05-27 cascade) ───
+// ─── current canonical (2026-05-28 anchor=1.019e18, 8% APY) ───
 const FACTORY_V3 = "0x799549f698bbbac90b9e1c37ef3946a1a1d3397c";
 const PERIPHERY_V3 = "0x0000000000000000000000000000000000a02731";
 const LENS_V3 = "0xa1aafc8c11a686a3dee5dfe8b19d9eb43d321969";
-const MARKET_V3 = "0xfd33ccb2385ec20c4b7bc682712fb92e01e87d5f";
+const MARKET_V3 = "0x781382351c9ed32df3110b8d805d3c8c3dbfe046";
 const SY_V3 = "0x0000000000000000000000000000000000a0289a";
 const SY_SHARE_V3 = "0x0000000000000000000000000000000000a0289b";
-const PT_V3 = "0x0000000000000000000000000000000000a028aa";
-const YT_V3 = "0x0000000000000000000000000000000000a028ab";
-const LP_V3 = "0x0000000000000000000000000000000000a028ac";
+const PT_V3 = "0x0000000000000000000000000000000000a034ee";
+const YT_V3 = "0x0000000000000000000000000000000000a034ef";
+const LP_V3 = "0x0000000000000000000000000000000000a034f0";
+
+// Archived canonical markets (replaced 2026-05-28):
+//   0xfd33ccb… — anchor=1.2e18 misconfig, drifted to 141% APY
+//   0x432e552a… — failed first-fix attempt with per-year-factor confusion
+// Their PT/YT/LP token addresses are intentionally NOT registered here;
+// historical txs against those markets show "unknown token" in the activity
+// feed, which is acceptable for retired markets. Operator-side PT redemption
+// at Aug-25 expiry uses on-chain market.pt()/yt() reads, not this registry.
 
 // ─── legacy contracts (still on-chain for archived activity rows) ───
 const ROUTER = "0x00000000000000000000000000000000009fd993";
