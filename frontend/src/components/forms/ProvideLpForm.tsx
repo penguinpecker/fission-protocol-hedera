@@ -18,7 +18,7 @@
  */
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
+import { useReadContract, useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate } from "@/components/MarketPositionCard";
@@ -589,6 +589,46 @@ function AddLp({
     return Number.isFinite(n) && n > 0 ? n : 0;
   }, [effectiveSource, inputMode, usdStr, syRawStr, hbarUsd]);
 
+  // LP-CAP-01: the HBAR→LP chain only hits the contract's _checkSize on Tx2
+  // (buySyForLp), so an oversized deposit burns the ~5 HBAR zap on Tx1 and then
+  // reverts TradeExceedsCap opaquely on Tx2 — stranding the zapped SY. BuyPtForm
+  // / BuyYtForm already guard this. Mirror it here: read the periphery's own
+  // maxTradeBps() LIVE (don't hardcode 500), derive the SY cap from pool depth,
+  // and disable the button + show "Trade too large for pool" before the zap.
+  const maxTradeBpsRead = useReadContract({
+    abi: [
+      {
+        type: "function",
+        name: "maxTradeBps",
+        stateMutability: "view",
+        inputs: [],
+        outputs: [{ type: "uint256" }],
+      },
+    ] as const,
+    address: ADDRESSES.periphery,
+    functionName: "maxTradeBps",
+    query: { enabled: megaZapAvailable },
+  });
+  // Fall back to the 500 bps initialize default if the read hasn't resolved yet
+  // (matches FissionPeriphery's deployed value; never under-gates).
+  const contractMaxTradeBps =
+    maxTradeBpsRead.data !== undefined ? (maxTradeBpsRead.data as bigint) : 500n;
+  const contractTradeCap =
+    totalSy > 0n ? (totalSy * contractMaxTradeBps) / 10_000n : 0n;
+
+  // Linear estimate of the SY the zap will produce (HBAR mode). Same model the
+  // zap leg uses as its fallback (see onZapHbarToLp). Used only to gate the cap
+  // BEFORE the irreversible zap; the real syIn for Tx2 is the post-zap delta.
+  const estSyFromHbar = useMemo<bigint>(() => {
+    if (effectiveSource !== "hbar" || hbarAmount <= 0) return 0n;
+    if (hbarUsd === undefined || usdPerShare === undefined) return 0n;
+    const raw = Math.floor((hbarAmount * hbarUsd) / Math.max(1e-12, usdPerShare));
+    return raw > 0 ? BigInt(raw) : 0n;
+  }, [effectiveSource, hbarAmount, hbarUsd, usdPerShare]);
+
+  const hbarExceedsContractCap =
+    effectiveSource === "hbar" && contractTradeCap > 0n && estSyFromHbar > contractTradeCap;
+
   // For the MegaZap call we encode the current pool ratio as `ptShareBps`:
   // the share of the SY budget converted to PT mid-tx. Clamp to [100, 9900]
   // bps so the contract guard never trips.
@@ -618,13 +658,9 @@ function AddLp({
       }
     }
 
-    // Linear estimate of SY the zap will produce — fallback only; the REAL
-    // delta is read from chain after Tx1 (BUY-LP-02).
-    const estSyFromHbar =
-      hbarUsd !== undefined && usdPerShare !== undefined
-        ? BigInt(Math.floor((hbarAmount * hbarUsd) / Math.max(1e-12, usdPerShare)))
-        : 0n;
-
+    // `estSyFromHbar` (component-level memo, LP-CAP-01) is the linear estimate
+    // of SY the zap will produce — fallback only; the REAL delta is read from
+    // chain after Tx1 (BUY-LP-02).
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     try {
       // Tx 1: HBAR → SY shares (delivered to user).
@@ -965,7 +1001,7 @@ function AddLp({
             isConfirmingFinal ||
             !routerDeployed ||
             (effectiveSource === "hbar"
-              ? hbarAmount <= 0 || hbarAmount < 6 || !megaZapAvailable
+              ? hbarAmount <= 0 || hbarAmount < 6 || !megaZapAvailable || hbarExceedsContractCap
               : noInput || insufficientSy || insufficientPt || noPt)
           }
           onClick={onPrimary}
@@ -978,11 +1014,13 @@ function AddLp({
                 ? "Enter HBAR amount"
                 : hbarAmount < 6
                   ? "Min 6 HBAR"
-                  : isPending
-                    ? "Adding LP via MegaZap…"
-                    : isConfirmingFinal
-                      ? "Waiting for confirmation…"
-                      : "Add LP via MegaZap (1 tx)"
+                  : hbarExceedsContractCap
+                    ? "Trade too large for pool"
+                    : isPending
+                      ? "Adding LP via MegaZap…"
+                      : isConfirmingFinal
+                        ? "Waiting for confirmation…"
+                        : "Add LP via MegaZap (1 tx)"
               : noPt
                 ? "You need PT — buy PT first"
                 : noInput

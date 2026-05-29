@@ -1244,8 +1244,8 @@ function shortAddr(addr: string): string {
 
 /* ─────────────────────────────────────────────────────── lens quoter */
 
-// Read-only viem client for trade-time Lens inversion (binary search over
-// ptOut needs dynamic iterations, which wagmi's declarative hooks can't do).
+// Read-only viem client for trade-time Lens inversion (sizing ptOut needs
+// dynamic iterations, which wagmi's declarative hooks can't do).
 let _lensClient: ReturnType<typeof createPublicClient> | null = null;
 function lensClient() {
   if (!_lensClient) {
@@ -1255,19 +1255,36 @@ function lensClient() {
 }
 
 /**
- * BUY-PT-01/F4 fix — invert the Lens to pick the EXACT ptOut to mint.
+ * BUY-PT-01 / BUYPT-LENS-RPC-STORM fix — pick the EXACT ptOut to mint by
+ * inverting the Lens with a SEEDED closed-form estimate (<=6 Lens reads),
+ * not the old 40-iteration doubling-bracket + binary search (measured 60-67
+ * serial eth_calls, ~60-100s per Buy-PT click, and a single Hashio 429
+ * mid-burst returned 0n → a false "quoter unreachable" hard-abort for a funded
+ * user).
  *
  * The periphery's `buySyForPt(market, syIn, minPtOut=ptOut, …)` treats arg3 as
  * the exact PT to mint and caps the SY it may spend at `syIn`. The market
  * reverts (InsufficientOutput) when the curve needs > syIn SY for that ptOut.
  * `lens.previewSwapExactSyForPt(market, ptOut)` returns exactly that required
- * SY (same MarketMath.executeTradeCore path the swap uses), so we pick the
- * largest ptOut whose preview cost fits the slippage-adjusted budget:
+ * SY (same MarketMath.executeTradeCore path the swap uses).
  *
- *     previewSwapExactSyForPt(market, ptOut) <= syIn · (10000 - slippageBps)/10000
+ * Strategy:
+ *   budgetAdj = syIn · (10000 - slippageBps)/10000.
+ *   1 rate probe → rate = cost/ptOut (~0.98-0.99e18 SY-per-PT). The curve is
+ *   convex, so a rate read at/under the final size slightly UNDER-estimates the
+ *   true average rate → the closed-form seed (budgetAdj/rate) slightly
+ *   OVERSHOOTS → the linear correction (ptOut·budgetAdj/cost) pulls it down,
+ *   converging from above. The Lens reverts above the pool cap, so the probe
+ *   shrinks geometrically until it succeeds.
  *
- * Returns 0n if the lens is unreachable / no ptOut fits (caller floors to 1n,
- * which then trivially passes the curve and just mints minimal PT).
+ * GUARANTEE: returns only a ptOut whose preview cost we CONFIRMED <= budgetAdj
+ * (so the on-chain buySyForPt never reverts InsufficientOutput). A throttled /
+ * late read can never promote an unverified (possibly over-budget) ptOut into
+ * the tx. If we never confirm one (every read throttles / the lens is down),
+ * returns 0n → caller's existing "quoter unreachable" abort fires instead of
+ * submitting a guaranteed-revert ptOut.
+ *
+ * Hard ceiling: <=6 serial Lens reads, plus an ~8s wall-clock cutoff.
  */
 async function computePtOutForBudget(
   market: `0x${string}`,
@@ -1275,56 +1292,91 @@ async function computePtOutForBudget(
   slippageBps: number,
 ): Promise<bigint> {
   if (syIn <= 0n) return 0n;
-  const budget = (syIn * BigInt(10_000 - slippageBps)) / 10_000n;
-  if (budget <= 0n) return 0n;
+  const budgetAdj = (syIn * BigInt(10_000 - slippageBps)) / 10_000n;
+  if (budgetAdj <= 0n) return 0n;
   const client = lensClient();
-  const preview = (ptOut: bigint) =>
-    client.readContract({
-      abi: lensAbi,
-      address: ADDRESSES.lens,
-      functionName: "previewSwapExactSyForPt",
-      args: [market, ptOut],
-    }) as Promise<bigint>;
 
-  try {
-    // Bracket the search. PT trades near 1:1 with SY, so budget is a good
-    // lower seed; double `hi` until its cost exceeds the budget (or the
-    // preview reverts, which bounds it from above).
-    let lo = 1n;
-    let hi = budget > 1n ? budget : 2n;
-    for (let i = 0; i < 40; i++) {
-      let c: bigint | null = null;
-      try {
-        c = await preview(hi);
-      } catch {
-        c = null; // preview reverted → hi is already past the feasible region
-      }
-      if (c === null || c > budget) break;
-      lo = hi;
-      hi *= 2n;
+  const MAX_CALLS = 6; // hard ceiling on serial Lens reads (was 60+).
+  const WALL_MS = 8000; // wall-clock cutoff: fall back to last-known-safe ptOut.
+  const start = Date.now();
+  let calls = 0;
+  const budgetLeft = () => calls < MAX_CALLS && Date.now() - start < WALL_MS;
+
+  // Largest ptOut we have CONFIRMED on-chain to cost <= budgetAdj. Every return
+  // path uses this — never an unconfirmed estimate.
+  let bestSafe = 0n;
+  const probe = async (ptOut: bigint): Promise<bigint | null> => {
+    calls++;
+    let cost: bigint;
+    try {
+      cost = (await client.readContract({
+        abi: lensAbi,
+        address: ADDRESSES.lens,
+        functionName: "previewSwapExactSyForPt",
+        args: [market, ptOut],
+      })) as bigint;
+    } catch {
+      return null; // reverted (past pool cap) or RPC throttle/error
     }
-    // Binary search for the largest ptOut with cost <= budget.
-    let best = 0n;
-    while (lo <= hi) {
-      const mid = (lo + hi) / 2n;
-      let cost: bigint;
-      try {
-        cost = await preview(mid);
-      } catch {
-        hi = mid - 1n;
-        continue;
-      }
-      if (cost <= budget) {
-        best = mid;
-        lo = mid + 1n;
-      } else {
-        hi = mid - 1n;
-      }
+    if (cost > 0n && cost <= budgetAdj && ptOut > bestSafe) bestSafe = ptOut;
+    return cost;
+  };
+
+  // 1) Rate probe. Start at budgetAdj; shrink geometrically past the pool cap.
+  let probePt = budgetAdj > 1n ? budgetAdj : 1n;
+  let probeCost: bigint | null = null;
+  for (let i = 0; i < 5 && budgetLeft(); i++) {
+    probeCost = await probe(probePt);
+    if (probeCost !== null && probeCost > 0n) break;
+    probePt = probePt / 4n;
+    if (probePt < 1n) {
+      probePt = 1n;
+      break;
     }
-    return best;
-  } catch {
-    return 0n;
   }
+  // Even the probe is unreachable / zero → caller's "quoter unreachable" abort.
+  if (probeCost === null || probeCost === 0n) return 0n;
+
+  // 2) Closed-form seed.
+  const rate = (probeCost * 10n ** 18n) / probePt; // SY-per-PT, e18
+  let ptOut = (budgetAdj * 10n ** 18n) / rate;
+  if (ptOut <= 0n) ptOut = 1n;
+
+  // 3) Up to 3 linear-correction iterations.
+  for (let i = 0; i < 3 && budgetLeft(); i++) {
+    const cost = await probe(ptOut);
+    if (cost === null) {
+      // Overshot past the cap (or a throttle) → halve and retry within the cap.
+      ptOut = ptOut / 2n;
+      if (ptOut < 1n) ptOut = 1n;
+      continue;
+    }
+    if (cost <= budgetAdj) {
+      // Within 0.05% of budget → good enough.
+      if (cost >= (budgetAdj * 9995n) / 10_000n) break;
+      const scaled = (ptOut * budgetAdj) / cost; // >= ptOut (under budget)
+      if (scaled <= ptOut) break; // no progress
+      ptOut = scaled;
+    } else {
+      ptOut = (ptOut * budgetAdj) / cost; // < ptOut (over budget)
+      if (ptOut < 1n) ptOut = 1n;
+    }
+  }
+
+  // 4) Final guarantee: confirm the chosen ptOut <= budgetAdj. If it (or a
+  //    throttled read) doesn't confirm, step down a few bps until one does.
+  if (ptOut !== bestSafe) {
+    let chosen = ptOut;
+    for (let i = 0; i < 6 && budgetLeft(); i++) {
+      const c = await probe(chosen); // updates bestSafe on success
+      if (c !== null && c <= budgetAdj) break;
+      chosen = (chosen * 9990n) / 10_000n; // -0.1% per step
+      if (chosen < 1n) break;
+    }
+  }
+
+  // Return only a confirmed-safe ptOut (0n → caller aborts cleanly).
+  return bestSafe;
 }
 
 /**

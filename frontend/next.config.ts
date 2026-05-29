@@ -48,6 +48,7 @@ const CSP = [
     // fails with no signature prompt. The node set is large + changes, so a
     // wildcard is used (and the policy stays report-only — see below).
     "https://*.swirldslabs.com",
+    "https://*.swirlds.com",
     "https://*.hedera.com",
     "https://*.supabase.co wss://*.supabase.co",
     "https://api.coingecko.com",
