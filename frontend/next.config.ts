@@ -23,13 +23,19 @@ const CSP = [
   // Next.js injects inline bootstrap scripts; 'unsafe-inline' is required until
   // a nonce-based setup is wired. 'unsafe-eval' kept for dev/source-map tooling.
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-  "style-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "img-src 'self' data: blob: https:",
-  "font-src 'self' data:",
+  "font-src 'self' data: https://fonts.gstatic.com",
   [
     "connect-src 'self'",
     "https://mainnet.hashio.io",
     "https://mainnet-public.mirrornode.hedera.com",
+    // Hedera SDK talks DIRECTLY to consensus nodes for receipt/health queries
+    // during a signed tx (gRPC-web). Without these the wallet flow silently
+    // fails with no signature prompt. The node set is large + changes, so a
+    // wildcard is used (and the policy stays report-only — see below).
+    "https://*.swirldslabs.com",
+    "https://*.hedera.com",
     "https://*.supabase.co wss://*.supabase.co",
     "https://api.coingecko.com",
     "https://*.walletconnect.com wss://*.walletconnect.com",
@@ -54,8 +60,14 @@ const config: NextConfig = {
         headers: [
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "X-Content-Type-Options", value: "nosniff" },
-          // LP-2: ENFORCED (verified clean via browser console before flipping).
-          { key: "Content-Security-Policy", value: CSP },
+          // LP-2: REPORT-ONLY. Enforcing it (2026-05-30) broke the wallet: the
+          // Hedera SDK connects directly to *.swirldslabs.com consensus nodes
+          // during a signed tx's receipt query, and those (plus Google Fonts)
+          // were blocked -> no signature prompt. A browser scan only exercised
+          // the wallet MODAL, not a real signed tx, so it missed this. Report-only
+          // keeps the violation visibility without breaking the dApp; only flip to
+          // enforce after a FULL real-tx (buy/sell + receipt) test reports clean.
+          { key: "Content-Security-Policy-Report-Only", value: CSP },
         ],
       },
     ];
