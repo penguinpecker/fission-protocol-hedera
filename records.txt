@@ -1197,3 +1197,87 @@ Periphery is unchanged because it's immutable):
 Tests: forge test → 322 passed, 0 failed, 3 skipped. Same as pre-edit.
 
 ═══════════════════════════════════════════════════════════════════════════════
+ AMM FEE REDIRECT — COMMIT, FORENSIC AUDIT + LIVE EXERCISE  2026-05-29
+═══════════════════════════════════════════════════════════════════════════════
+
+REPO RELOCATED: the entire ~/Desktop/Projects tree was moved to
+~/Documents/Projects to escape a recurring macOS TCC Full-Disk-Access block on
+the Desktop folder (every Claude auto-update re-staled the grant; the
+Documents-folder grant is intact). Repo is now
+~/Documents/Projects/fission-protocol-hedera — read every ~/Desktop/... path
+above as ~/Documents/... .
+
+COMMITS PUSHED TO main:
+  d1dc6e4  contracts+frontend: AMM fee redirect cascade (49.5/49.5/1)
+           — the live market 0xfEcf was built from previously-UNCOMMITTED
+             source; this commit reconciles repo <-> deployed bytecode.
+  8c21457  fix(display-layer): DL-1 / DL-2 / DL-3 / FE-01 + dead-helper
+
+CANONICAL LIVE SET (chain 295; on-chain unchanged this session):
+  Factory   0xc6e077bfd0b2dfc2bf5694219242ef11aa46086d  (0.0.10500835)
+  Market    0xfEcfC0Bb57dD668fF37F2A232b208584E5FeAE53  (0.0.10500837) exp 2026-08-25
+  PT/YT/LP  0x..A03aE6 / 0x..A03aE7 / 0x..A03aE8
+  StdDeployer 0x8d56747f.. (0.0.10500818)  RwdDeployer 0x4454adc3.. (0.0.10500834)
+  Periphery 0x..A02731  Lens 0xa1aA..1969  SY 0x..A0289A (share 0x..A0289B) [reused]
+  Prior market 0x781382.. archived to previousMarkets[] / indexer old_markets.
+
+FORENSIC AUDIT (read-only, 6-dimension parallel + adversarial verification):
+  VERDICT: on-chain CLEAN — no Critical/High logic bugs. Verified: AMM fee
+  split (bps sum 10000, dust->YT), PT denominator = pt.totalSupply() (not
+  totalPt), all 8 settlement-hook sites settle-before / mark-after
+  (redeemAfterExpiry settles PT-AMM pre-burn), claimAmmRewards consolidation,
+  shareToken cache, conservation invariant (sum(claims) <= collected fees).
+  ABI<->bytecode consistent across all 9 addresses. RLS default-deny, auth
+  gating, security headers correct. Live implied APY 9.26% (lnImpliedRate
+  0.08857) == displayed; legit price discovery, NOT the prior 141% pathology.
+
+  Display-layer defects (zero funds at risk) — all fixed in 8c21457:
+    DL-1 (MED) /api/markets served superseded market 0x781382 un-archived
+         beside 0xfEcf (refresh route omitted is_archived). FIX: is_archived in
+         upsert + prior-factory archive sweep (gated rows>0). Self-healed live:
+         /api/markets now returns exactly one active market.
+    DL-2 (MED) cron-indexer bundled deployments/295.json still pinned the old
+         factory/market -> the 6 direct-to-market actions on 0xfEcf were not
+         indexed (periphery-routed buy/sell were fine). FIX: bundled JSON ->
+         new factory/market; old kept under abandoned.old_factories/old_markets.
+         fission-indexer redeployed via `railway up` (a restart alone is
+         insufficient — the watchlist is baked into the image). Verified:
+         startup log shows the new watchlist (contracts=15); first tick
+         ingested the new-market direct actions, 0 errors.
+    DL-3 (LOW) loadContractsFromDeployments now normalizes the canonical
+         repo-root 295.json shape so the PARENT_REPO fallback cannot yield an
+         empty watchlist.
+    FE-01 (LOW) Footer.tsx Market/Factory HashScan links -> canonical.
+    dead-helper (LOW) periphery2tx.ts buySyForLp was 6-arg vs the 7-arg
+         contract (dead code; live ProvideLpForm builds the correct call) —
+         fixed to 7-arg.
+  Adversarial verify OVERTURNED the watchdog's "indexer hasn't ingested the new
+  market" claim: the new market was the freshest /api/markets row; the real bug
+  was the missing archival flag on the OLD one (DL-1).
+
+LIVE ON-CHAIN EXERCISE (Phase B, operator key, real funds, ~14.5 HBAR):
+  smoke-all-periphery.mjs 12/12 SUCCESS on 0xfEcf (zap, buy/sell PT, buy/sell
+  YT, sell LP, unzap, approvals, setOperator).
+  scripts/audit-phaseb-claim-lp.mjs (the headline-feature exerciser):
+    - claimAmmRewards(op) returned (pt=0, yt=18863); operator SY-share delta
+      = +18863 raw — EXACT match to the value independently computed from the
+      on-chain indices. PT-side 0 (operator holds 0 external PT; in-pool PT
+      forfeit by design). Second claim returned (0,0) — no-op, no double-spend.
+    - The 8 swaps moved ptAmmRewardIndex 5.45e13->1.09e14 and ytAmmRewardIndex
+      likewise — fee redirect accrues on live trades.
+    - buySyForLp (7-arg add-LP, not in the smoke): lpOut 1,487,729; LP delta matched.
+  Operator HBAR 282.31 -> 267.84.
+
+VERIFICATION: read-only watchdog agents confirmed both Vercel deploys READY
+  (SHA match), live 200, footer fix live, DL-1 self-heal across 8 polls; DL-2
+  indexer redeploy verified directly via railway logs.
+
+NOTES:
+  - DL-1a manual Supabase UPDATE was NOT needed: Fission Supabase
+    (atjsjwebftwbaellnuuy) is not in the MCP (only pengucrush is), but the
+    deployed refresh-route sweep self-archives 0x781382 on its own cron tick.
+  - Railway: CLI authed (penguinpecker1@gmail.com); fission-indexer deploys via
+    `railway up` from cron-indexer/ (Nixpacks, node index.js). Watchlist = the
+    bundled cron-indexer/deployments/295.json (edit + `railway up` to change).
+
+═══════════════════════════════════════════════════════════════════════════════
