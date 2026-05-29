@@ -61,6 +61,13 @@ export function rateLimit(key: string, limit: number, windowMs: number): RateLim
  * Best-effort client IP from proxy headers. Vercel sets x-forwarded-for; we
  * take the left-most (original client) hop. Falls back to a constant bucket so
  * a missing header still shares one limited bucket rather than bypassing.
+ *
+ * NOTE: the left-most hop is shared by everyone behind a NAT/CGNAT/corporate/
+ * conference egress, so callers that gate a *per-user* action (e.g. minting a
+ * SIWE nonce) MUST NOT key on this IP alone — that locks out co-located users.
+ * Compose it with a per-user discriminator (e.g. the address being signed):
+ * `nonce:${clientIp(req)}:${address}`. The IP component still bounds abuse from
+ * a single host; the per-user component keeps distinct users from colliding.
  */
 export function clientIp(req: Request): string {
   const xff = req.headers.get("x-forwarded-for");

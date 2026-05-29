@@ -22,17 +22,12 @@ import { rateLimit, clientIp } from "@/lib/rate-limit";
 const NONCE_TTL_MS = 5 * 60 * 1000;
 
 export async function POST(req: NextRequest) {
-  // WEB2-07: best-effort per-IP cap (no new infra). 30 nonce mints / minute is
-  // far above any honest login flow but caps a hot instance from being a free
-  // CSPRNG/insert amplifier. See lib/rate-limit.ts for limitations.
-  const rl = rateLimit(`nonce:${clientIp(req)}`, 30, 60_000);
-  if (!rl.ok) {
-    return NextResponse.json(
-      { error: "rate_limited" },
-      { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
-    );
-  }
-
+  // Parse + validate the address FIRST so the rate-limit bucket can be keyed
+  // per (IP, address) rather than per-IP alone. Keying on IP-only locked out
+  // co-located users behind shared NAT/CGNAT/corporate/conference egress: a
+  // single bucket on the first x-forwarded-for hop is shared by everyone on
+  // that network, so a cohort signing in together exhausted it and the rest
+  // got an opaque sign-in failure. (RATELIMIT-SHARED-IP-NAT)
   let body: unknown;
   try {
     body = await req.json();
@@ -44,6 +39,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_address" }, { status: 400 });
   }
   const lower = address.toLowerCase();
+
+  // WEB2-07: best-effort cap (no new infra), now keyed per (IP, address) and
+  // raised to 100 mints/min. This still bounds the DB write-amplification the
+  // original finding was about — a single signer can mint at most 100
+  // nonces/min — while letting distinct wallets behind ONE egress IP each get
+  // their own bucket, so they no longer collide. See lib/rate-limit.ts.
+  const rl = rateLimit(`nonce:${clientIp(req)}:${lower}`, 100, 60_000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      {
+        error: "rate_limited",
+        // Actionable, human-readable so the client can show it verbatim
+        // instead of the opaque "nonce_failed".
+        message: `Too many sign-in attempts. Please wait ~${rl.retryAfter}s and try again.`,
+        retryAfter: rl.retryAfter,
+      },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
+    );
+  }
 
   const nonce = randomBytes(32).toString("hex");
   const now = Date.now();

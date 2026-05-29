@@ -47,10 +47,49 @@ export default function MarketsPage() {
   );
 }
 
+/**
+ * Human-readable age for the cache freshness line, e.g. "32s", "18m", "21h".
+ * Replaces the old hard-coded "~30s ago" literal, which lied: with the
+ * once-a-day refresh cron the list is usually hours stale. (MARKETS-LIST-25H-STALE)
+ */
+function formatAge(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 90) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 90) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
 function MarketsBody() {
   const chainId = useChainId();
-  const { markets: cached, loading: cachedLoading } = useCachedMarkets();
+  const {
+    markets: cached,
+    loading: cachedLoading,
+    lastSynced,
+    stale: cacheStale,
+  } = useCachedMarkets();
   const useChainFallback = !cachedLoading && (cached === null || cached.length === 0);
+
+  // Re-render the freshness line on a slow tick so the displayed age stays
+  // truthful while the page sits open, without spamming renders.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Freshness reflects the actual cache row timestamp when the cached path is
+  // in use. On the on-chain fallback path the figures ARE live, so report that.
+  const onCachePath = !useChainFallback && lastSynced !== null;
+  const freshnessLine = onCachePath
+    ? `synced ${formatAge(nowTick - lastSynced)} ago`
+    : useChainFallback
+      ? "live on-chain read"
+      : "syncing…";
+  // Headline numbers are stale only on the cached path past the short window.
+  const showStale = onCachePath && cacheStale;
 
   const { data: countRaw } = useMarketCount();
   const count = countRaw as bigint | undefined;
@@ -166,8 +205,16 @@ function MarketsBody() {
         )}
 
         <div className="mt-5 font-mono text-[12.5px] tracking-[0.06em] text-textDim">
-          Showing {filtered.length} market{filtered.length === 1 ? "" : "s"} · {activeCount} active ·
-          last block synced ~30s ago
+          Showing {filtered.length} market{filtered.length === 1 ? "" : "s"} · {activeCount} active ·{" "}
+          {freshnessLine}
+          {showStale && (
+            <span
+              className="ml-1 text-warning"
+              title="These headline APY/TVL figures come from the daily cache and may lag the chain. Open a market for a live on-chain read."
+            >
+              · headline figures may lag chain
+            </span>
+          )}
         </div>
       </div>
 

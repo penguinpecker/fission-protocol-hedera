@@ -28,6 +28,7 @@ import { erc20Abi } from "@/lib/abis";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
+import { formatCompactBigint } from "@/lib/trade-limits";
 import {
   FormHeaderStrip,
   MoneyInput,
@@ -1214,6 +1215,42 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
   const insufficientLp = parsedLp > lpBalance;
   const needsLpApprove = parsedLp > 0n && lpAllowance < parsedLp;
 
+  // LP-CAP-02 (ROUND-4 F1): PRE-EXPIRY Remove routes through
+  // Periphery.sellLpForSy, which runs _checkSize(lpIn, lp.totalSupply()) BEFORE
+  // pulling the LP — so a removal above maxTradeBps (5%) reverts TradeExceedsCap
+  // AFTER the user has already paid the LP-approve gas. (BuyPtForm/BuyYtForm
+  // already gate the SY-side cap the same way.) Read the periphery's own
+  // maxTradeBps() LIVE (don't hardcode 500) and derive a 5%-of-LP-supply cap,
+  // then block the Remove button before charging for the approve.
+  //
+  // POST-EXPIRY this form routes directly to market.removeLiquidity, which is
+  // UNCAPPED (no _checkSize), so the cap does NOT apply — allow full removal.
+  const maxTradeBpsRead = useReadContract({
+    abi: [
+      {
+        type: "function",
+        name: "maxTradeBps",
+        stateMutability: "view",
+        inputs: [],
+        outputs: [{ type: "uint256" }],
+      },
+    ] as const,
+    address: ADDRESSES.periphery,
+    functionName: "maxTradeBps",
+    query: { enabled: routerDeployed && !expired },
+  });
+  // Fall back to the 500 bps initialize default until the read resolves (matches
+  // the deployed FissionPeriphery value; never under-gates).
+  const lpMaxTradeBps =
+    maxTradeBpsRead.data !== undefined ? (maxTradeBpsRead.data as bigint) : 500n;
+  // Cap = bps × LP totalSupply. _checkSize compares lpIn against this supply.
+  const lpRemoveCap =
+    !expired && detail.lpSupply > 0n
+      ? (detail.lpSupply * lpMaxTradeBps) / 10_000n
+      : 0n;
+  // Only enforced pre-expiry (post-expiry path is uncapped).
+  const lpExceedsCap = !expired && lpRemoveCap > 0n && parsedLp > lpRemoveCap;
+
   const expectedSy =
     detail.lpSupply > 0n
       ? (parsedLp * detail.totalSy) / detail.lpSupply
@@ -1234,15 +1271,20 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
     : expectedSy + BigInt(Math.floor(Number(expectedPt) * ptRate));
   const needsSyApprove = parsedLp > 0n && sySharePeripheryAllowance < expectedSyAfterTx1;
 
-  // W2-06-style minHbarOut for Tx2: expected HBAR from unzapping the SY proceeds.
-  const expectedHbarOut: number =
-    expectedSyAfterTx1 > 0n && usdPerShare !== undefined && hbarUsd !== undefined
-      ? (Number(expectedSyAfterTx1) * usdPerShare) / Math.max(1e-9, hbarUsd)
-      : 0;
-  const minHbarOutTinybar: bigint =
-    expectedHbarOut > 0
-      ? (BigInt(Math.floor(expectedHbarOut * 1e8)) * BigInt(10_000 - slippageBps)) / 10_000n
-      : 1n;
+  // F3 (ROUND-4): the Tx2 unzap (SY → HBAR) minHbarOut is now derived from the
+  // REALIZED SY delta inside onRemove (not the pre-trade estimate), using the
+  // live price and refusing a 1n floor — so the old estimate-based
+  // `minHbarOutTinybar` is gone. The guard below only governs button-disable +
+  // submit-refuse.
+  //
+  // The Tx2 unzap (SY → HBAR) needs a trustworthy price to set
+  // minHbarOut. A 1n floor is sandwich-exploitable — the inner USDC→WHBAR leg
+  // uses amountOutMinimum:0. `usdPerShare`/`hbarUsd` carry a SaucerSwap-pool
+  // on-chain fallback, so CoinGecko being blocked alone no longer trips this;
+  // we only hard-block when BOTH that and CoinGecko fail. Mirrors SellPtForm /
+  // SellYtForm. Only matters once there's LP to remove.
+  const priceFeedUnavailable =
+    parsedLp > 0n && (usdPerShare === undefined || hbarUsd === undefined);
 
   const wrap = async <T,>(fn: () => Promise<T>) => {
     setWriteError(null);
@@ -1308,6 +1350,14 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
 
   const onRemove = async (): Promise<boolean> => {
     if (!user || parsedLp === 0n || !routerDeployed || insufficientLp) return false;
+    // F1 (ROUND-4): refuse a pre-expiry removal above the periphery's size cap —
+    // sellLpForSy's _checkSize would revert TradeExceedsCap after the LP approve.
+    if (lpExceedsCap) {
+      setWriteError(
+        `Removal exceeds the ${(Number(lpMaxTradeBps) / 100).toFixed(0)}% per-tx LP cap — split it across multiple transactions (the cap lifts after expiry).`,
+      );
+      return false;
+    }
     try {
       // SELL-NO-SYSHARE-ASSOC: Tx1 (sellLpForSy / removeLiquidity) delivers
       // SY-share to the user via safeTransfer. On a HIP-904 limited-association
@@ -1378,12 +1428,34 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
         await new Promise((res) => setTimeout(res, 1000));
       }
 
+      // F3 (ROUND-4): derive minHbarOut from the REALIZED SY delta using the live
+      // price — never a 1n floor (the inner USDC→WHBAR swap uses
+      // amountOutMinimum:0 and would accept ~1 tinybar). If the price feed is
+      // down OR the floor would round to ≤1n, REFUSE the unzap. Tx1 already
+      // delivered SY to the user's wallet, so they keep their funds and can
+      // retry the conversion (or sell the SY on /sy) once pricing is back.
+      if (priceFeedUnavailable || usdPerShare === undefined || hbarUsd === undefined) {
+        setWriteError(
+          "Price feed unavailable — your LP was withdrawn to SY in your wallet, but we can't safely price the SY→HBAR conversion. Convert it on the SY page once pricing is back.",
+        );
+        return false;
+      }
+      const realHbarForDelta = (Number(syReceived) * usdPerShare) / Math.max(1e-9, hbarUsd);
+      const minHbarOutReal =
+        (BigInt(Math.floor(realHbarForDelta * 1e8)) * BigInt(10_000 - slippageBps)) / 10_000n;
+      if (minHbarOutReal <= 1n) {
+        setWriteError(
+          "Computed HBAR floor rounded to ~zero — refusing an unprotected unzap. Your SY is in your wallet; convert it on the SY page or retry a larger amount.",
+        );
+        return false;
+      }
+
       // Tx 2: SY → HBAR. Unzap the actual delta with a slippage-derived floor.
       const { txHash: hash2 } = await wrap(() =>
         adapter.write({
           kind: "writePeriphery",
           functionName: "unzapSyToHbar",
-          args: [detail.sy, syReceived, minHbarOutTinybar, 0n],
+          args: [detail.sy, syReceived, minHbarOutReal, 0n],
         }),
       );
       setTxHash(hash2 as `0x${string}`);
@@ -1523,11 +1595,29 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
               </span>
             ) : undefined
           }
-          caption={<>gas ~0.10 HBAR</>}
+          caption={
+            !expired && lpRemoveCap > 0n ? (
+              <>
+                gas ~0.10 HBAR · max{" "}
+                {(Number(lpMaxTradeBps) / 100).toFixed(0)}% of LP supply per tx ={" "}
+                {formatCompactBigint(lpRemoveCap)}
+              </>
+            ) : (
+              <>gas ~0.10 HBAR</>
+            )
+          }
           feedback={
             insufficientLp ? (
               <span className="block font-mono text-[10px] font-medium text-error">
                 Insufficient LP — you have {formatCompact(lpBalance)}.
+              </span>
+            ) : lpExceedsCap ? (
+              <span className="block font-mono text-[10px] font-medium text-warning">
+                Removal too large — the pool caps a single LP exit at{" "}
+                {(Number(lpMaxTradeBps) / 100).toFixed(0)}% of total LP supply (
+                {formatCompactBigint(lpRemoveCap)}). Large/concentrated holders
+                exit over multiple transactions; the cap lifts automatically
+                after expiry.
               </span>
             ) : null
           }
@@ -1545,7 +1635,19 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
 
         <button
           type="button"
-          disabled={!user || parsedLp === 0n || isPending || isConfirmingFinal || insufficientLp || !routerDeployed}
+          disabled={
+            !user ||
+            parsedLp === 0n ||
+            isPending ||
+            isConfirmingFinal ||
+            insufficientLp ||
+            !routerDeployed ||
+            // F1 (ROUND-4): pre-expiry removal above 5% reverts TradeExceedsCap
+            // in sellLpForSy AFTER the LP approve — block it first.
+            lpExceedsCap ||
+            // F3 (ROUND-4): block while we can't price the SY→HBAR leg.
+            priceFeedUnavailable
+          }
           onClick={onPrimary}
           className="w-full rounded-[10px] bg-white px-7 py-3.5 font-mono text-sm font-semibold uppercase tracking-[1px] text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -1555,13 +1657,17 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
               ? "Enter LP amount"
               : insufficientLp
                 ? "Insufficient LP"
-                : isPending
-                  ? "Sign in HashPack…"
-                  : isConfirmingFinal
-                    ? "Waiting for confirmation…"
-                    : !expired && needsLpApprove
-                      ? "Approve LP for Router"
-                      : "Remove liquidity"}
+                : lpExceedsCap
+                  ? "Max 5% of LP per tx"
+                  : priceFeedUnavailable
+                    ? "Price feed unavailable — try again"
+                    : isPending
+                      ? "Sign in HashPack…"
+                      : isConfirmingFinal
+                        ? "Waiting for confirmation…"
+                        : !expired && needsLpApprove
+                          ? "Approve LP for Router"
+                          : "Remove liquidity"}
         </button>
 
         {writeError && (

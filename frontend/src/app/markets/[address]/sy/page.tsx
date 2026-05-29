@@ -210,10 +210,29 @@ function SellSyForm({ market, detail, user }: FormProps) {
     return (tinybars * BigInt(10_000 - slippageBps)) / 10_000n;
   }, [expectedHbarOut, slippageBps]);
 
+  // F2 (ROUND-4): the unzap (SY → HBAR) needs a trustworthy price to set
+  // minHbarOut. A 1n floor is NOT acceptable — the inner USDC→WHBAR leg uses
+  // amountOutMinimum:0, so a 1n outer floor is sandwich-exploitable. When BOTH
+  // CoinGecko AND the on-chain SaucerSwap-pool fallback fail, `usdPerShare`/
+  // `hbarUsd` go undefined → BLOCK the sell rather than ship a 1n/sandwichable
+  // floor. Mirrors the SellPtForm / SellYtForm guard. Only matters once
+  // there's an amount to sell.
+  const priceFeedUnavailable =
+    parsedSy > 0n && (usdPerShare === undefined || hbarUsd === undefined);
+
   /* ─────────────────────────── primary handler */
 
   const run = useCallback(async () => {
     if (!user || parsedSy === 0n || insufficient || !unzapDeployed) return;
+    // F2 (ROUND-4): refuse to submit while the price feed is down. A 1n floor
+    // here would let the inner amountOutMinimum:0 USDC→WHBAR swap be sandwiched.
+    if (priceFeedUnavailable || minHbarOutTinybar <= 1n) {
+      const msg =
+        "Price feed unavailable — can't safely set a minimum HBAR floor for the SY→HBAR conversion. Try again once pricing is back.";
+      setWriteError(msg);
+      setFlowState({ kind: "error", message: msg, failedAt: "sell" });
+      return;
+    }
     setWriteError(null);
     try {
       if (needsApprove) {
@@ -243,7 +262,7 @@ function SellSyForm({ market, detail, user }: FormProps) {
       setWriteError(msg);
       setFlowState({ kind: "error", message: msg, failedAt: needsApprove ? "approve" : "sell" });
     }
-  }, [adapter, detail.sy, detail.syShare, insufficient, minHbarOutTinybar, needsApprove, parsedSy, reads, unzapDeployed, user]);
+  }, [adapter, detail.sy, detail.syShare, insufficient, minHbarOutTinybar, needsApprove, parsedSy, priceFeedUnavailable, reads, unzapDeployed, user]);
 
   /* ─────────────────────────── UI */
 
@@ -258,6 +277,7 @@ function SellSyForm({ market, detail, user }: FormProps) {
     if (syBalance === 0n) return "No SY to sell";
     if (parsedSy === 0n) return "Enter amount";
     if (insufficient) return "Insufficient SY";
+    if (priceFeedUnavailable) return "Price feed unavailable — try again";
     if (flowState.kind === "approving") return "Approving SY for Unzap…";
     if (flowState.kind === "selling") return "Selling SY → HBAR…";
     if (flowState.kind === "done") return "✓ Done";
@@ -272,7 +292,9 @@ function SellSyForm({ market, detail, user }: FormProps) {
     isPending ||
     isConfirmingFinal ||
     parsedSy === 0n ||
-    insufficient;
+    insufficient ||
+    // F2 (ROUND-4): block the unzap while we can't price the SY→HBAR leg.
+    priceFeedUnavailable;
 
   return (
     <div className="flex flex-col gap-3">

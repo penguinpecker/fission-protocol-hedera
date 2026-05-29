@@ -58,7 +58,13 @@ export function computeSizeLimit(
 }
 
 // Local compact formatter mirrors useMarkets.formatCompact (avoids a circular
-// import — that module imports wagmi which we don't need here).
+// import — that module imports wagmi which we don't need here). Exported as
+// `formatCompactBigint` so forms can render cap numbers without pulling in the
+// wagmi-laden useMarkets module.
+export function formatCompactBigint(v: bigint): string {
+  return formatBigCompact(v);
+}
+
 function formatBigCompact(v: bigint): string {
   if (v === 0n) return "0";
   const TIERS: ReadonlyArray<{ t: bigint; d: bigint; s: string }> = [

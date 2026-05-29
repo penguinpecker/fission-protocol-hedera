@@ -13,6 +13,7 @@ import { useCachedMarkets } from "@/hooks/useCachedMarkets";
 import { useMarketDetail, useUserPosition, type MarketDetail } from "@/hooks/useMarket";
 import { useSyValueUsd, formatUsd } from "@/hooks/useSyValueUsd";
 import { useWatchlist } from "@/hooks/useWatchlist";
+import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { impliedApyPct, daysUntil, formatCompact } from "@/hooks/useMarkets";
 import { ptToSyRate, ytToSyRate, type UserPosition } from "@/components/MarketPositionCard";
 import { getMarketDisplay } from "@/lib/markets-metadata";
@@ -367,6 +368,15 @@ function PositionRow({ row, user }: { row: PortfolioRow; user: `0x${string}` | u
     setTxErr(null);
     setTxState("pending");
     try {
+      // REDEEM-NEEDS-SYSHARE-ASSOC: redeemAfterExpiry delivers the SY-share to
+      // the receiver. A limited-association wallet (max_auto_assoc=0) that got
+      // its PT via SY-mode/transfer would revert TOKEN_NOT_ASSOCIATED at
+      // consensus on the SY-share leg (invisible to the eth_call gas estimate).
+      // Reuse the SELL-01 helper to pre-associate it. No-op in EVM mode / when
+      // already associated.
+      await ensureRewardAssociations(adapter.mode, adapter.accountId, hedera.getConnector(), [
+        row.syShare,
+      ]);
       const { txHash: h } = await adapter.write({
         kind: "redeemAfterExpiry",
         market: row.market,
@@ -380,7 +390,7 @@ function PositionRow({ row, user }: { row: PortfolioRow; user: `0x${string}` | u
       setTxErr(e instanceof Error ? e.message : String(e));
       setTxState("error");
     }
-  }, [adapter, row.market, row.amountRaw, row.expired, user]);
+  }, [adapter, hedera, row.market, row.syShare, row.amountRaw, row.expired, user]);
 
   // YT Claim: claim accrued AMM-fee share (SY-share) + SY-yield rewards. Both
   // are owed to YT holders on the rewards market; fire them back-to-back.
@@ -724,9 +734,24 @@ interface ActivityEntry {
 function RecentActivityCard({ userEvm }: { userEvm: `0x${string}` | undefined }) {
   const adapter = useWalletAdapter();
   const accountId = adapter.accountId;
+  // ACTIVITY-401-NOSESSION: the profile renders on wallet-CONNECT, but
+  // /api/activity is SIWE-session-bound (WEB2-IDOR-02). A connected-but-not-
+  // signed-in user (declined the auto-sign, or a returning user whose 7-day
+  // cookie expired and session-restore didn't re-fire SIWE) gets HTTP 401. We
+  // surface a friendly "Sign in to view your activity" state with a button
+  // that fires the existing SIWE signIn, instead of a dead "api_401" string.
+  const { state: siwe, signIn } = useSiweAuth();
 
   const [entries, setEntries] = useState<ActivityEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Tracked separately from `error` so the 401 case renders the sign-in prompt
+  // (recoverable) while non-401 errors keep the existing error display.
+  const [needsSignIn, setNeedsSignIn] = useState(false);
+
+  // Re-run the fetch when the SIWE session becomes authenticated so a fresh
+  // sign-in (via the prompt below or the Nav) immediately populates the feed
+  // without a page reload.
+  const authed = siwe.status === "authenticated";
 
   useEffect(() => {
     if (!userEvm && !accountId) return;
@@ -741,11 +766,23 @@ function RecentActivityCard({ userEvm }: { userEvm: `0x${string}` | undefined })
           cache: "no-store",
         });
         if (!r.ok) {
-          if (!cancelled) setError(`api_${r.status}`);
+          if (cancelled) return;
+          // 401 = no/expired session → recoverable via SIWE sign-in.
+          if (r.status === 401) {
+            setNeedsSignIn(true);
+            setError(null);
+          } else {
+            setNeedsSignIn(false);
+            setError(`api_${r.status}`);
+          }
           return;
         }
         const j = (await r.json()) as { entries?: ActivityEntry[] };
-        if (!cancelled) setEntries(j.entries ?? []);
+        if (!cancelled) {
+          setNeedsSignIn(false);
+          setError(null);
+          setEntries(j.entries ?? []);
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "fetch_failed");
       }
@@ -753,7 +790,9 @@ function RecentActivityCard({ userEvm }: { userEvm: `0x${string}` | undefined })
     return () => {
       cancelled = true;
     };
-  }, [userEvm, accountId]);
+  }, [userEvm, accountId, authed]);
+
+  const signingIn = siwe.status === "loading";
 
   return (
     <div>
@@ -761,7 +800,24 @@ function RecentActivityCard({ userEvm }: { userEvm: `0x${string}` | undefined })
         // recent_activity
       </h4>
       <div className="flex flex-col gap-px border border-border bg-border">
-        {error ? (
+        {needsSignIn ? (
+          <div className="bg-white/[0.015] p-4 font-mono text-[11.5px] text-textDim">
+            <p className="leading-relaxed">Sign in to view your activity.</p>
+            <button
+              type="button"
+              onClick={() => void signIn()}
+              disabled={signingIn}
+              className="mt-3 inline-flex w-full justify-center border border-white bg-white px-4 py-2.5 font-mono text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {signingIn ? "Signing in…" : "Sign in"}
+            </button>
+            {siwe.status === "error" && (
+              <span className="mt-2 block font-mono text-[10px] text-error" title={siwe.error}>
+                {siwe.error.slice(0, 80)}
+              </span>
+            )}
+          </div>
+        ) : error ? (
           <div className="bg-white/[0.015] p-4 font-mono text-[11.5px] text-textDim">
             Activity feed unavailable — {error}
           </div>
