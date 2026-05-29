@@ -99,6 +99,10 @@ function loadContractsFromDeployments() {
   // (just a label — does not affect indexing semantics).
   for (const evm of d.abandoned?.old_factories ?? []) push(evm, "Factory_archived");
   for (const evm of d.abandoned?.old_markets ?? []) push(evm, "Market_archived", true);
+  // Superseded peripheries/lenses still hold historical user Buy/Sell calls
+  // (keyed by the market arg). Keep indexing them so legacy activity rows land.
+  for (const evm of d.abandoned?.old_periphery ?? []) push(evm, "FissionPeriphery_archived");
+  for (const evm of d.abandoned?.old_lens ?? []) push(evm, "Lens_archived");
   push(d.abandoned_router_v1?.evm, "ActionRouter_v1_archived");
   push(d.abandoned_zap_v1?.evm, "FissionZap_v1_archived");
   for (const evm of d.abandoned?.old_sy_v2_lp ?? []) push(evm, "SY_v1_archived");

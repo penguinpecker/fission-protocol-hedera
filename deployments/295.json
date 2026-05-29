@@ -1,91 +1,137 @@
 {
   "chainId": 295,
   "network": "mainnet",
-  "deployedAt": "2026-05-26T19:51:12.343Z",
+  "deployedAt": "2026-05-29T15:24:19.014Z",
   "deployer": "0xA7e128326861d2EeDc68eD82E2a5EB5f653a11a7",
+  "architecture": "uups-proxy + freeze-pt",
+  "roles": {
+    "factoryAdmin": "0xA7e128326861d2EeDc68eD82E2a5EB5f653a11a7",
+    "marketAdmin": "0xA7e128326861d2EeDc68eD82E2a5EB5f653a11a7",
+    "marketTreasury": "0xA7e128326861d2EeDc68eD82E2a5EB5f653a11a7",
+    "syAdmin": "0xA7e128326861d2EeDc68eD82E2a5EB5f653a11a7",
+    "peripheryOwner": "0xA7e128326861d2EeDc68eD82E2a5EB5f653a11a7",
+    "upgradeAuthority": "0xA7e128326861d2EeDc68eD82E2a5EB5f653a11a7"
+  },
   "external": {
     "NPM": "0x00000000000000000000000000000000003DDbb9",
     "USDC": "0x000000000000000000000000000000000006f89a",
     "WHBAR": "0x0000000000000000000000000000000000163B5a",
     "WHBAR_CONTRACT": "0x0000000000000000000000000000000000163B59",
-    "V2_ROUTER": "0x00000000000000000000000000000000003c437A"
+    "V2_ROUTER": "0x00000000000000000000000000000000003c437A",
+    "poolFee": 1500,
+    "tickLower": -887220,
+    "tickUpper": 887220
   },
   "contracts": {
-    "standardMarketDeployer": "0x8D56747F585CB9F95a2C9c20C2cDB11B46806679",
-    "rewardsMarketDeployer": "0x4454adc33a5ff969a286c9fd7aae27a44ae68b48",
-    "factory": "0xc6e077bfd0b2dfc2bf5694219242ef11aa46086d",
-    "saucerSwapLPYieldSource": "0x0000000000000000000000000000000000A0289A",
-    "lens": "0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969",
-    "periphery": "0x0000000000000000000000000000000000A02731"
+    "standardMarketDeployer": "0x0000000000000000000000000000000000a03f8a",
+    "rewardsMarketDeployer": "0x0000000000000000000000000000000000a03f8f",
+    "factory": "0x0000000000000000000000000000000000a03f94",
+    "lens": "0x0000000000000000000000000000000000a03f9b",
+    "saucerSwapLPYieldSource": "0x0000000000000000000000000000000000a03f9d",
+    "peripheryImpl": "0x0000000000000000000000000000000000A03FAB",
+    "periphery": "0x0000000000000000000000000000000000a03fAd"
   },
   "market": {
-    "address": "0xfEcfC0Bb57dD668fF37F2A232b208584E5FeAE53",
-    "expiry": "1787657819",
+    "address": "0x31742aFF65fcfed391cc6B4B9DA0271643e0Eec6",
+    "pt": "0x0000000000000000000000000000000000A03FA6",
+    "expiry": "1787843996",
     "scalarRoot": "5000000000000000000",
-    "suffix": "USDC-WHBAR-2026-08-25-amm",
-    "anchor": "1018855479332655872",
-    "anchorNote": "1.018855e18 = 8% annualized APY at deploy time (89 days to expiry)."
+    "suffix": "USDC-WHBAR-2026-08-27"
   },
-  "previousMarkets": [
-    {
-      "address": "0x3aCDD09b5850F551D9F2b4FE949439c2499f86C1",
-      "reason": "anchor=1.0 → buy-PT blocked"
+  "abandoned": {
+    "old_factories": ["0xc6e077bfd0b2dfc2bf5694219242ef11aa46086d", "0x799549f698bbbac90b9e1c37ef3946a1a1d3397c"],
+    "old_markets": ["0xfecfc0bb57dd668ff37f2a232b208584e5feae53", "0xfd33ccb2385ec20c4b7bc682712fb92e01e87d5f", "0x432e552aa1988542da05d192a7b62b0292216032", "0x556938acfda70df2a32ea97e6b6862b874d93ef9", "0x781382351c9ed32df3110b8d805d3c8c3dbfe046"],
+    "old_periphery": ["0x0000000000000000000000000000000000a02731", "0x0000000000000000000000000000000000a025c1", "0x8ce95cef2c521df83f346b579de84fa4aa8f50aa"],
+    "old_lens": ["0xa1aafc8c11a686a3dee5dfe8b19d9eb43d321969"],
+    "old_sy_v2_lp": ["0x0000000000000000000000000000000000a0289a"],
+    "chainId": 295,
+    "network": "mainnet",
+    "deployedAt": "2026-05-26T19:51:12.343Z",
+    "deployer": "0xA7e128326861d2EeDc68eD82E2a5EB5f653a11a7",
+    "external": {
+      "NPM": "0x00000000000000000000000000000000003DDbb9",
+      "USDC": "0x000000000000000000000000000000000006f89a",
+      "WHBAR": "0x0000000000000000000000000000000000163B5a",
+      "WHBAR_CONTRACT": "0x0000000000000000000000000000000000163B59",
+      "V2_ROUTER": "0x00000000000000000000000000000000003c437A"
     },
-    {
-      "address": "0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f",
-      "reason": "anchor=1.2e18 (20% APY) misconfigured; rebalance attempt drove it to 141% — replaced with anchor=1.08e18 (8% APY)",
-      "expiry": "1787657819"
+    "contracts": {
+      "standardMarketDeployer": "0x8D56747F585CB9F95a2C9c20C2cDB11B46806679",
+      "rewardsMarketDeployer": "0x4454adc33a5ff969a286c9fd7aae27a44ae68b48",
+      "factory": "0xc6e077bfd0b2dfc2bf5694219242ef11aa46086d",
+      "saucerSwapLPYieldSource": "0x0000000000000000000000000000000000A0289A",
+      "lens": "0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969",
+      "periphery": "0x0000000000000000000000000000000000A02731"
     },
-    {
-      "address": "0x432E552AA1988542Da05D192A7B62b0292216032",
-      "reason": "anchor=1.08e18 was a per-year rate factor, not annualized APY; produced 37% APY instead of intended 8%",
-      "expiry": "1787657819"
-    },
-    {
-      "address": "0x781382351c9Ed32df3110B8d805D3C8C3dBFe046",
-      "reason": "replaced by AMM fee redirect (49.5% PT / 49.5% YT / 1% deployer)",
+    "market": {
+      "address": "0xfEcfC0Bb57dD668fF37F2A232b208584E5FeAE53",
       "expiry": "1787657819",
-      "factory": "0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c"
+      "scalarRoot": "5000000000000000000",
+      "suffix": "USDC-WHBAR-2026-08-25-amm",
+      "anchor": "1018855479332655872",
+      "anchorNote": "1.018855e18 = 8% annualized APY at deploy time (89 days to expiry)."
+    },
+    "previousMarkets": [
+      {
+        "address": "0x3aCDD09b5850F551D9F2b4FE949439c2499f86C1",
+        "reason": "anchor=1.0 → buy-PT blocked"
+      },
+      {
+        "address": "0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f",
+        "reason": "anchor=1.2e18 (20% APY) misconfigured; rebalance attempt drove it to 141% — replaced with anchor=1.08e18 (8% APY)",
+        "expiry": "1787657819"
+      },
+      {
+        "address": "0x432E552AA1988542Da05D192A7B62b0292216032",
+        "reason": "anchor=1.08e18 was a per-year rate factor, not annualized APY; produced 37% APY instead of intended 8%",
+        "expiry": "1787657819"
+      },
+      {
+        "address": "0x781382351c9Ed32df3110B8d805D3C8C3dBFe046",
+        "reason": "replaced by AMM fee redirect (49.5% PT / 49.5% YT / 1% deployer)",
+        "expiry": "1787657819",
+        "factory": "0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c"
+      }
+    ],
+    "previousPeriphery": "0x8ce95cef2c521df83f346b579de84fa4aa8f50aa",
+    "peripheryV2Audit": {
+      "ts": "2026-05-26T21:20:44.049Z",
+      "fixes": [
+        "H-4: registeredSyAdapter gate on unzapSyToHbar",
+        "buySyForLp: ptOutFromSwap param"
+      ],
+      "previousPeriphery": "0x8ce95cef2c521df83f346b579de84fa4aa8f50aa"
+    },
+    "previousPeriphery2": "0x0000000000000000000000000000000000a025c1",
+    "peripheryV3Audit": {
+      "ts": "2026-05-27T05:28:24.071Z",
+      "fixes": [
+        "X-3 per-side _checkSize",
+        "X-4 remove quoteUnzapSy",
+        "X-5 protectedToken rescue gate",
+        "X-6 v3NpmFeeBudget cap 100 HBAR",
+        "X-8 delete dead deadline check",
+        "X-9 buySyForLp delta-only"
+      ],
+      "previousPeriphery": "0x0000000000000000000000000000000000a025c1"
+    },
+    "previousSY": "0x0000000000000000000000000000000000a02585",
+    "previousMarket": "0x556938AcfDa70dF2A32ea97e6B6862B874d93ef9",
+    "xFixes_2_10_cascade": {
+      "ts": "2026-05-27T11:38:28.372Z",
+      "newSy": "0x0000000000000000000000000000000000A0289A",
+      "newMarket": "0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f",
+      "oldSy": "0x0000000000000000000000000000000000a02585",
+      "oldMarket": "0x556938AcfDa70dF2A32ea97e6B6862B874d93ef9",
+      "reason": "X-2 / X-10 fix: SY adapter now has sweepHbar() + receive() so stuck HBAR is recoverable."
+    },
+    "ammFeeRedirect": {
+      "ts": "2026-05-28T21:25:36.813Z",
+      "ptBps": 4950,
+      "ytBps": 4950,
+      "deployerBps": 100,
+      "feeToken": "shareToken (SY)",
+      "notes": "Factory + deployers + market redeployed with FissionRewardsMarket v: AMM swap fees now split 99% to PT+YT holders, 1% to deployer (treasury). Old market preserved in previousMarkets[] for historical state. SY adapter / Periphery / Lens unchanged."
     }
-  ],
-  "previousPeriphery": "0x8ce95cef2c521df83f346b579de84fa4aa8f50aa",
-  "peripheryV2Audit": {
-    "ts": "2026-05-26T21:20:44.049Z",
-    "fixes": [
-      "H-4: registeredSyAdapter gate on unzapSyToHbar",
-      "buySyForLp: ptOutFromSwap param"
-    ],
-    "previousPeriphery": "0x8ce95cef2c521df83f346b579de84fa4aa8f50aa"
-  },
-  "previousPeriphery2": "0x0000000000000000000000000000000000a025c1",
-  "peripheryV3Audit": {
-    "ts": "2026-05-27T05:28:24.071Z",
-    "fixes": [
-      "X-3 per-side _checkSize",
-      "X-4 remove quoteUnzapSy",
-      "X-5 protectedToken rescue gate",
-      "X-6 v3NpmFeeBudget cap 100 HBAR",
-      "X-8 delete dead deadline check",
-      "X-9 buySyForLp delta-only"
-    ],
-    "previousPeriphery": "0x0000000000000000000000000000000000a025c1"
-  },
-  "previousSY": "0x0000000000000000000000000000000000a02585",
-  "previousMarket": "0x556938AcfDa70dF2A32ea97e6B6862B874d93ef9",
-  "xFixes_2_10_cascade": {
-    "ts": "2026-05-27T11:38:28.372Z",
-    "newSy": "0x0000000000000000000000000000000000A0289A",
-    "newMarket": "0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f",
-    "oldSy": "0x0000000000000000000000000000000000a02585",
-    "oldMarket": "0x556938AcfDa70dF2A32ea97e6B6862B874d93ef9",
-    "reason": "X-2 / X-10 fix: SY adapter now has sweepHbar() + receive() so stuck HBAR is recoverable."
-  },
-  "ammFeeRedirect": {
-    "ts": "2026-05-28T21:25:36.813Z",
-    "ptBps": 4950,
-    "ytBps": 4950,
-    "deployerBps": 100,
-    "feeToken": "shareToken (SY)",
-    "notes": "Factory + deployers + market redeployed with FissionRewardsMarket v: AMM swap fees now split 99% to PT+YT holders, 1% to deployer (treasury). Old market preserved in previousMarkets[] for historical state. SY adapter / Periphery / Lens unchanged."
   }
 }

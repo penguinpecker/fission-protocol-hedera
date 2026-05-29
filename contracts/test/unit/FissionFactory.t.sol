@@ -4,6 +4,7 @@ pragma solidity ^0.8.27;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {FissionFactory} from "../../src/core/FissionFactory.sol";
 import {FissionMarket} from "../../src/core/FissionMarket.sol";
@@ -55,20 +56,40 @@ contract FissionFactoryTest is Test {
         assertEq(factory.marketCount(), 0);
     }
 
+    /// @dev Deploy a proxy over a PRE-DEPLOYED impl with raw args so the
+    ///      initializer's ZeroAddress guard can be exercised under expectRevert.
+    ///      The impl is deployed by the caller (outside the expectRevert window)
+    ///      so only the proxy constructor — which delegatecalls `initialize` and
+    ///      bubbles the revert — is the "next call" expectRevert watches.
+    function _deployProxyOver(
+        FissionFactory impl,
+        address admin_,
+        address marketAdmin_,
+        address treasury_,
+        StandardMarketDeployer sd,
+        RewardsMarketDeployer rd
+    ) internal returns (address) {
+        ERC1967Proxy proxy = new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(FissionFactory.initialize, (admin_, marketAdmin_, treasury_, sd, rd, 7 days))
+        );
+        return address(proxy);
+    }
+
     function test_init_revertsZero() public {
         StandardMarketDeployer sd = new StandardMarketDeployer();
         RewardsMarketDeployer rd = new RewardsMarketDeployer();
+        FissionFactory impl = new FissionFactory();
 
-        // AccessControlDefaultAdminRules' constructor reverts before our ZeroAddress check
-        // when admin is zero — that's still the desired behaviour (no zero admin).
-        vm.expectRevert();
-        new FissionFactory(address(0), marketAdmin, treasury, sd, rd, 7 days);
+        // Plain AccessControl has no constructor; the initializer's ZeroAddress
+        // guard now fires uniformly for a zero admin / marketAdmin / treasury.
+        vm.expectRevert(FissionFactory.ZeroAddress.selector);
+        _deployProxyOver(impl, address(0), marketAdmin, treasury, sd, rd);
 
-        // For the marketAdmin / treasury zero cases, our explicit ZeroAddress fires.
         vm.expectRevert(FissionFactory.ZeroAddress.selector);
-        new FissionFactory(admin, address(0), treasury, sd, rd, 7 days);
+        _deployProxyOver(impl, admin, address(0), treasury, sd, rd);
         vm.expectRevert(FissionFactory.ZeroAddress.selector);
-        new FissionFactory(admin, marketAdmin, address(0), sd, rd, 7 days);
+        _deployProxyOver(impl, admin, marketAdmin, address(0), sd, rd);
     }
 
     // ───── SY review window ─────
@@ -211,23 +232,27 @@ contract FissionFactoryTest is Test {
     function test_constructor_revertsZeroAdmin() public {
         StandardMarketDeployer sd = new StandardMarketDeployer();
         RewardsMarketDeployer rd = new RewardsMarketDeployer();
-        // OZ checks AccessControlInvalidDefaultAdmin first
-        vm.expectRevert(abi.encodeWithSignature("AccessControlInvalidDefaultAdmin(address)", address(0)));
-        new FissionFactory(address(0), marketAdmin, treasury, sd, rd, 7 days);
+        FissionFactory impl = new FissionFactory();
+        // Plain AccessControl has no default-admin constructor check; the
+        // initializer's own ZeroAddress guard now rejects a zero admin.
+        vm.expectRevert(FissionFactory.ZeroAddress.selector);
+        _deployProxyOver(impl, address(0), marketAdmin, treasury, sd, rd);
     }
 
     function test_constructor_revertsZeroMarketAdmin() public {
         StandardMarketDeployer sd = new StandardMarketDeployer();
         RewardsMarketDeployer rd = new RewardsMarketDeployer();
+        FissionFactory impl = new FissionFactory();
         vm.expectRevert(FissionFactory.ZeroAddress.selector);
-        new FissionFactory(admin, address(0), treasury, sd, rd, 7 days);
+        _deployProxyOver(impl, admin, address(0), treasury, sd, rd);
     }
 
     function test_constructor_revertsZeroTreasury() public {
         StandardMarketDeployer sd = new StandardMarketDeployer();
         RewardsMarketDeployer rd = new RewardsMarketDeployer();
+        FissionFactory impl = new FissionFactory();
         vm.expectRevert(FissionFactory.ZeroAddress.selector);
-        new FissionFactory(admin, marketAdmin, address(0), sd, rd, 7 days);
+        _deployProxyOver(impl, admin, marketAdmin, address(0), sd, rd);
     }
 
     /// @notice Post-HTS-migration: the EOA-must-be-contract guard was dropped.

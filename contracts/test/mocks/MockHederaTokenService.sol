@@ -365,6 +365,13 @@ contract MockHederaTokenService is IHederaTokenService, IMockHederaForFacade, IM
         return _tokens[token].supplyKey;
     }
 
+    /// @notice Test helper — the freeze-key holder a token was created with
+    ///         (address(0) if it was created without a freeze key). Lets deploy
+    ///         dry-runs assert PT is freeze-by-default-capable without minting.
+    function freezeKey(address token) external view returns (address) {
+        return _tokens[token].freezeKey;
+    }
+
     function decimals(address token) external view returns (uint8) {
         return _tokens[token].decimals;
     }

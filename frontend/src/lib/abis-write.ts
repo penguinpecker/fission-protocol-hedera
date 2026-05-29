@@ -491,6 +491,76 @@ export const marketWriteAbi = [
   { type: "function", name: "userAccruedPtAmm",stateMutability: "view", inputs: [{ name: "user", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "userAccruedYtAmm",stateMutability: "view", inputs: [{ name: "user", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "ytBalanceOf",     stateMutability: "view", inputs: [{ name: "user", type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "ptBalanceOf",     stateMutability: "view", inputs: [{ name: "user", type: "address" }], outputs: [{ type: "uint256" }] },
+  // ── Operator pattern (2026-05-29 UUPS-proxy + freeze-PT rebuild) ──
+  // YT is frozen (AMM-only), and PT-sell routes through the Periphery via the
+  // `*For` variants. The Periphery, set as operator by the user once
+  // (setOperator), calls swap/add on the user's behalf. The frontend itself
+  // calls the Periphery (sellPtForSy / sellYtForSy / buySyForLp); these market
+  // entries are here so the activity decoder + any direct read/probe resolve.
+  { type: "function", name: "isOperator",  stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "operator", type: "address" }], outputs: [{ type: "bool" }] },
+  { type: "function", name: "periphery",   stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  {
+    type: "function",
+    name: "setOperator",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "operator", type: "address" }, { name: "approved", type: "bool" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "setPeriphery",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "newPeriphery", type: "address" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "swapExactPtForSyFor",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "ptIn", type: "uint256" },
+      { name: "minSyOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+    ],
+    outputs: [{ name: "syOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "swapExactYtForSyFor",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "ytIn", type: "uint256" },
+      { name: "minSyOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+    ],
+    outputs: [{ name: "syOut", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "addLiquidityFor",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "syIn", type: "uint256" },
+      { name: "ptIn", type: "uint256" },
+      { name: "minLpOut", type: "uint256" },
+      { name: "receiver", type: "address" },
+    ],
+    outputs: [{ name: "lpOut", type: "uint256" }],
+  },
+  // ── UUPS proxy surface (market is deployed behind an ERC1967 proxy) ──
+  { type: "function", name: "proxiableUUID", stateMutability: "view", inputs: [], outputs: [{ type: "bytes32" }] },
+  { type: "function", name: "UPGRADE_INTERFACE_VERSION", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+  {
+    type: "function",
+    name: "upgradeToAndCall",
+    stateMutability: "payable",
+    inputs: [{ name: "newImplementation", type: "address" }, { name: "data", type: "bytes" }],
+    outputs: [],
+  },
 ] as const;
 
 /**

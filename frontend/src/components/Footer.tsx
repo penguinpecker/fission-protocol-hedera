@@ -30,12 +30,13 @@ const NAV = [
   {
     heading: "Network",
     links: [
-      // Post-rebuild 2026-05-27 — pointers updated to current addresses.
-      { href: "https://hashscan.io/mainnet/contract/0xfEcfC0Bb57dD668fF37F2A232b208584E5FeAE53", label: "Market", external: true },
-      { href: "https://hashscan.io/mainnet/contract/0xc6e077bfd0b2dfc2bf5694219242ef11aa46086d", label: "Factory", external: true },
-      { href: "https://hashscan.io/mainnet/contract/0x0000000000000000000000000000000000a02731", label: "Periphery (v3)", external: true },
-      { href: "https://hashscan.io/mainnet/contract/0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969", label: "Lens", external: true },
-      { href: "https://hashscan.io/mainnet/contract/0x0000000000000000000000000000000000a0289a", label: "SY adapter", external: true },
+      // Post-rebuild 2026-05-29 — UUPS-proxy + freeze-PT stack. Pointers to the
+      // current live market + proxy contracts.
+      { href: "https://hashscan.io/mainnet/contract/0x31742aFF65fcfed391cc6B4B9DA0271643e0Eec6", label: "Market", external: true },
+      { href: "https://hashscan.io/mainnet/contract/0x0000000000000000000000000000000000a03f94", label: "Factory", external: true },
+      { href: "https://hashscan.io/mainnet/contract/0x0000000000000000000000000000000000a03fAd", label: "Periphery", external: true },
+      { href: "https://hashscan.io/mainnet/contract/0x0000000000000000000000000000000000a03f9b", label: "Lens", external: true },
+      { href: "https://hashscan.io/mainnet/contract/0x0000000000000000000000000000000000a03f9d", label: "SY adapter", external: true },
     ],
   },
 ];

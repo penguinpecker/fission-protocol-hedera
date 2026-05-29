@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {AccessControlDefaultAdminRules} from
-    "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
 import {FissionMarket} from "./FissionMarket.sol";
 import {FissionRewardsMarket} from "./FissionRewardsMarket.sol";
@@ -22,24 +23,45 @@ import {IStandardizedYield} from "../interfaces/IStandardizedYield.sol";
 ///         Markets are NOT initialized by the factory — `createRewardsMarket` deploys
 ///         Market+PT+YT+LP and wires them up, but the protocol's admin is responsible
 ///         for `market.initialize(...)` with its own seed capital. Keeps factory custody-free.
-contract FissionFactory is AccessControlDefaultAdminRules {
+///
+///         UUPS-upgradeable: deployed behind an ERC1967Proxy. The
+///         `AccessControlDefaultAdminRules` base could not be reused (its
+///         upgradeable variant is not vendored, and the non-upgradeable one has a
+///         constructor + immutable storage → proxy-unsafe). Governance is instead
+///         hardened on top of plain `AccessControl` (UUPS-1):
+///           - `renounceRole` reverts for `DEFAULT_ADMIN_ROLE`, so the admin can
+///             never be renounced to nobody (no permanent governance brick).
+///           - A dedicated `UPGRADER_ROLE` — separate from `DEFAULT_ADMIN_ROLE` —
+///             gates `_authorizeUpgrade`, so upgrade authority and admin authority
+///             are split (defence-in-depth: an admin takeover does not by itself
+///             grant the ability to swap the implementation, and vice versa).
+///           - `initialize` reverts on a zero admin (kept from before).
+///         The immutables (SY_REVIEW_WINDOW / standardDeployer / rewardsDeployer)
+///         move to initializer-set storage.
+contract FissionFactory is Initializable, AccessControl, UUPSUpgradeable {
     bytes32 public constant SY_REVIEWER_ROLE = keccak256("SY_REVIEWER_ROLE");
     bytes32 public constant MARKET_CREATOR_ROLE = keccak256("MARKET_CREATOR_ROLE");
+    /// @dev UUPS-1: upgrade authority is a dedicated role, distinct from
+    ///      DEFAULT_ADMIN_ROLE, so role/upgrade powers are separated.
+    bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
 
     /// @notice Discriminator emitted with MarketCreated so the indexer / lens can
     ///         dispatch on market shape without re-reading the market itself.
     uint8 public constant MARKET_TYPE_STANDARD = 0;
     uint8 public constant MARKET_TYPE_REWARDS = 1;
 
-    uint256 public immutable SY_REVIEW_WINDOW;
+    /// @dev Was `immutable`; moved to initializer-set storage (immutables live in
+    ///      implementation bytecode and are invisible behind a delegatecall proxy).
+    uint256 public SY_REVIEW_WINDOW;
 
     uint256 public constant MIN_MARKET_DURATION = 7 days;
 
     address public marketAdmin;
     address public marketTreasury;
 
-    StandardMarketDeployer public immutable standardDeployer;
-    RewardsMarketDeployer public immutable rewardsDeployer;
+    /// @dev Was `immutable`; moved to initializer-set storage (see SY_REVIEW_WINDOW).
+    StandardMarketDeployer public standardDeployer;
+    RewardsMarketDeployer public rewardsDeployer;
 
     struct PendingSY {
         uint64 proposedAt;
@@ -74,15 +96,26 @@ contract FissionFactory is AccessControlDefaultAdminRules {
     error SYNotWhitelisted();
     error ZeroAddress();
     error MarketDurationTooShort(uint256 given, uint256 minimum);
+    /// @dev UUPS-1: DEFAULT_ADMIN_ROLE cannot be renounced (would brick governance).
+    error CannotRenounceAdmin();
 
-    constructor(
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        // Lock the bare implementation so it can never be initialized / hijacked.
+        _disableInitializers();
+    }
+
+    /// @notice Proxy initializer (replaces the old constructor). MUST be called
+    ///         through the ERC1967Proxy exactly once. `admin_` becomes both the
+    ///         DEFAULT_ADMIN_ROLE holder and the UUPS upgrade authority.
+    function initialize(
         address admin_,
         address marketAdmin_,
         address marketTreasury_,
         StandardMarketDeployer standardDeployer_,
         RewardsMarketDeployer rewardsDeployer_,
         uint256 syReviewWindow_
-    ) AccessControlDefaultAdminRules(0, admin_) {
+    ) external initializer {
         if (
             admin_ == address(0) || marketAdmin_ == address(0) || marketTreasury_ == address(0)
                 || address(standardDeployer_) == address(0) || address(rewardsDeployer_) == address(0)
@@ -94,8 +127,29 @@ contract FissionFactory is AccessControlDefaultAdminRules {
         marketTreasury = marketTreasury_;
         standardDeployer = standardDeployer_;
         rewardsDeployer = rewardsDeployer_;
+        // AccessControlDefaultAdminRules used to grant DEFAULT_ADMIN_ROLE to
+        // admin_ implicitly; with plain AccessControl we grant it explicitly.
+        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
         _grantRole(SY_REVIEWER_ROLE, admin_);
         _grantRole(MARKET_CREATOR_ROLE, admin_);
+        // UUPS-1: the deploying admin also bootstraps as the initial upgrader.
+        // Governance may later split this off to a separate timelock/multisig and
+        // revoke it from the admin to fully decouple the two authorities.
+        _grantRole(UPGRADER_ROLE, admin_);
+    }
+
+    /// @dev UUPS upgrade gate (UUPS-1) — only an UPGRADER_ROLE holder may swap the
+    ///      implementation. Deliberately NOT DEFAULT_ADMIN_ROLE, so upgrade and
+    ///      admin authority can be held by different parties.
+    function _authorizeUpgrade(address) internal view override onlyRole(UPGRADER_ROLE) {}
+
+    /// @dev UUPS-1: block renouncing the admin role to nobody, which would
+    ///      permanently brick governance (and, via the role admin, the ability to
+    ///      reassign UPGRADER_ROLE). Other roles may still be renounced normally.
+    ///      Admin handoff must go through grant-then-revoke, not renounce-to-void.
+    function renounceRole(bytes32 role, address account) public override {
+        if (role == DEFAULT_ADMIN_ROLE) revert CannotRenounceAdmin();
+        super.renounceRole(role, account);
     }
 
     // ───────────────────── governance ─────────────────────
@@ -245,4 +299,7 @@ contract FissionFactory is AccessControlDefaultAdminRules {
             out[i] = markets[offset + i];
         }
     }
+
+    /// @dev Storage gap for future upgrade-safe variable additions.
+    uint256[50] private __gap;
 }

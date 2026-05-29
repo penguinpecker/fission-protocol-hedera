@@ -65,6 +65,11 @@ contract FissionRewardsMarket is
     ///      across the swap/split/merge/redeem paths and shave bytecode.
     address public shareToken;
 
+    /// @dev Trusted periphery (upgradeable). Exempt from PT freeze since it
+    ///      only holds PT transiently within a single atomic tx. Admin-settable
+    ///      so a periphery upgrade can re-point the exemption.
+    address public periphery;
+
     /// @dev Set after Market freezes this account on YT (mint side-effect).
     mapping(address => bool) internal _ytFrozen;
 
@@ -72,6 +77,14 @@ contract FissionRewardsMarket is
     ///      Ed25519 long-zero EVM addresses, so reward accrual relies on this
     ///      tracked balance instead.
     mapping(address => uint256) internal _ytBal;
+
+    /// @dev PT freeze + balance mirror — same pattern as YT. PT is now
+    ///      freeze-by-default (market/redemption-only) so PT-side AMM-fee
+    ///      accrual reads `_ptBal` instead of the facade balanceOf, which
+    ///      reverts for Ed25519 long-zero holders. The Periphery is exempt
+    ///      from freezing (transient custodian within atomic txs).
+    mapping(address => bool) internal _ptFrozen;
+    mapping(address => uint256) internal _ptBal;
 
     // ───────────────────── operator approvals (NEW) ─────────────────────
 
@@ -147,6 +160,10 @@ contract FissionRewardsMarket is
     error YTBurnNotPermitted();
     error InsufficientYt();
     error NotAuthorized();
+    /// @dev AMM-02: an operator (caller != owner) tried to redirect a victim's
+    ///      proceeds to a third party. Operators may only deliver to the owner
+    ///      themselves or to the trusted `periphery` (for its unwrap flow).
+    error InvalidReceiver();
 
     // ───────────────────── events ─────────────────────
 
@@ -205,10 +222,16 @@ contract FissionRewardsMarket is
         isOperator[msg.sender][operator] = approved;
     }
 
-    function _requireOwnerOrOperator(address owner) internal view {
-        if (msg.sender != owner && !isOperator[owner][msg.sender]) {
-            revert NotAuthorized();
-        }
+    /// @dev Authorize an operator-mediated call AND constrain where the proceeds
+    ///      can go. When `msg.sender == owner` (self-action) the receiver is
+    ///      unrestricted. When the caller is a delegated operator (AMM-02), it may
+    ///      only deliver to the owner or to the trusted `periphery` — never to an
+    ///      arbitrary third address — so a malicious operator cannot drain a
+    ///      victim's frozen PT / standing SY to an attacker.
+    function _requireOwnerOrOperator(address owner, address receiver) internal view {
+        if (msg.sender == owner) return; // self-action: receiver unrestricted
+        if (!isOperator[owner][msg.sender]) revert NotAuthorized();
+        if (receiver != owner && receiver != periphery) revert InvalidReceiver();
     }
 
     // ───────────────────── one-shot setup ─────────────────────
@@ -229,7 +252,7 @@ contract FissionRewardsMarket is
 
         uint256 perToken = msg.value / 3;
 
-        pt = _createHtsToken(ptName, ptSymbol, false, true, _assetDecimals, perToken);
+        pt = _createHtsToken(ptName, ptSymbol, true, true, _assetDecimals, perToken);
         yt = _createHtsToken(ytName, ytSymbol, true, true, _assetDecimals, perToken);
         lp = _createHtsToken(lpName, lpSymbol, false, true, 18, msg.value - 2 * perToken);
 
@@ -283,50 +306,112 @@ contract FissionRewardsMarket is
         return _ytBal[user];
     }
 
+    function ptBalanceOf(address user) external view returns (uint256) {
+        return _ptBal[user];
+    }
+
+    /// @dev Deliver pool-held `token` to `to` with freeze bookkeeping, tracking
+    ///      the per-account frozen flag in `frozen` and balance in `bal`. The
+    ///      Periphery is freeze-exempt (trusted transient custodian). No-ops for
+    ///      `to == address(this)`. Shared by PT (mint+deliver) and YT (mint).
+    function _ferryFrozen(
+        address token,
+        mapping(address => bool) storage frozen,
+        mapping(address => uint256) storage bal,
+        address to,
+        uint256 amount
+    ) private {
+        if (to == address(this)) return;
+        if (to == periphery) {
+            HtsHelpers.transfer(token, address(this), to, amount);
+        } else {
+            if (frozen[to]) HtsHelpers.unfreeze(token, to);
+            HtsHelpers.transfer(token, address(this), to, amount);
+            HtsHelpers.freeze(token, to);
+            frozen[to] = true;
+        }
+        bal[to] += amount;
+    }
+
+    /// @dev Wipe `amount` of `token` from a frozen user, handling the freeze
+    ///      bookkeeping + balance mirror. `from` must NOT be address(this) or
+    ///      the periphery — callers route those cases separately.
+    function _wipeFrozen(
+        address token,
+        mapping(address => bool) storage frozen,
+        mapping(address => uint256) storage bal,
+        address from,
+        uint256 amount
+    ) private {
+        bool wasFrozen = frozen[from];
+        if (wasFrozen) HtsHelpers.unfreeze(token, from);
+        HtsHelpers.wipeFrom(token, from, amount);
+        bal[from] -= amount;
+        if (wasFrozen && bal[from] > 0) {
+            HtsHelpers.freeze(token, from);
+        } else if (wasFrozen) {
+            frozen[from] = false;
+        }
+    }
+
     function _mintPt(address to, uint256 amount) internal {
         HtsHelpers.mintToTreasury(pt, amount);
-        if (to != address(this)) {
-            HtsHelpers.transfer(pt, address(this), to, amount);
-        }
+        _ferryFrozen(pt, _ptFrozen, _ptBal, to, amount);
+    }
+
+    /// @dev Deliver EXISTING pool PT to a user (buy-PT / remove-LP), freeze-aware.
+    function _deliverPt(address to, uint256 amount) internal {
+        _ferryFrozen(pt, _ptFrozen, _ptBal, to, amount);
     }
 
     function _burnPt(address from, uint256 amount) internal {
         if (from == address(this)) {
             HtsHelpers.burnFromTreasury(pt, amount);
-        } else {
+        } else if (from == periphery) {
+            // Periphery holds PT unfrozen; plain wipe, no freeze bookkeeping.
             HtsHelpers.wipeFrom(pt, from, amount);
+            _ptBal[from] -= amount;
+        } else {
+            _wipeFrozen(pt, _ptFrozen, _ptBal, from, amount);
+        }
+    }
+
+    /// @dev Pull PT from `owner` into the pool WITHOUT needing a facade allowance
+    ///      on locked tokens. Mirrors the YT-side `_burnYt` freeze handling.
+    ///      - Periphery: holds PT unfrozen + has approved the market, so a plain
+    ///        `transferFrom` works; just decrement its mirror.
+    ///      - Direct (frozen) user: unfreeze → wipe → refreeze-if-remaining, then
+    ///        `mintToTreasury` to replenish the pool's physical PT that the wipe
+    ///        destroyed. Net PT totalSupply is unchanged; the pool's reserve
+    ///        bookkeeping (`totalPt += amount`) stays correct at the call site.
+    function _pullPtFrom(address owner, uint256 amount) internal {
+        if (owner == periphery) {
+            IERC20(pt).safeTransferFrom(owner, address(this), amount);
+            _ptBal[owner] -= amount;
+        } else {
+            _wipeFrozen(pt, _ptFrozen, _ptBal, owner, amount);
+            // Replenish the physical PT the wipe destroyed so the pool can
+            // deliver it again later. Net totalSupply unchanged.
+            HtsHelpers.mintToTreasury(pt, amount);
         }
     }
 
     function _mintYt(address to, uint256 amount) internal {
         HtsHelpers.mintToTreasury(yt, amount);
-        if (to != address(this)) {
-            if (_ytFrozen[to]) {
-                HtsHelpers.unfreeze(yt, to);
-            }
-            HtsHelpers.transfer(yt, address(this), to, amount);
-            HtsHelpers.freeze(yt, to);
-            _ytFrozen[to] = true;
+        if (to == address(this)) {
+            _ytBal[to] += amount;
+        } else {
+            _ferryFrozen(yt, _ytFrozen, _ytBal, to, amount);
         }
-        _ytBal[to] += amount;
     }
 
     function _burnYt(address from, uint256 amount) internal {
         if (from == address(this)) {
             HtsHelpers.burnFromTreasury(yt, amount);
-        } else {
-            bool wasFrozen = _ytFrozen[from];
-            if (wasFrozen) HtsHelpers.unfreeze(yt, from);
-            HtsHelpers.wipeFrom(yt, from, amount);
             _ytBal[from] -= amount;
-            if (wasFrozen && _ytBal[from] > 0) {
-                HtsHelpers.freeze(yt, from);
-            } else if (wasFrozen) {
-                _ytFrozen[from] = false;
-            }
-            return;
+        } else {
+            _wipeFrozen(yt, _ytFrozen, _ytBal, from, amount);
         }
-        _ytBal[from] -= amount;
     }
 
     function _mintLp(address to, uint256 amount) internal {
@@ -362,7 +447,10 @@ contract FissionRewardsMarket is
         if (syIndexU < PMath.ONE) revert SYRateBelowOne();
 
         IERC20(shareToken).safeTransferFrom(msg.sender, address(this), syIn);
-        IERC20(pt).safeTransferFrom(msg.sender, address(this), ptIn);
+        // Seeder's PT is frozen-by-default; wipe it into the pool. Settle their
+        // PT-AMM accrual first (no-op at init: index is still 0).
+        _settlePtAmm(msg.sender);
+        _pullPtFrom(msg.sender, ptIn);
 
         uint256 lpRaw = PMath.sqrt(syIn * ptIn);
         if (lpRaw <= MarketMath.MINIMUM_LIQUIDITY) revert InsufficientLiquidity();
@@ -445,20 +533,45 @@ contract FissionRewardsMarket is
 
     // ───────────────────── swaps ─────────────────────
 
+    /// @notice msg.sender sells THEIR PT for SY pre-expiry. See `swapExactPtForSyFor`
+    ///         for the operator-callable variant.
     function swapExactPtForSy(uint256 ptIn, uint256 minSyOut, address receiver)
         external
         nonReentrant
         whenNotPaused
         returns (uint256 syOut)
     {
+        return _swapPtForSy(msg.sender, ptIn, minSyOut, receiver);
+    }
+
+    /// @notice Operator-callable variant. Caller must be `owner` OR `isOperator[owner][caller]`.
+    /// @dev    PT is freeze-by-default now, so the owner's PT can no longer be
+    ///         pulled to the Periphery with an allowance. Instead the Periphery
+    ///         (or owner) calls this, and `_pullPtFrom` wipes the owner's frozen
+    ///         PT directly into the pool. owner opts in once via
+    ///         `setOperator(periphery, true)`.
+    function swapExactPtForSyFor(address owner, uint256 ptIn, uint256 minSyOut, address receiver)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 syOut)
+    {
+        _requireOwnerOrOperator(owner, receiver);
+        return _swapPtForSy(owner, ptIn, minSyOut, receiver);
+    }
+
+    function _swapPtForSy(address owner, uint256 ptIn, uint256 minSyOut, address receiver)
+        internal
+        returns (uint256 syOut)
+    {
         if (block.timestamp >= expiry) revert MarketExpired();
         if (ptIn == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
 
-        // Settle msg.sender's PT-AMM accrual on their PRE-transfer balance.
-        _settlePtAmm(msg.sender);
+        // Settle owner's PT-AMM accrual on their PRE-pull balance.
+        _settlePtAmm(owner);
 
-        IERC20(pt).safeTransferFrom(msg.sender, address(this), ptIn);
+        _pullPtFrom(owner, ptIn);
 
         MarketMath.MarketState memory ms = _loadState();
         int256 syIndex = int256(sy.exchangeRate());
@@ -484,11 +597,11 @@ contract FissionRewardsMarket is
             _distributeAmmFee(netSyFee);
         }
 
-        // Mark msg.sender's PT-AMM index to current (skip-credit) so they
+        // Mark owner's PT-AMM index to current (skip-credit) so they
         // don't claim back a slice of the fee they just paid.
-        _markPtAmmIndex(msg.sender);
+        _markPtAmmIndex(owner);
 
-        emit Swap(msg.sender, receiver, -int256(ptIn), netSy, netSyFee, 0);
+        emit Swap(owner, receiver, -int256(ptIn), netSy, netSyFee, 0);
     }
 
     /// @notice msg.sender sells THEIR YT for SY pre-expiry. See `swapExactYtForSyFor`
@@ -512,7 +625,7 @@ contract FissionRewardsMarket is
         whenNotPaused
         returns (uint256 syOut)
     {
-        _requireOwnerOrOperator(owner);
+        _requireOwnerOrOperator(owner, receiver);
         return _swapYtForSy(owner, ytIn, minSyOut, receiver);
     }
 
@@ -589,7 +702,7 @@ contract FissionRewardsMarket is
         if (syIn > syInMax) revert InsufficientOutput();
 
         IERC20(shareToken).safeTransferFrom(msg.sender, address(this), syIn);
-        IERC20(pt).safeTransfer(receiver, ptOut);
+        _deliverPt(receiver, ptOut);
 
         totalPt -= ptOut;
         totalSy += syIn;
@@ -611,10 +724,34 @@ contract FissionRewardsMarket is
 
     // ───────────────────── liquidity ─────────────────────
 
+    /// @notice msg.sender adds (SY, PT) liquidity. See `addLiquidityFor` for the
+    ///         operator-callable variant.
     function addLiquidity(uint256 syIn, uint256 ptIn, uint256 minLpOut, address receiver)
         external
         nonReentrant
         whenNotPaused
+        returns (uint256 lpOut)
+    {
+        return _addLiquidity(msg.sender, syIn, ptIn, minLpOut, receiver);
+    }
+
+    /// @notice Operator-callable variant. Caller must be `owner` OR
+    ///         `isOperator[owner][caller]`. The owner's frozen PT is wiped into
+    ///         the pool via `_pullPtFrom`; the SY is pulled from `owner` with a
+    ///         normal allowance (SY is transferable). owner opts in once via
+    ///         `setOperator(periphery, true)`.
+    function addLiquidityFor(address owner, uint256 syIn, uint256 ptIn, uint256 minLpOut, address receiver)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 lpOut)
+    {
+        _requireOwnerOrOperator(owner, receiver);
+        return _addLiquidity(owner, syIn, ptIn, minLpOut, receiver);
+    }
+
+    function _addLiquidity(address owner, uint256 syIn, uint256 ptIn, uint256 minLpOut, address receiver)
+        internal
         returns (uint256 lpOut)
     {
         if (block.timestamp >= expiry) revert MarketExpired();
@@ -622,9 +759,9 @@ contract FissionRewardsMarket is
         if (receiver == address(0)) revert ZeroAddress();
         if (lp == address(0) || IERC20(lp).totalSupply() == 0) revert NotInitialized();
 
-        // msg.sender's PT balance is about to decrease — settle their PT-AMM
-        // accrual on the PRE-transfer balance.
-        _settlePtAmm(msg.sender);
+        // owner's PT balance is about to decrease — settle their PT-AMM
+        // accrual on the PRE-pull balance.
+        _settlePtAmm(owner);
 
         MarketMath.MarketState memory ms = _loadState();
         (int256 lpToMint, int256 syUsed, int256 ptUsed,) =
@@ -633,14 +770,17 @@ contract FissionRewardsMarket is
         lpOut = uint256(lpToMint);
         if (lpOut < minLpOut) revert InsufficientOutput();
 
-        IERC20(shareToken).safeTransferFrom(msg.sender, address(this), uint256(syUsed));
-        IERC20(pt).safeTransferFrom(msg.sender, address(this), uint256(ptUsed));
+        IERC20(shareToken).safeTransferFrom(owner, address(this), uint256(syUsed));
+        _pullPtFrom(owner, uint256(ptUsed));
 
         totalSy += uint256(syUsed);
         totalPt += uint256(ptUsed);
         _mintLp(receiver, lpOut);
 
-        emit LiquidityAdded(msg.sender, receiver, uint256(syUsed), uint256(ptUsed), lpOut);
+        // Mark owner's PT-AMM index (skip-credit) on their now-reduced PT balance.
+        _markPtAmmIndex(owner);
+
+        emit LiquidityAdded(owner, receiver, uint256(syUsed), uint256(ptUsed), lpOut);
     }
 
     function removeLiquidity(uint256 lpIn, uint256 minSyOut, uint256 minPtOut, address receiver)
@@ -679,7 +819,7 @@ contract FissionRewardsMarket is
 
         IERC20(shareToken).safeTransfer(receiver, syOut);
         if (ptOut > 0) {
-            IERC20(pt).safeTransfer(receiver, ptOut);
+            _deliverPt(receiver, ptOut);
             // Mark receiver's PT-AMM index to current (skip-credit) on the
             // newly-received PT.
             _markPtAmmIndex(receiver);
@@ -829,8 +969,7 @@ contract FissionRewardsMarket is
     function _settlePtAmm(address user) internal {
         if (user == address(this)) return;
 
-        uint256 bal;
-        try IERC20(pt).balanceOf(user) returns (uint256 b) { bal = b; } catch {}
+        uint256 bal = _ptBal[user];
 
         uint256 g = ptAmmRewardIndex;
         uint256 u = userPtAmmIndex[user];
@@ -918,6 +1057,12 @@ contract FissionRewardsMarket is
     function setTreasury(address newTreasury) external onlyRole(ADMIN_ROLE) {
         if (newTreasury == address(0)) revert ZeroAddress();
         treasury = newTreasury;
+    }
+
+    /// @notice Set the freeze-exempt periphery. Admin-gated; re-pointable on
+    ///         periphery upgrades.
+    function setPeriphery(address newPeriphery) external onlyRole(ADMIN_ROLE) {
+        periphery = newPeriphery;
     }
 
     function setFee(int256 lnFeeRateRoot_, uint256 reserveFeePercent_) external onlyRole(ADMIN_ROLE) {

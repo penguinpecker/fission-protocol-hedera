@@ -27,10 +27,11 @@ export interface MarketDisplay {
 }
 
 const REGISTRY: Record<string, MarketDisplay> = {
-  // CANONICAL — 2026-05-29 fresh factory + market with AMM fee redirect
-  // (49.5% PT / 49.5% YT / 1% deployer). 8% APY anchor.
-  "0xfecfc0bb57dd668ff37f2a232b208584e5feae53": {
-    displayName: "SaucerSwap USDC/WHBAR · Aug 25",
+  // CANONICAL — 2026-05-29 UUPS-proxy + freeze-PT rebuild. Fresh factory
+  // (0x…a03f94) + seeded market, 8% APY, AMM fee redirect (49.5% PT /
+  // 49.5% YT / 1% deployer). Expiry 2026-08-27.
+  "0x31742aff65fcfed391cc6b4b9da0271643e0eec6": {
+    displayName: "SaucerSwap USDC/WHBAR · Aug 27",
     shortName: "SaucerSwap USDC/WHBAR",
     assets: ["USDC", "WHBAR"],
     protocol: "SaucerSwap V2",
@@ -40,6 +41,17 @@ const REGISTRY: Record<string, MarketDisplay> = {
   },
 
   // ── archived ──
+  // Previous canonical 2026-05-29 (factory 0xc6e077) — AMM fee redirect on the
+  // pre-proxy stack; superseded by the UUPS-proxy + freeze-PT rebuild.
+  "0xfecfc0bb57dd668ff37f2a232b208584e5feae53": {
+    displayName: "SaucerSwap USDC/WHBAR · Aug 25 (archived)",
+    shortName: "SaucerSwap USDC/WHBAR (archived)",
+    assets: ["USDC", "WHBAR"],
+    protocol: "SaucerSwap V2",
+    poolFeePct: 0.15,
+    yieldSource: "0.15% pool fees from USDC↔WHBAR swaps + 99% of AMM trading fees",
+    protocolLink: "https://www.saucerswap.finance/pools",
+  },
   // Previous canonical 2026-05-28 — re-anchor to correct 8% APY; replaced
   // 2026-05-29 to land the AMM fee redirect for PT+YT holders.
   "0x781382351c9ed32df3110b8d805d3c8c3dbfe046": {

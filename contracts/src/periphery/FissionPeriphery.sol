@@ -4,6 +4,8 @@ pragma solidity ^0.8.27;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
 import {IFissionMarketCommon} from "../interfaces/IFissionMarketCommon.sol";
 import {IStandardizedYield} from "../interfaces/IStandardizedYield.sol";
@@ -84,25 +86,36 @@ interface IFissionMarketExt {
     function lp() external view returns (address);
     function totalPt() external view returns (uint256);
     function totalSy() external view returns (uint256);
+    /// @dev Rewards-market-only view. Standard `FissionMarket` lacks it; used by
+    ///      the periphery to probe market shape at registration (MDS-3).
+    function isOperator(address owner, address operator) external view returns (bool);
 
     function splitTo(uint256 amount, address ptReceiver, address ytReceiver) external returns (uint256);
     function swapExactSyForPt(uint256 syInMax, uint256 ptOut, address receiver) external returns (uint256);
     function swapExactPtForSy(uint256 ptIn, uint256 minSyOut, address receiver) external returns (uint256);
+    function swapExactPtForSyFor(address owner, uint256 ptIn, uint256 minSyOut, address receiver) external returns (uint256);
     function swapExactYtForSyFor(address owner, uint256 ytIn, uint256 minSyOut, address receiver) external returns (uint256);
     function addLiquidity(uint256 syIn, uint256 ptIn, uint256 minLpOut, address receiver) external returns (uint256);
+    function addLiquidityFor(address owner, uint256 syIn, uint256 ptIn, uint256 minLpOut, address receiver) external returns (uint256);
     function removeLiquidity(uint256 lpIn, uint256 minSyOut, uint256 minPtOut, address receiver) external returns (uint256, uint256);
 }
 
-contract FissionPeriphery is ReentrancyGuardTransient {
+/// @dev    UUPS-upgradeable: deployed behind an ERC1967Proxy. All five former
+///         immutables (WHBAR_CONTRACT / WHBAR / USDC / V2_ROUTER / V3_NPM) moved
+///         to initializer-set storage because immutables live in the
+///         implementation bytecode and are invisible behind a delegatecall proxy.
+///         The market's `setPeriphery` MUST point at the PROXY address (stable
+///         across upgrades), never at an implementation.
+contract FissionPeriphery is Initializable, ReentrancyGuardTransient, UUPSUpgradeable {
     using SafeERC20 for IERC20;
 
-    // ───────────────────── immutables ─────────────────────
+    // ───────────────────── config (was immutable, now initializer-set) ────────
 
-    address public immutable WHBAR_CONTRACT;
-    address public immutable WHBAR;
-    address public immutable USDC;
-    address public immutable V2_ROUTER;
-    address public immutable V3_NPM;
+    address public WHBAR_CONTRACT;
+    address public WHBAR;
+    address public USDC;
+    address public V2_ROUTER;
+    address public V3_NPM;
 
     uint24 public constant POOL_FEE = 1500; // 0.15% SaucerSwap V2 tier
 
@@ -114,16 +127,26 @@ contract FissionPeriphery is ReentrancyGuardTransient {
     address public owner;
     address public pendingOwner;
 
+    /// @notice Single upgrade-authority (admin / timelock). Set at `initialize`;
+    ///         the only address allowed to authorize a UUPS implementation swap.
+    ///         Deliberately separate from `owner` (the hot ops key) so a
+    ///         compromised owner cannot push a malicious implementation.
+    address public upgradeAuthority;
+
     /// @notice Max trade size as basis points of pool depth (5% default). Owner-settable.
     ///         Defense-in-depth against single-trade pool bricking. Applied to every
     ///         AMM-touching entry point.
-    uint16 public maxTradeBps = 500;
+    /// @dev    Default (500) is set in `initialize`, not as an inline initializer —
+    ///         inline initializers run in the implementation constructor and are
+    ///         invisible to the proxy's storage.
+    uint16 public maxTradeBps;
 
     /// @notice V3 NPM mint fee budget in tinybars (default 5 HBAR). Owner-settable
     ///         because SaucerSwap V2 doesn't expose a queryable mintFee() and the
     ///         actual fee can drift with the Hedera exchange rate. Tune without
     ///         redeploy.
-    uint256 public v3NpmFeeBudget = 5 * 1e8;
+    /// @dev    Default (5 HBAR) is set in `initialize` — see `maxTradeBps` note.
+    uint256 public v3NpmFeeBudget;
 
     /// @notice Registered markets — bookkeeping for the indexer and the approval cache.
     ///         registerMarket() pre-approves SY-share / PT / LP → market at int64.max.
@@ -140,6 +163,14 @@ contract FissionPeriphery is ReentrancyGuardTransient {
     ///         cannot pass an arbitrary (potentially malicious) adapter that
     ///         could siphon the Periphery's standing token approvals.
     mapping(address => bool) public registeredSyAdapter;
+
+    /// @notice MDS-3: true iff the registered market exposes the operator-mediated
+    ///         sell selectors (`swapExactPtForSyFor`/`swapExactYtForSyFor`) — i.e.
+    ///         it is a `FissionRewardsMarket`, not a plain `FissionMarket`.
+    ///         Probed at registration via the rewards-only `isOperator` view. The
+    ///         operator sell paths (`sellPtForSy`/`sellYtForSy`) require this so a
+    ///         standard market gives a clear revert instead of a raw selector miss.
+    mapping(address => bool) public isRewardsMarket;
 
     // ───────────────────── errors ─────────────────────
 
@@ -162,6 +193,9 @@ contract FissionPeriphery is ReentrancyGuardTransient {
     error InvalidCap(uint16 bps);
     error InvalidShareBps(uint16 bps);
     error InvalidFeeBudget(uint256 amount);
+    error NotUpgradeAuthority();
+    /// @dev MDS-3: operator sell path invoked on a standard (non-rewards) market.
+    error OperatorSellUnsupported(address market);
 
     // ───────────────────── events ─────────────────────
 
@@ -172,6 +206,7 @@ contract FissionPeriphery is ReentrancyGuardTransient {
     event OwnershipTransferred(address indexed prev, address indexed next);
     event TokenRescued(address indexed token, address indexed to, uint256 amount);
     event HbarRescued(address indexed to, uint256 amount);
+    event UpgradeAuthorityUpdated(address indexed prev, address indexed next);
 
     /// @notice Unified action event for the cron-indexer.
     /// @dev    kind ∈ {0=zapHbarToSy, 1=buySyForPt, 2=buySyForYt, 3=buySyForLp,
@@ -199,19 +234,37 @@ contract FissionPeriphery is ReentrancyGuardTransient {
 
     // ───────────────────── construction ─────────────────────
 
-    /// @param markets List of markets to pre-register and pre-approve at construction.
-    ///                Pass empty array for staged deploys; call registerMarket() later.
-    constructor(
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        // Lock the bare implementation so it can never be initialized / hijacked.
+        _disableInitializers();
+    }
+
+    /// @notice Proxy initializer (replaces the old constructor). MUST be called
+    ///         through the ERC1967Proxy (delegatecall context) exactly once.
+    /// @param whbarContract WHBAR system contract (wrap/unwrap HBAR).
+    /// @param whbarToken    WHBAR HTS token address.
+    /// @param usdcToken     USDC HTS token address.
+    /// @param v2Router      SaucerSwap V2 SwapRouter.
+    /// @param v3Npm         SaucerSwap V2 NonfungiblePositionManager.
+    /// @param owner_        Hot ops key (registerMarket / rescue / tuning).
+    /// @param upgradeAuthority_ admin/timelock allowed to authorize UUPS upgrades.
+    /// @param markets       Markets to pre-register and pre-approve. Pass empty
+    ///                      array for staged deploys; call registerMarket() later.
+    function initialize(
         address whbarContract,
         address whbarToken,
         address usdcToken,
         address v2Router,
         address v3Npm,
+        address owner_,
+        address upgradeAuthority_,
         address[] memory markets
-    ) {
+    ) external initializer {
         if (
             whbarContract == address(0) || whbarToken == address(0) || usdcToken == address(0)
-                || v2Router == address(0) || v3Npm == address(0)
+                || v2Router == address(0) || v3Npm == address(0) || owner_ == address(0)
+                || upgradeAuthority_ == address(0)
         ) {
             revert ZeroAddress();
         }
@@ -220,7 +273,15 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         USDC = usdcToken;
         V2_ROUTER = v2Router;
         V3_NPM = v3Npm;
-        owner = msg.sender;
+        owner = owner_;
+        upgradeAuthority = upgradeAuthority_;
+        emit UpgradeAuthorityUpdated(address(0), upgradeAuthority_);
+
+        // Default the runtime-tunable params (former inline initializers, which
+        // are skipped behind a proxy because they run in the implementation's
+        // constructor context, not the proxy's storage).
+        maxTradeBps = 500;
+        v3NpmFeeBudget = 5 * 1e8;
 
         // Associate USDC + WHBAR so the contract can hold them transiently
         // during the swap leg of zapHbarToSy / unzapSyToHbar.
@@ -235,6 +296,19 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         for (uint256 i = 0; i < markets.length; i++) {
             _registerMarket(markets[i]);
         }
+    }
+
+    /// @dev UUPS upgrade gate — only the upgrade authority may swap the impl.
+    function _authorizeUpgrade(address) internal view override {
+        if (msg.sender != upgradeAuthority) revert NotUpgradeAuthority();
+    }
+
+    /// @notice Hand the upgrade authority to a new admin/timelock.
+    function setUpgradeAuthority(address newAuthority) external {
+        if (msg.sender != upgradeAuthority) revert NotUpgradeAuthority();
+        if (newAuthority == address(0)) revert ZeroAddress();
+        emit UpgradeAuthorityUpdated(upgradeAuthority, newAuthority);
+        upgradeAuthority = newAuthority;
     }
 
     // ───────────────────── admin ─────────────────────
@@ -296,6 +370,13 @@ contract FissionPeriphery is ReentrancyGuardTransient {
 
         marketRegistered[market] = true;
         registeredSyAdapter[syAdapter] = true;
+        // MDS-3: probe whether this is a rewards market (exposes the operator
+        // sell selectors) via the rewards-only `isOperator` view. A standard
+        // `FissionMarket` lacks the selector and the staticcall fails → flag
+        // stays false → the operator sell paths revert with a clear error.
+        try m.isOperator(address(this), address(this)) returns (bool) {
+            isRewardsMarket[market] = true;
+        } catch {}
         // X-5: protect the market's tokens from rescue. YT is included even
         // though current flows route YT directly to the user (never custodied
         // here) — belt-and-suspenders against future flows that buffer YT
@@ -547,18 +628,27 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         lpOut = m.addLiquidity(syForLp, ptAcquired, minLpOut, receiver);
         if (lpOut < minLpOut) revert InsufficientLpOut(lpOut, minLpOut);
 
-        // Refund any dust (SY or PT) to msg.sender.
+        // Refund any leftover PT by selling it back through the market for SY.
+        // PT is freeze-by-default and can't be handed to the user raw, so the
+        // periphery (freeze-exempt, holds the dust unfrozen + pre-approved)
+        // sells it via swapExactPtForSy and folds the proceeds into the SY
+        // refund below.
+        uint256 ptLeft = IERC20(pt).balanceOf(address(this));
+        if (ptLeft > 0) m.swapExactPtForSy(ptLeft, 0, address(this));
+
+        // Refund any dust SY to msg.sender (includes PT-resale proceeds above).
         uint256 syLeft = IERC20(shareToken).balanceOf(address(this));
         if (syLeft > 0) IERC20(shareToken).safeTransfer(msg.sender, syLeft);
-        uint256 ptLeft = IERC20(pt).balanceOf(address(this));
-        if (ptLeft > 0) IERC20(pt).safeTransfer(msg.sender, ptLeft);
 
         emit PeripheryAction(3, market, receiver, syIn, lpOut, 0);
     }
 
     // ───────────────────── Tx 1: PT / YT / LP → SY ─────────────────────
 
-    /// @notice Tx 1 of the Sell-PT flow. Pulls PT from user, swaps for SY → receiver.
+    /// @notice Tx 1 of the Sell-PT flow. Calls market.swapExactPtForSyFor — the
+    ///         user's PT is freeze-by-default and can't be pulled here, so the
+    ///         market wipes it directly. User must have previously called
+    ///         market.setOperator(periphery, true).
     function sellPtForSy(address market, uint256 ptIn, uint256 minSyOut, address receiver, uint256 deadline)
         external
         nonReentrant
@@ -568,14 +658,14 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         if (ptIn == 0) revert AmountZero();
         if (receiver == address(0)) revert ZeroAddress();
         if (!marketRegistered[market]) revert MarketNotRegistered(market);
+        // MDS-3: operator sell selectors only exist on rewards markets.
+        if (!isRewardsMarket[market]) revert OperatorSellUnsupported(market);
 
         IFissionMarketExt m = IFissionMarketExt(market);
-        address pt = m.pt();
 
         _checkSize(ptIn, m.totalPt());
 
-        IERC20(pt).safeTransferFrom(msg.sender, address(this), ptIn);
-        syOut = m.swapExactPtForSy(ptIn, minSyOut, receiver);
+        syOut = m.swapExactPtForSyFor(msg.sender, ptIn, minSyOut, receiver);
 
         emit PeripheryAction(4, market, msg.sender, ptIn, syOut, 0);
     }
@@ -591,6 +681,8 @@ contract FissionPeriphery is ReentrancyGuardTransient {
         if (ytIn == 0) revert AmountZero();
         if (receiver == address(0)) revert ZeroAddress();
         if (!marketRegistered[market]) revert MarketNotRegistered(market);
+        // MDS-3: operator sell selectors only exist on rewards markets.
+        if (!isRewardsMarket[market]) revert OperatorSellUnsupported(market);
 
         IFissionMarketExt m = IFissionMarketExt(market);
         _checkSize(ytIn, m.totalPt());
@@ -731,4 +823,8 @@ contract FissionPeriphery is ReentrancyGuardTransient {
     /// @dev Accept HBAR from the WHBAR contract (withdraw) and from the SY adapter
     ///      (V3 NPM mint-fee refund pattern).
     receive() external payable {}
+
+    /// @dev Storage gap for future upgrade-safe variable additions. Reduced from
+    ///      50 → 49 when `isRewardsMarket` (MDS-3) was added.
+    uint256[49] private __gap;
 }

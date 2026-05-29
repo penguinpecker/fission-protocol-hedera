@@ -36,6 +36,17 @@ export const factoryAbi = [
     inputs: [{ name: "sy", type: "address" }],
     outputs: [{ name: "", type: "bool" }],
   },
+  // UUPS proxy surface — the factory is deployed behind an ERC1967 proxy
+  // (2026-05-29 UUPS-proxy + freeze-PT rebuild).
+  { type: "function", name: "proxiableUUID", stateMutability: "view", inputs: [], outputs: [{ type: "bytes32" }] },
+  { type: "function", name: "UPGRADE_INTERFACE_VERSION", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+  {
+    type: "function",
+    name: "upgradeToAndCall",
+    stateMutability: "payable",
+    inputs: [{ name: "newImplementation", type: "address" }, { name: "data", type: "bytes" }],
+    outputs: [],
+  },
 ] as const;
 
 // Post-HTS-migration: PT, YT, and LP are HTS-native fungible tokens. Market is no
@@ -127,6 +138,60 @@ export const lensAbi = [
       { name: "ptOut", type: "uint256" },
     ],
     outputs: [{ name: "syUsed", type: "uint256" }],
+  },
+  // ── 2026-05-29 UUPS-proxy + freeze-PT rebuild additions ──
+  // Contract-tracked balances (HTS facade balanceOf reverts for Ed25519 long-
+  // zero addresses, so the Lens proxies the market's internal ledger) + the
+  // pending AMM-fee accrual previews (99% of swap fees → PT+YT holders).
+  {
+    type: "function",
+    name: "previewPtBalance",
+    stateMutability: "view",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "user", type: "address" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "previewYtBalance",
+    stateMutability: "view",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "user", type: "address" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "previewPendingPtAmm",
+    stateMutability: "view",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "user", type: "address" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "previewPendingYtAmm",
+    stateMutability: "view",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "user", type: "address" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+  // UUPS proxy surface (Lens is deployed behind an ERC1967 proxy).
+  { type: "function", name: "proxiableUUID", stateMutability: "view", inputs: [], outputs: [{ type: "bytes32" }] },
+  { type: "function", name: "UPGRADE_INTERFACE_VERSION", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+  {
+    type: "function",
+    name: "upgradeToAndCall",
+    stateMutability: "payable",
+    inputs: [{ name: "newImplementation", type: "address" }, { name: "data", type: "bytes" }],
+    outputs: [],
   },
 ] as const;
 

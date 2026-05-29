@@ -43,25 +43,39 @@ export interface RegistryEntry {
   abi: AbiList;
 }
 
-// ─── current canonical (2026-05-29 fresh factory + AMM fee redirect) ───
-const FACTORY_V3 = "0xc6e077bfd0b2dfc2bf5694219242ef11aa46086d";
-const PERIPHERY_V3 = "0x0000000000000000000000000000000000a02731";
-const LENS_V3 = "0xa1aafc8c11a686a3dee5dfe8b19d9eb43d321969";
-const MARKET_V3 = "0xfecfc0bb57dd668ff37f2a232b208584e5feae53";
-const SY_V3 = "0x0000000000000000000000000000000000a0289a";
-const SY_SHARE_V3 = "0x0000000000000000000000000000000000a0289b";
-const PT_V3 = "0x0000000000000000000000000000000000a03ae6";
-const YT_V3 = "0x0000000000000000000000000000000000a03ae7";
-const LP_V3 = "0x0000000000000000000000000000000000a03ae8";
+// ─── current canonical (2026-05-29 UUPS-proxy + freeze-PT rebuild) ───
+// Fresh factory + seeded market, all PT/YT/LP/SY-share are 18-dec HTS tokens.
+const FACTORY_V3 = "0x0000000000000000000000000000000000a03f94";
+const PERIPHERY_V3 = "0x0000000000000000000000000000000000a03fad";
+const LENS_V3 = "0x0000000000000000000000000000000000a03f9b";
+const MARKET_V3 = "0x31742aff65fcfed391cc6b4b9da0271643e0eec6";
+const SY_V3 = "0x0000000000000000000000000000000000a03f9d";
+const SY_SHARE_V3 = "0x0000000000000000000000000000000000a03f9e";
+const PT_V3 = "0x0000000000000000000000000000000000a03fa6";
+const YT_V3 = "0x0000000000000000000000000000000000a03fa7";
+const LP_V3 = "0x0000000000000000000000000000000000a03fa8";
 
-// Archived canonical markets (each replaced as the build evolved):
+// ─── previous canonical (2026-05-29 pre-proxy AMM-fee stack) — archived ───
+// Factory 0xc6e077 + market 0xfecfc0bb. Kept registered so historical activity
+// rows against the superseded stack still decode + price their SY amounts.
+const FACTORY_PREV = "0xc6e077bfd0b2dfc2bf5694219242ef11aa46086d";
+const PERIPHERY_PREV = "0x0000000000000000000000000000000000a02731";
+const LENS_PREV = "0xa1aafc8c11a686a3dee5dfe8b19d9eb43d321969";
+const MARKET_PREV = "0xfecfc0bb57dd668ff37f2a232b208584e5feae53";
+const SY_PREV = "0x0000000000000000000000000000000000a0289a";
+const SY_SHARE_PREV = "0x0000000000000000000000000000000000a0289b";
+const PT_PREV = "0x0000000000000000000000000000000000a03ae6";
+const YT_PREV = "0x0000000000000000000000000000000000a03ae7";
+const LP_PREV = "0x0000000000000000000000000000000000a03ae8";
+
+// Older archived markets (each replaced as the build evolved):
 //   0x781382351c9… — 2026-05-28, replaced by AMM fee redirect 2026-05-29
 //   0xfd33ccb…    — anchor=1.2e18 misconfig, drifted to 141% APY
 //   0x432e552a…   — failed first-fix attempt with per-year-factor confusion
 // Their PT/YT/LP token addresses are intentionally NOT registered here;
 // historical txs against those markets show "unknown token" in the activity
 // feed, which is acceptable for retired markets. Operator-side PT redemption
-// at Aug-25 expiry uses on-chain market.pt()/yt() reads, not this registry.
+// at expiry uses on-chain market.pt()/yt() reads, not this registry.
 
 // ─── legacy contracts (still on-chain for archived activity rows) ───
 const ROUTER = "0x00000000000000000000000000000000009fd993";
@@ -86,16 +100,26 @@ const syAbiAll: AbiList = merge(syAbi, syWriteAbi);
 const erc20AbiAll: AbiList = merge(erc20Abi, erc20WriteAbi);
 
 export const ACTIVITY_REGISTRY: Record<string, RegistryEntry> = {
-  // Current live (2026-05-27 cascade)
+  // Current live (2026-05-29 UUPS-proxy + freeze-PT rebuild)
   [FACTORY_V3]: { name: "FissionFactory", abi: factoryAbi },
   [PERIPHERY_V3]: { name: "FissionPeriphery", abi: fissionPeripheryAbi },
   [LENS_V3]: { name: "FissionLens", abi: marketAbi /* placeholder */ },
   [MARKET_V3]: { name: "Market", abi: marketAbiAll },
   [SY_V3]: { name: "SY adapter", abi: syAbiAll },
   [SY_SHARE_V3]: { name: "SY-USDC-WHBAR", abi: erc20AbiAll },
-  [PT_V3]: { name: "PT-USDC-WHBAR-v3", abi: erc20AbiAll },
-  [YT_V3]: { name: "YT-USDC-WHBAR-v3", abi: erc20AbiAll },
-  [LP_V3]: { name: "LP-USDC-WHBAR-v3", abi: erc20AbiAll },
+  [PT_V3]: { name: "PT-USDC-WHBAR", abi: erc20AbiAll },
+  [YT_V3]: { name: "YT-USDC-WHBAR", abi: erc20AbiAll },
+  [LP_V3]: { name: "LP-USDC-WHBAR", abi: erc20AbiAll },
+  // Previous canonical (2026-05-29 pre-proxy AMM-fee stack) — archived
+  [FACTORY_PREV]: { name: "FissionFactory (archived)", abi: factoryAbi },
+  [PERIPHERY_PREV]: { name: "FissionPeriphery (archived)", abi: fissionPeripheryAbi },
+  [LENS_PREV]: { name: "FissionLens (archived)", abi: marketAbi /* placeholder */ },
+  [MARKET_PREV]: { name: "Market (archived)", abi: marketAbiAll },
+  [SY_PREV]: { name: "SY adapter (archived)", abi: syAbiAll },
+  [SY_SHARE_PREV]: { name: "SY-USDC-WHBAR (archived)", abi: erc20AbiAll },
+  [PT_PREV]: { name: "PT-USDC-WHBAR (archived)", abi: erc20AbiAll },
+  [YT_PREV]: { name: "YT-USDC-WHBAR (archived)", abi: erc20AbiAll },
+  [LP_PREV]: { name: "LP-USDC-WHBAR (archived)", abi: erc20AbiAll },
   // Legacy (kept so archived activity rows still decode)
   [ROUTER]: { name: "ActionRouter (archived)", abi: routerAbi },
   [FACTORY]: { name: "FissionFactory (archived)", abi: factoryAbi },
@@ -148,12 +172,18 @@ export interface TokenInfo {
 const SS_SUFFIX = "SS-V2-90D";
 
 export const TOKEN_INFO: Record<string, TokenInfo> = {
-  // Current live (2026-05-27 cascade)
+  // Current live (2026-05-29 UUPS-proxy rebuild) — all 18-dec HTS tokens
   [SY_SHARE_V3]: { symbol: "fSY-USDC-WHBAR", decimals: 18, kind: "sy" },
   [SY_V3]: { symbol: "fSY-USDC-WHBAR", decimals: 18, kind: "sy" },
   [PT_V3]: { symbol: "fPT-USDC-WHBAR", decimals: 18, kind: "pt" },
   [YT_V3]: { symbol: "fYT-USDC-WHBAR", decimals: 18, kind: "yt" },
   [LP_V3]: { symbol: "fLP-USDC-WHBAR", decimals: 18, kind: "lp" },
+  // Previous canonical (pre-proxy AMM-fee stack) — archived, still 18-dec
+  [SY_SHARE_PREV]: { symbol: "fSY-USDC-WHBAR", decimals: 18, kind: "sy" },
+  [SY_PREV]: { symbol: "fSY-USDC-WHBAR", decimals: 18, kind: "sy" },
+  [PT_PREV]: { symbol: "fPT-USDC-WHBAR", decimals: 18, kind: "pt" },
+  [YT_PREV]: { symbol: "fYT-USDC-WHBAR", decimals: 18, kind: "yt" },
+  [LP_PREV]: { symbol: "fLP-USDC-WHBAR", decimals: 18, kind: "lp" },
   // Legacy tokens (still pricable for archived activity)
   [SY_SHARE_TOKEN]: { symbol: `SY-${SS_SUFFIX}`, decimals: 18, kind: "sy" },
   [SY_LP]: { symbol: `SY-${SS_SUFFIX}`, decimals: 18, kind: "sy" },

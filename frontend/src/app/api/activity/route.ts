@@ -439,7 +439,10 @@ function compactBig(v: bigint, suffix: string): string {
  */
 async function refreshSyUsdPerShare(): Promise<void> {
   try {
-    const syAddress = process.env.NEXT_PUBLIC_SY_SAUCER_V2_LP_ADDRESS as `0x${string}` | undefined;
+    // Prefer the canonical SY adapter (NEXT_PUBLIC_SY_ADDRESS, set by the
+    // 2026-05-29 rebuild); fall back to the legacy var for older envs.
+    const syAddress = (process.env.NEXT_PUBLIC_SY_ADDRESS
+      ?? process.env.NEXT_PUBLIC_SY_SAUCER_V2_LP_ADDRESS) as `0x${string}` | undefined;
     if (!syAddress) {
       syUsdPerShareCache = { value: null, ts: Date.now() };
       return;
