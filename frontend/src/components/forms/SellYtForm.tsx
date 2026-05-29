@@ -243,19 +243,13 @@ export function SellYtForm({ market, detail, user }: Props) {
   const syEstimate = lensSyOut ?? linearEstimate;
   const minSyOut = (syEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
-  // W2-06: expected HBAR from unzapping the SY proceeds → minHbarOut floor for
-  // Tx2 (mirrors the /sy page's slippage-derived floor instead of 1n).
-  const expectedHbarOut: number = useMemo(() => {
-    if (syEstimate === 0n || usdPerShare === undefined || hbarUsd === undefined) return 0;
-    const usdValue = Number(syEstimate) * usdPerShare;
-    return usdValue / Math.max(1e-9, hbarUsd);
-  }, [syEstimate, usdPerShare, hbarUsd]);
-  const minHbarOutTinybar: bigint = useMemo(() => {
-    if (expectedHbarOut <= 0) return 1n;
-    const tinybars = BigInt(Math.floor(expectedHbarOut * 1e8));
-    const floored = (tinybars * BigInt(10_000 - slippageBps)) / 10_000n;
-    return floored > 0n ? floored : 1n;
-  }, [expectedHbarOut, slippageBps]);
+  // F3: the Tx3 unzap (SY → HBAR) needs a trustworthy price to set minHbarOut.
+  // When CoinGecko is down (usdPerShare / hbarUsd undefined) the floor used to
+  // collapse to 1n — sandwich-exploitable (the inner USDC→WHBAR leg uses
+  // amountOutMinimum:0, so the whole unzap can settle for ~1 tinybar). BLOCK the
+  // sell instead of shipping a 1n floor. Only matters once there's an amount.
+  const priceFeedUnavailable =
+    parsedYt > 0n && (usdPerShare === undefined || hbarUsd === undefined);
 
   /* ─────────────────────────── primary handler (3-step YT → HBAR chain) */
 
@@ -278,6 +272,12 @@ export function SellYtForm({ market, detail, user }: Props) {
     if (chainInFlight.current) return;
     if (!user || parsedYt === 0n || expired) return;
     if (insufficient || sizeLimit.exceeded) return;
+    // F3: refuse to start a sell we can't price — the Tx3 unzap would otherwise
+    // fall back to a 1n minHbarOut, which is sandwich-exploitable.
+    if (usdPerShare === undefined || hbarUsd === undefined) {
+      setWriteError("Price feed unavailable — can't safely set a minimum HBAR floor for the SY→HBAR conversion. Try again once pricing is back.");
+      return;
+    }
     chainInFlight.current = true;
     setWriteError(null);
     try {
@@ -352,13 +352,26 @@ export function SellYtForm({ market, detail, user }: Props) {
         await syAllowanceRead.refetch();
       }
 
-      // Step 3: Periphery.unzapSyToHbar — full SY delta → HBAR delivered to user,
-      // floored by minHbarOut from the slippage chip.
+      // Step 3: Periphery.unzapSyToHbar — full SY delta → HBAR delivered to user.
+      // SELL-03 + F3: derive minHbarOut from the REALIZED syReceived delta (not a
+      // pre-trade estimate) using the live price, floored by the slippage chip.
+      // We already gated on a present price feed at the top of onPrimary, so this
+      // is never the 1n fallback.
+      const hbarForDelta = (Number(syReceived) * usdPerShare) / Math.max(1e-9, hbarUsd);
+      const minHbarOut =
+        (BigInt(Math.floor(hbarForDelta * 1e8)) * BigInt(10_000 - slippageBps)) / 10_000n;
+      if (minHbarOut <= 0n) {
+        const msg =
+          "Computed HBAR floor rounded to zero — refusing to send an unprotected unzap. Your YT is now SY in your wallet; convert it once pricing/size allows.";
+        setWriteError(msg);
+        setFlowState({ kind: "error", message: msg });
+        return;
+      }
       setFlowState({ kind: "unzapping" });
       const uResp = await adapter.write({
         kind: "writePeriphery",
         functionName: "unzapSyToHbar",
-        args: [detail.sy, syReceived, minHbarOutTinybar, 0n],
+        args: [detail.sy, syReceived, minHbarOut, 0n],
       });
       setLastTxHash(uResp.txHash);
       setFlowState({ kind: "done", finalTxHash: uResp.txHash });
@@ -369,7 +382,7 @@ export function SellYtForm({ market, detail, user }: Props) {
     } finally {
       chainInFlight.current = false;
     }
-  }, [adapter, detail.sy, detail.syShare, expired, insufficient, isOperator, market, minHbarOutTinybar, minSyOut, onChainSyShare, parsedYt, sizeLimit.exceeded, syAllowance, syAllowanceRead, syEstimate, user]);
+  }, [adapter, detail.sy, detail.syShare, expired, hbarUsd, insufficient, isOperator, market, minSyOut, onChainSyShare, parsedYt, sizeLimit.exceeded, slippageBps, syAllowance, syAllowanceRead, syEstimate, usdPerShare, user]);
 
   const isPending =
     adapter.isWritePending ||
@@ -432,6 +445,7 @@ export function SellYtForm({ market, detail, user }: Props) {
     if (parsedYt === 0n) return "Enter amount";
     if (insufficient) return "Insufficient YT";
     if (sizeLimit.exceeded) return "Trade too large for pool";
+    if (priceFeedUnavailable) return "Price feed unavailable — try again";
     if (flowState.kind === "error") return "Retry Sell YT → HBAR";
     if (flowState.kind === "granting") return "Enabling selling…";
     if (flowState.kind === "selling") return "1/3 · Selling YT for SY…";
@@ -454,7 +468,9 @@ export function SellYtForm({ market, detail, user }: Props) {
     expired ||
     parsedYt === 0n ||
     insufficient ||
-    sizeLimit.exceeded;
+    sizeLimit.exceeded ||
+    // F3: block the sell while we can't price the SY→HBAR leg.
+    priceFeedUnavailable;
 
   const poolHealthy = !sizeLimit.exceeded && sizeLimit.poolDepth > 0n;
 
@@ -580,7 +596,7 @@ export function SellYtForm({ market, detail, user }: Props) {
             </div>
             <div className="mt-1.5 flex gap-3">
               <a
-                href={`https://hashscan.io/mainnet/transaction/${lastTxHash}`}
+                href={hashscanTxUrl(lastTxHash)}
                 target="_blank"
                 rel="noreferrer"
                 className="underline underline-offset-2 hover:text-text"
@@ -612,4 +628,18 @@ export function SellYtForm({ market, detail, user }: Props) {
 function shortAddr(addr: string): string {
   if (addr.length <= 12) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+// F6: HashScan rejects a raw Hedera tx-id (`0.0.X@S.NS`) in the URL (400s).
+// The canonical path form is `<acct>-<seconds>-<nanos>`. EVM `0x` hashes pass
+// through unchanged.
+function hashscanTxUrl(txId: string): string {
+  if (txId.startsWith("0x")) {
+    return `https://hashscan.io/mainnet/transaction/${txId}`;
+  }
+  const [acct, ts] = txId.split("@");
+  if (acct && ts) {
+    return `https://hashscan.io/mainnet/transaction/${acct}-${ts.replace(".", "-")}`;
+  }
+  return `https://hashscan.io/mainnet/transaction/${txId}`;
 }

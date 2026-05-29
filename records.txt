@@ -1281,3 +1281,137 @@ NOTES:
     bundled cron-indexer/deployments/295.json (edit + `railway up` to change).
 
 ═══════════════════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════════════════
+ UUPS-PROXY + FREEZE-PT REBUILD -> LIVE, SWEPT, AUDITED, REMEDIATED  2026-05-29/30
+═══════════════════════════════════════════════════════════════════════════════
+
+WHY: the AMM-fee-redirect market (0xfEcf) sent 49.5% of swap fees to "PT holders"
+but accrued against the HTS facade balanceOf, which REVERTS for Ed25519
+(HashPack-default) long-zero holders -> their PT-side fee was forfeit. Also wanted
+the "brain" contracts upgradeable so minor fixes don't need a full market redeploy.
+
+THE FIX (FissionRewardsMarket): PT is now freeze-by-default with a contract-tracked
+_ptBal mirror (cloned from the YT pattern) + Ed25519-safe ptBalanceOf; PT-side fee
+accrual reads _ptBal, not the reverting facade. PT is non-transferable externally;
+direct sell-PT / add-liquidity route through operator-gated swapExactPtForSyFor /
+addLiquidityFor (user does setOperator(periphery,true) once); periphery is
+freeze-exempt. Periphery / Lens / Factory are now UUPS proxies (ERC1967,
+_disableInitializers, storage gap, _authorizeUpgrade -> UPGRADER_ROLE); cores
+(Market, SY adapter, both MarketDeployers) stay IMMUTABLE. Factory swapped
+ACDAR -> plain AccessControl (proxy-safe) with a guarded admin renounce.
+
+NEW LIVE SET (chain 295; deployments/295.json is source of truth):
+  Market (Rewards, immutable)  0x31742aFF65fcfed391cc6B4B9DA0271643e0Eec6 exp 2026-08-27
+  Factory  (UUPS proxy)        0x..a03f94   (impl 0x..a03f92)
+  Periphery(UUPS proxy)        0x..a03fAd   (impl 0x..A03FAB)
+  Lens     (UUPS proxy)        0x..a03f9b   (impl 0x..a03F98)
+  SY adapter (SaucerSwapLPYieldSource, immutable) 0x..a03f9d ; share 0x..A03f9E
+  PT 0x..A03FA6 / YT 0x..a03fa7 / LP 0x..a03fa8   (all 18-dec; old gen also 18-dec)
+  StdDeployer 0x..a03f8a ; RwdDeployer 0x..a03f8f
+  Deployer/operator 0xA7e1..11a7 (0.0.10495279). Prior canonical 0xfEcf archived.
+
+DEPLOY/SEED: deploy-rebuild-proxy.mjs (manual FileCreate+FileAppend, hex-TEXT for
+  big bytecode, retry on TRANSACTION_EXPIRED). Seeded via seed-init-rebuild-market.mjs:
+  zap 4000 HBAR -> ~6.03e9 SY -> split half -> initialize(syIn, ptIn, anchor=
+  1019153009660895232 [8% annualized->per-period], lnFeeRoot=1e16, reserve=50).
+  Pool: totalSy==totalPt ~3.016e9 each (~2000 HBAR/side); APY guard PASS 8.0001%.
+  379 forge tests green; adversarial multi-agent security audit (contracts SOLID:
+  solvency/conservation, freeze-mirror Ed25519-safe + conservative, UUPS genuine,
+  fee split correct). Live real-funds smoke + on-chain battery (split/merge/add/
+  remove/claim/unzap + slippage-revert negatives + Lens accuracy) all PASS.
+
+GO-LIVE: commit 54d97de -> origin/main. Vercel (fission-protocol, penguinpeckers-
+  projects) 5 prod env vars set to the new addresses (sensitive/write-only). Prod
+  deploy Ready; live site serves ONLY the new market (old archived). Railway
+  fission-indexer redeployed (`railway up`) with the new bundled 295.json watchlist.
+  markets_cache repopulated (cache-only list; daily cron refresh).
+
+STRANDED-LIQUIDITY DRAINS:
+  (a) Post-rebuild stale markets (drain-stale-markets.mjs): ~$448 recovered via
+      permissionless merge() (PT+YT 1:1 -> SY, no AMM/anchor-bug exposure) +
+      removeLiquidity + redeemLiquidity (direct SY-adapter calls, simulated
+      min-outs). Earlier "$53" estimate was wrong; merge unlocks ~everything now.
+  (b) Old-deployer (0.0.10463169) pre-rebuild positions (sweep-old-deployer.mjs):
+      ~$43 recovered (399M v1 SY shares + FIX-market 0x36ed8f LP + loose
+      HBAR/USDC/WHBAR) -> consolidated to the current deployer. Old key derived
+      from SEED_PHRASE via the standard Hedera path (toStandardECDSAsecp256k1-
+      PrivateKey), verified == 0x32e8.. before any move; never persisted.
+      Mkt0 (0xfa90) merge reverts (that old market's frozen-YT bug) -> $0.89 left;
+      ~10B FIX PT + the YT are BRICKED (FIX holds only 119.7M SY vs 6.57B+ PT) =
+      worth ~0. v1 SY adapter (0x..9fb089) NFT ~$766 total; only ~$37 was the old
+      deployer's to claim.
+
+WHBAR ALLOWANCE SWEEP (the ONE real loss, ~$174): right after drain (a), external
+  account 0.0.995584 pulled 1,902 WHBAR from the current deployer via a STANDING
+  WHBAR -> WHBAR-contract allowance (no HBAR returned). Remediated: unwrapped the
+  remaining WHBAR -> HBAR + REVOKED that allowance. Then ALL 36 standing token
+  allowances on the deployer were revoked (revoke-allowances.mjs; spender EVM
+  resolved from the mirror since CREATE-deployed spenders != long-zero(id)). Wallet
+  now carries ZERO standing approvals. LESSON: never leave near-max HTS allowances
+  standing; check `allowances/tokens` periodically.
+
+ACCOUNTING RECONCILIATION (wallet-ledger.mjs) — two scares traced + CLEARED:
+  - the 224 USDC that appeared "missing" was SWAPPED to ~2,444 HBAR (self-initiated
+    contractcall; value preserved, in-wallet) — NOT a loss (I over-alarmed; verify
+    before claiming theft).
+  - a -5,000 HBAR transfer went to cosigner B 0.0.10457309 (known co-signer).
+  - "EXTERNAL" ledger flags were Hashio-relayed self gas, not theft.
+  Net: the ONLY genuine loss all session was the ~$174 WHBAR above (contained).
+
+FULL-STACK FORENSIC AUDIT (35 agents, 61 findings, 0 refuted; web2+web3):
+  Contracts SOLID. Live FRONTEND was functionally broken for fresh users:
+    W2-01 Buy PT sent the SY budget as the contract's minPtOut arg -> ~2% shortfall
+      + inert slippage. W2-04 no setOperator GRANT UX -> Sell PT/YT revert for every
+      fresh user (only the deployer had it set, masking it). W2-03 Claim/AMM-reward/
+      redeem unreachable (dead "Claim All" link, no adapter op) while rewards accrue
+      on-chain. W2-02/05 Remove-LP / Sell-PT missing SY-share approval + wrong unzap
+      amount. W2-06/07/08 slippage floors decorative / ApprovalsCard wrong SY token.
+    WEB2-IDOR-02 /api/activity readable for ANY address unauthenticated (service-role
+      bypasses RLS; RLS is vestigial - custom HS256 cookie so jwt_address()='').
+    IDX-01 indexer selector-map missing claimAmmRewards/merge -> claim events dropped;
+      IDX-03 reverted txs stored as SUCCESS; watchlist key mismatch (7 legacy
+      contracts un-indexed).
+    LP-1 login origin rejected the vercel.app alias; LP-2 no CSP; LP-3 >2^53 int JSON
+      rounding; WEB2-01/02/AUTH-01 Hedera-auth no domain/chain binding, no rate-limit,
+      /api/auth/cleanup was a 404.
+
+REMEDIATION (3 parallel agents, then verified): commits 4fa29fe (frontend trade/
+  claim + API/auth/security + indexer) + a263cbd (CSP report-only -> ENFORCE).
+  Frontend: minPtOut from Lens estimate; one-time "enable selling" setOperator step;
+  SY-share approvals on the exits; Lens-derived min-outs; wired the dead Claim/
+  Redeem/Claim-All buttons to real txs. API: /api/activity session-bound; origin
+  fail-closed; Hedera host+chainId binding; CSP (verified ZERO violations via browser
+  across all pages + the wallet-connect modal flow, THEN flipped to enforce); per-IP
+  rate limits; real /api/auth/cleanup cron; constant-time secret checks; opaque
+  errors; big-int string serialization; truthful RLS comments. Indexer: selector map
+  regenerated from ABIs (+claimAmmRewards/merge/etc.); reverted txs skipped; watchlist
+  aligned; dedup/quarantine. All build+typecheck green; deployed (Vercel + Railway);
+  live-verified (header flipped, activity 401, pages 200, wallet modal works).
+
+DB MIGRATION + DRIFT FIX: applied 20260529000000_drop_dead_lower_address_trigger
+  (drops a dead/unattached fn) via the Supabase MANAGEMENT path (the linked CLI
+  account is a limited member -> 403; a management token is required). FOUND
+  migration-history DRIFT: 20260527230000 (users PII lockdown) + 20260528000000
+  (sessions-revocation table) were applied to the live DB out-of-band but never
+  recorded (history stopped at 20260525). Verified their effects were live,
+  `supabase migration repair --status applied` recorded them, then `db push` applied
+  only the new one. Remote now fully in sync (8/8). [The management token was
+  supplied transiently this session + MUST BE ROTATED; never written to repo/records.]
+
+STILL OPEN:
+  - #11 multisig/timelock handoff (DEFERRED by user): operator EOA 0xA7e1..11a7 is
+    still sole admin/upgrade-authority on all proxies. Target = Hedera 2-of-2
+    ThresholdKey + Timelock; also move UPGRADER_ROLE. Literal last on-chain step.
+  - ROTATE the Supabase personal access token (it was shared in chat this session).
+  - W3 lows (next deploy/upgrade): two-step setUpgradeAuthority, setPeriphery guard,
+    storage-layout CI guard, record factoryImpl/lensImpl in 295.json.
+  - Residual dust: ~$0.22 PT redeemable at the Aug-25 expiry; ~$0.57 (6.255 HBAR)
+    permanently stuck in old SY adapter 0x..a02585 (no sweep fn).
+
+NEW SCRIPTS (scripts/): deploy-rebuild-proxy, seed-init-rebuild-market,
+  smoke-test-live-market, drain-stale-markets, forensic-onchain, revoke-allowances,
+  unwrap-whbar, liquidity-report, residual-scan, value-old-deployer, derive-old-key,
+  sweep-old-deployer, wallet-ledger.
+
+═══════════════════════════════════════════════════════════════════════════════

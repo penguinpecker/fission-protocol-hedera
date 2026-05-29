@@ -977,9 +977,14 @@ interface MirrorContractResult {
  */
 async function decodeRevert(transactionId: string): Promise<string | null> {
   if (!transactionId) return null;
-  // Tx ID comes as "0.0.X@SECS.NANOS" — Mirror Node also accepts that, but
-  // its /transactions endpoint wants "0.0.X-SECS-NANOS". Normalize.
-  const normalized = transactionId.replace("@", "-").replace(".", "-");
+  // Tx ID comes as "0.0.X@SECS.NANOS" — Mirror Node's /transactions endpoint
+  // wants "0.0.X-SECS-NANOS". The naive `.replace("@","-").replace(".","-")`
+  // only fixes the FIRST dot, leaving the account id mangled
+  // ("0-0.10495279-...") so Mirror 400s and HTS error decoding silently dies.
+  // Split on "@": keep the account-id half verbatim (its dots are part of the
+  // "0.0.X" id), and replace ONLY the dot in the "SECS.NANOS" timestamp half.
+  const [acctId, ts] = transactionId.split("@");
+  const normalized = ts ? `${acctId}-${ts.replace(".", "-")}` : acctId;
   const base = "https://mainnet-public.mirrornode.hedera.com/api/v1";
 
   for (let attempt = 0; attempt < 3; attempt++) {

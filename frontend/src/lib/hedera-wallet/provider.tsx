@@ -31,7 +31,7 @@ type Status = "idle" | "connecting" | "connected" | "error";
 interface HederaWalletState {
   status: Status;
   accountId: string | null;            // "0.0.NNNN"
-  evmAddress: `0x${string}` | null;    // long-zero alias for Ed25519 accounts, real alias for ECDSA
+  evmAddress: `0x${string}` | null;    // real Mirror evm_address for ECDSA; long-zero only for Ed25519
   error: string | null;
 }
 
@@ -79,6 +79,49 @@ const APP_METADATA = {
   url: "https://www.fissionp.com",
   icons: ["https://www.fissionp.com/icon.png"],
 };
+
+const MIRROR_BASE = "https://mainnet-public.mirrornode.hedera.com/api/v1";
+
+/**
+ * Resolve the EVM address the rest of the app should use for HTS facade reads
+ * (balanceOf / allowance) and as the on-chain receiver.
+ *
+ * Why this matters: HashPack/Hedera-native accounts (and any ECDSA account)
+ * own a REAL EVM alias (the keccak of their public key), but Hedera also has a
+ * deterministic "long-zero" form (`0x` + the account num). The HTS facade
+ * `balanceOf`/`allowance` precompile only resolves contracts + ECDSA aliases —
+ * it REVERTS with INVALID_ACCOUNT_ID when handed an Ed25519 long-zero. If we
+ * hand the long-zero to the app for an ECDSA account, every facade read reverts
+ * and the profile shows $0 while sells misread their inputs.
+ *
+ * Fix: fetch the account's real `evm_address` from the Mirror Node and use
+ * THAT for ECDSA accounts. Only fall back to the long-zero for true Ed25519
+ * accounts (Mirror returns a null/absent `evm_address`, i.e. there is no real
+ * alias to use). Long-zero is the only address such accounts have; facade reads
+ * will still revert for them, but that's intrinsic to Ed25519 + HTS and handled
+ * elsewhere via contract-tracked balances.
+ */
+async function resolveEvmAddress(accountId: string): Promise<`0x${string}`> {
+  const num = Number(accountId.split(".")[2]);
+  const longZero = ("0x" + num.toString(16).padStart(40, "0")) as `0x${string}`;
+  try {
+    const res = await fetch(`${MIRROR_BASE}/accounts/${accountId}`);
+    if (res.ok) {
+      const data = (await res.json()) as { evm_address?: string | null };
+      const evm = data.evm_address;
+      // Mirror returns the long-zero form in `evm_address` for Ed25519 accounts
+      // that never registered a real alias — treat that (and null/empty) as "no
+      // real alias" and keep the long-zero. A genuine ECDSA alias is a distinct
+      // non-long-zero 20-byte hex; use it verbatim.
+      if (evm && /^0x[0-9a-fA-F]{40}$/.test(evm) && evm.toLowerCase() !== longZero.toLowerCase()) {
+        return evm.toLowerCase() as `0x${string}`;
+      }
+    }
+  } catch {
+    /* Mirror unreachable — fall back to long-zero below. */
+  }
+  return longZero;
+}
 
 export function HederaWalletProvider({ children }: { children: ReactNode }) {
   // Always start in "connecting" — the rehydrate useEffect below always
@@ -183,8 +226,9 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
       }
       const signer = signers[0] as { getAccountId(): { toString(): string } };
       const accountId = signer.getAccountId().toString();
-      const num = Number(accountId.split(".")[2]);
-      const evmAddress = ("0x" + num.toString(16).padStart(40, "0")) as `0x${string}`;
+      // Resolve the REAL evm alias from Mirror so HTS facade reads don't revert
+      // for ECDSA (HashPack) accounts. Falls back to long-zero for Ed25519.
+      const evmAddress = await resolveEvmAddress(accountId);
       diag("HederaConnect", { step: "success", accountId, evmAddress });
       setState({ status: "connected", accountId, evmAddress, error: null });
     } catch (e) {
@@ -256,8 +300,10 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
           setState(INITIAL);
           return;
         }
-        const num = Number(accountId.split(".")[2]);
-        const evmAddress = ("0x" + num.toString(16).padStart(40, "0")) as `0x${string}`;
+        // Resolve the REAL evm alias from Mirror (ECDSA) so HTS facade reads
+        // don't revert on session restore; fall back to long-zero for Ed25519.
+        const evmAddress = await resolveEvmAddress(accountId);
+        if (cancelled) return;
         console.log("[fission-rehydrate] CONNECTED", { accountId, evmAddress });
         setState({ status: "connected", accountId, evmAddress, error: null });
       } catch (e) {

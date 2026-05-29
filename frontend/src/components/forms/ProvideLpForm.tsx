@@ -95,6 +95,29 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
             functionName: "allowance",
             args: [user, market],
           } as const,
+          // BUY-LP-02: SY-share → Periphery allowance. The HBAR-source Add-LP
+          // flow's Tx2 (buySyForLp) pulls the zapped SY via transferFrom; without
+          // this approve it reverts. (SY-mode approves SY → market instead.)
+          {
+            abi: [
+              {
+                type: "function",
+                name: "allowance",
+                stateMutability: "view",
+                inputs: [
+                  { name: "owner", type: "address" },
+                  { name: "spender", type: "address" },
+                ],
+                outputs: [{ type: "uint256" }],
+              },
+            ] as const,
+            address: detail.syShare,
+            functionName: "allowance",
+            args: [user, ADDRESSES.periphery],
+          } as const,
+          // BUY-LP-02: SY-share balance — used to read the post-zap delta so Tx2
+          // passes the REAL syIn (the linear estimate over-shoots realized SY).
+          { abi: erc20Abi, address: detail.syShare, functionName: "balanceOf", args: [user] } as const,
         ]
       : [],
     query: { enabled: !!user },
@@ -107,6 +130,8 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
   const lpBalance = pluck<bigint>(balRead.data?.[1] as never) ?? 0n;
   const syAllowance = pluck<bigint>(balRead.data?.[2] as never) ?? 0n;
   const ptAllowance = pluck<bigint>(balRead.data?.[3] as never) ?? 0n;
+  const syShareToPeripheryAllowance = pluck<bigint>(balRead.data?.[4] as never) ?? 0n;
+  const onChainSyShare = pluck<bigint>(balRead.data?.[5] as never) ?? 0n;
 
   return (
     <div className="flex flex-col gap-3">
@@ -150,7 +175,24 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
           ptBalance={ptBalance}
           syAllowance={syAllowance}
           ptAllowance={ptAllowance}
+          syShareToPeripheryAllowance={syShareToPeripheryAllowance}
+          onChainSyShare={onChainSyShare}
           refetchAllowances={balRead.refetch}
+          readPostZapSyDelta={async (preZap, fallback) => {
+            // BUY-LP-02: lag-aware post-zap SY-share delta (mirrors BuyPtForm's
+            // readPostZapSyBalance) — Hashio mirror lags 1-2s after Tx1.
+            for (let i = 0; i < 5; i++) {
+              try {
+                const r = await balRead.refetch();
+                const fresh = pluck<bigint>(r.data?.[5] as never) ?? preZap;
+                if (fresh > preZap) return fresh - preZap;
+              } catch {
+                /* retry */
+              }
+              await new Promise((res) => setTimeout(res, 1000));
+            }
+            return fallback;
+          }}
           adapter={adapter}
           hedera={hedera}
         />
@@ -177,9 +219,15 @@ interface AddProps {
   ptBalance: bigint;
   syAllowance: bigint;
   ptAllowance: bigint;
+  /** SY-share → Periphery allowance (HBAR-source Tx2 buySyForLp transferFrom). */
+  syShareToPeripheryAllowance: bigint;
+  /** Current on-chain SY-share balance — pre-zap snapshot fallback. */
+  onChainSyShare: bigint;
   /** Forces wagmi to re-read SY+PT allowances. Call after each approve so the
    *  "needs approve" predicate flips false and the button can advance. */
   refetchAllowances: () => unknown;
+  /** Lag-aware post-zap SY-share delta read (BUY-LP-02). */
+  readPostZapSyDelta: (preZap: bigint, fallback: bigint) => Promise<bigint>;
   adapter: ReturnType<typeof useWalletAdapter>;
   hedera: ReturnType<typeof useHederaWallet>;
 }
@@ -192,7 +240,10 @@ function AddLp({
   ptBalance,
   syAllowance,
   ptAllowance,
+  syShareToPeripheryAllowance,
+  onChainSyShare,
   refetchAllowances,
+  readPostZapSyDelta,
   adapter,
   hedera,
 }: AddProps) {
@@ -330,6 +381,27 @@ function AddLp({
           kind: "approveErc20",
           token: detail.pt,
           spender: market,
+          amount: MAX_HTS_APPROVE,
+        }),
+      );
+      setTxHash(hash as `0x${string}`);
+      await refetchAllowances();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // BUY-LP-02: the HBAR-source flow's Tx2 (buySyForLp) pulls the zapped SY via
+  // transferFrom on the PERIPHERY (not the market). Approve SY-share → Periphery
+  // once before that step.
+  const onApproveSyToPeriphery = async (): Promise<boolean> => {
+    try {
+      const { txHash: hash } = await wrap(() =>
+        adapter.write({
+          kind: "approveErc20",
+          token: detail.syShare,
+          spender: ADDRESSES.periphery,
           amount: MAX_HTS_APPROVE,
         }),
       );
@@ -568,20 +640,32 @@ function AddLp({
       }
     }
 
-    // Estimate LP-out from SY-budget at current pool ratio. Used for the
-    // slippage floor; MegaZap reverts if the realized LP is below.
-    const estSyAfterZap =
+    // Linear estimate of SY the zap will produce — fallback only; the REAL
+    // delta is read from chain after Tx1 (BUY-LP-02).
+    const estSyFromHbar =
       hbarUsd !== undefined && usdPerShare !== undefined
         ? BigInt(Math.floor((hbarAmount * hbarUsd) / Math.max(1e-12, usdPerShare)))
         : 0n;
-    const estLp = detail.lpSupply > 0n && totalSy > 0n
-      ? (((estSyAfterZap * BigInt(10_000 - ptShareBps)) / 10_000n) * detail.lpSupply) / totalSy
-      : 0n;
-    const minLp = (estLp * BigInt(10_000 - slippageBps)) / 10_000n;
 
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     try {
       // Tx 1: HBAR → SY shares (delivered to user).
+      // BUY-LP-02: snapshot the SY-share balance BEFORE the zap so we can read
+      // the exact realized delta after (the linear estSyFromHbar over-shoots —
+      // NPM fee + V2 slippage take a cut — and passing it as syIn to Tx2 made
+      // the Periphery's safeTransferFrom(SY) revert for the missing surplus).
+      let preZapSy: bigint = onChainSyShare;
+      try {
+        const rb = await refetchAllowances();
+        // refetchAllowances returns the wagmi query result; index [5] is the
+        // SY-share balanceOf entry added to balRead.
+        const fresh = (rb as { data?: ReadonlyArray<{ status: string; result?: unknown }> })
+          ?.data?.[5];
+        if (fresh?.status === "success") preZapSy = fresh.result as bigint;
+      } catch {
+        /* fall back to cached */
+      }
+
       const r1 = await wrap(() =>
         adapter.write({
           kind: "zapHbarToSy",
@@ -596,22 +680,51 @@ function AddLp({
       // Brief wait for mirror lag so balance read sees the post-Tx1 state.
       await new Promise((r) => setTimeout(r, adapter.mode === "evm" ? 3500 : 1500));
 
+      // BUY-LP-02: read the REAL post-zap SY-share delta (lag-aware). This is
+      // the syIn we pass to Tx2 — not the over-shooting linear estimate.
+      const realSyIn = await readPostZapSyDelta(preZapSy, estSyFromHbar);
+      if (realSyIn <= 0n) {
+        setWriteError("Zap delivered no SY — aborting before the LP step. Try again.");
+        return;
+      }
+
+      // BUY-LP-02: approve SY-share → Periphery so Tx2's transferFrom succeeds.
+      if (syShareToPeripheryAllowance < realSyIn) {
+        const ok = await onApproveSyToPeriphery();
+        if (!ok) return;
+      }
+
       // Tx 2: Periphery.buySyForLp with conservative ptOutFromSwap = syForPt.
-      // We don't know exact post-zap SY balance; estSyAfterZap is the linear
-      // estimate. The Periphery's _checkSize gate enforces 5% pool cap; the
-      // swapExactSyForPt(ptOut=syForPt) is "exact-PT-out so undershoots are
-      // safe — curve takes less SY for syForPt PT than for syForPt SY".
-      const syForPt = (estSyAfterZap * BigInt(ptShareBps)) / 10_000n;
+      // The swapExactSyForPt(ptOut=syForPt) is "exact-PT-out" so undershoots are
+      // safe — the curve takes less SY for syForPt PT than for syForPt SY.
+      const syForPt = (realSyIn * BigInt(ptShareBps)) / 10_000n;
+      const syForLp = realSyIn - syForPt;
       const ptOutFromSwap = syForPt > 0n ? syForPt : 1n; // conservative 1:1
+
+      // BUY-LP-01: addLiquidity returns min(lpFromSy, lpFromPt). The previous
+      // minLpOut was floored off the SY side ONLY (~50.5% of the budget), but PT
+      // is the SMALLER side (~49.5%) so the realized LP was always below that
+      // floor → InsufficientLpOut at every preset. Compute LP from BOTH legs and
+      // take the limiting (min) one before applying slippage.
+      let minLp = 1n;
+      if (detail.lpSupply > 0n && totalSy > 0n && totalPt > 0n) {
+        const lpFromSy = (syForLp * detail.lpSupply) / totalSy;
+        // PT minted into the LP = ptOutFromSwap (what we ask the curve to give).
+        const lpFromPt = (ptOutFromSwap * detail.lpSupply) / totalPt;
+        const limitingLp = lpFromSy < lpFromPt ? lpFromSy : lpFromPt;
+        const floored = (limitingLp * BigInt(10_000 - slippageBps)) / 10_000n;
+        minLp = floored > 0n ? floored : 1n;
+      }
 
       const r2 = await wrap(() =>
         adapter.write({
           kind: "writePeriphery",
           functionName: "buySyForLp",
-          args: [market, estSyAfterZap, ptShareBps, ptOutFromSwap, minLp > 0n ? minLp : 1n, user, deadline],
+          args: [market, realSyIn, ptShareBps, ptOutFromSwap, minLp, user, deadline],
         }),
       );
       setTxHash(r2.txHash as `0x${string}`);
+      void refetchAllowances();
     } catch {
       /* error captured */
     }
@@ -938,7 +1051,7 @@ function AddLp({
             </div>
             <div className="mt-1.5 flex gap-3">
               <a
-                href={`https://hashscan.io/mainnet/transaction/${txHash}`}
+                href={hashscanTxUrl(txHash)}
                 target="_blank"
                 rel="noreferrer"
                 className="underline underline-offset-2 hover:text-text"
@@ -1434,7 +1547,7 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
             </div>
             <div className="mt-1.5 flex gap-3">
               <a
-                href={`https://hashscan.io/mainnet/transaction/${txHash}`}
+                href={hashscanTxUrl(txHash)}
                 target="_blank"
                 rel="noreferrer"
                 className="underline underline-offset-2 hover:text-text"
@@ -1466,4 +1579,18 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
 function shortAddr(addr: string): string {
   if (addr.length <= 12) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+// F6: HashScan rejects a raw Hedera tx-id (`0.0.X@S.NS`) in the URL (400s).
+// The canonical path form is `<acct>-<seconds>-<nanos>`. EVM `0x` hashes pass
+// through unchanged.
+function hashscanTxUrl(txId: string): string {
+  if (txId.startsWith("0x")) {
+    return `https://hashscan.io/mainnet/transaction/${txId}`;
+  }
+  const [acct, ts] = txId.split("@");
+  if (acct && ts) {
+    return `https://hashscan.io/mainnet/transaction/${acct}-${ts.replace(".", "-")}`;
+  }
+  return `https://hashscan.io/mainnet/transaction/${txId}`;
 }

@@ -92,6 +92,20 @@ export const marketAbi = [
     inputs: [{ name: "user", type: "address" }],
     outputs: [{ type: "uint256" }],
   },
+  // FissionRewardsMarket V3-LP SY-yield stream: (usdc 6dec, whbar 8dec).
+  // `previewYield` reverts on the deployed rewards market — this is the live,
+  // non-zero unclaimed-rewards read. Verified on-chain 2026-05-29:
+  // previewRewards(deployer) → (usdc, whbar) non-zero.
+  {
+    type: "function",
+    name: "previewRewards",
+    stateMutability: "view",
+    inputs: [{ name: "user", type: "address" }],
+    outputs: [
+      { name: "usdc", type: "uint256" },
+      { name: "whbar", type: "uint256" },
+    ],
+  },
   {
     type: "function",
     name: "userOwed",

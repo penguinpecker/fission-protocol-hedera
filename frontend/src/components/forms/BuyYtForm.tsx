@@ -15,12 +15,15 @@
  * approve + buy use the chain-observed delta, not the UI estimate.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPublicClient, http } from "viem";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
+import { hederaMainnet } from "@/lib/chains";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate, ytToSyRate } from "@/components/MarketPositionCard";
 import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, HEDERA_TOKENS, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
+import { lensAbi } from "@/lib/abis";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
@@ -156,6 +159,15 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   const needsSy = effectiveSource === "sy" && syBalance === 0n;
   const sizeLimit = computeSizeLimit(syForSwap, detail.totalSy, detail.totalPt);
 
+  // F8: mirror the periphery's own size cap (maxTradeBps = 5% of totalSy,
+  // checked against syIn) on the HBAR path so an oversized zap doesn't sail
+  // through to a TradeExceedsCap revert. 500 bps matches the contract default.
+  const CONTRACT_MAX_TRADE_BPS = 500n;
+  const contractTradeCap =
+    detail.totalSy > 0n ? (detail.totalSy * CONTRACT_MAX_TRADE_BPS) / 10_000n : 0n;
+  const hbarExceedsContractCap =
+    effectiveSource === "hbar" && contractTradeCap > 0n && syForSwap > contractTradeCap;
+
   /* ─────────────────────────── YT estimate */
 
   const apy = impliedApyPct(detail.lastLnImpliedRate);
@@ -248,11 +260,32 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
 
   const stepAssociate = useCallback(
     async (tokens: `0x${string}`[]): Promise<boolean> => {
-      if (adapter.mode !== "hedera" || !adapter.accountId) return true;
       try {
         const { getMissingAssociations, associateTokens, evmAddressToTokenId } =
           await import("@/lib/hedera-wallet/associations");
         const ids = tokens.map(evmAddressToTokenId);
+
+        // F8: precheck associations regardless of wallet mode. The EVM path
+        // previously assumed HIP-904 auto-assoc always covers it; EVM-aliased
+        // accounts with max_automatic_token_associations = 0 silently fail to
+        // receive YT / SY shares. Resolve the account id from the EVM address
+        // via mirror and verify; HIP-904 unlimited accounts have no missing
+        // tokens and pass through unchanged.
+        if (adapter.mode !== "hedera" || !adapter.accountId) {
+          if (!user) return true;
+          const acctId = await resolveAccountIdFromEvm(user);
+          if (!acctId) return true;
+          const missing = await getMissingAssociations(acctId, ids);
+          if (missing.length === 0) return true;
+          const msg =
+            "Your account isn't set up to receive these tokens (YT / SY share). " +
+            "Enable automatic token associations in your wallet, or associate " +
+            "them once, then retry.";
+          setWriteError(msg);
+          setStatus({ kind: "error", message: msg, failedAt: 1 });
+          return false;
+        }
+
         const missing = await getMissingAssociations(adapter.accountId, ids);
         if (missing.length === 0) return true;
         setStatus({ kind: "associating", stepIdx: 1 });
@@ -265,7 +298,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         return false;
       }
     },
-    [adapter.mode, adapter.accountId, hedera, setStatus],
+    [adapter.mode, adapter.accountId, hedera, setStatus, user],
   );
 
   const stepZap = useCallback(
@@ -330,14 +363,14 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     async (syIn: bigint): Promise<boolean> => {
       if (!user) return false;
       setStatus({ kind: "buying", stepIdx: 4 });
-      // buyYT splits `syIn` SY → `syIn` PT + `syIn` YT, then sells the PT for
-      // SY at the current pool rate. Expected SY back ≈ syIn · ptRate where
-      // ptRate < 1 pre-expiry. Apply slippage to that **expected** value, NOT
-      // to syIn directly — applying to syIn made `minSyOut` mathematically
-      // unreachable (>99% of syIn while the PT sale only returns ~98%).
-      const ptRate = ptToSyRate(apy, days);
-      const expectedSyOut = BigInt(Math.floor(Number(syIn) * ptRate));
-      const minSyOut = (expectedSyOut * BigInt(10_000 - slippageBps)) / 10_000n;
+      // BUY-YT-01: buySyForYt splits `syIn` SY → `syIn` PT + `syIn` YT, then
+      // sells the PT for SY (refunded to the user). The market reverts if that
+      // PT-sale's SY output < minSyOutFromPtSale. The old JS interest model
+      // drifted high and produced an unreachable floor → revert at 10bps.
+      // Use the live Lens — previewSwapExactPtForSy(market, syIn) is exactly
+      // the PT-sale's SY output, so minSyOut = that × (1 − slippage) is always
+      // reachable.
+      const minSyOut = await computeMinSyOutForYt(market, syIn, slippageBps);
       try {
         const { txHash } = await adapter.write({
           kind: "writePeriphery",
@@ -354,7 +387,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         return false;
       }
     },
-    [adapter, apy, days, market, slippageBps, setStatus, user],
+    [adapter, market, slippageBps, setStatus, user],
   );
 
   const hbarFlowTokens: `0x${string}`[] = useMemo(
@@ -722,6 +755,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
       if (hbarAmount < 6) return "Min 6 HBAR";
+      if (hbarExceedsContractCap) return "Trade too large for pool";
       if (megaZapAvailable) {
         if (flowState.kind === "error") return "Retry MegaZap";
         if (flowState.kind === "associating") return "Associating tokens…";
@@ -767,7 +801,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     isConfirmingFinal ||
     !routerDeployed ||
     (effectiveSource === "hbar"
-      ? hbarAmount === 0 || !zapAvailable || hbarBelowFloor
+      ? hbarAmount === 0 || !zapAvailable || hbarBelowFloor || hbarExceedsContractCap
       : parsedSy === 0n || insufficient || sizeLimit.exceeded);
 
   return (
@@ -919,7 +953,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
             </div>
             <div className="mt-1.5 flex gap-3">
               <a
-                href={`https://hashscan.io/mainnet/transaction/${lastTxHash}`}
+                href={`https://hashscan.io/mainnet/transaction/${hashscanTxId(lastTxHash)}`}
                 target="_blank"
                 rel="noreferrer"
                 className="underline underline-offset-2 hover:text-text"
@@ -1085,4 +1119,74 @@ function HbarInput({
 function shortAddr(addr: string): string {
   if (addr.length <= 12) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+/* ─────────────────────────────────────────────────────── lens quoter */
+
+let _lensClient: ReturnType<typeof createPublicClient> | null = null;
+function lensClient() {
+  if (!_lensClient) {
+    _lensClient = createPublicClient({ chain: hederaMainnet, transport: http() });
+  }
+  return _lensClient;
+}
+
+/**
+ * BUY-YT-01 fix — compute the PT-resale-leg's minSyOut from the live Lens.
+ *
+ * buySyForYt sells the PT half for SY and reverts if that SY output is below
+ * `minSyOutFromPtSale`. `lens.previewSwapExactPtForSy(market, syIn)` returns
+ * exactly that SY output (same MarketMath path), so flooring it by the slippage
+ * chip yields a target that's always reachable. Falls back to 1n if the lens
+ * is unreachable (the contract then accepts any positive SY output).
+ */
+async function computeMinSyOutForYt(
+  market: `0x${string}`,
+  syIn: bigint,
+  slippageBps: number,
+): Promise<bigint> {
+  if (syIn <= 0n) return 1n;
+  try {
+    const syOut = (await lensClient().readContract({
+      abi: lensAbi,
+      address: ADDRESSES.lens,
+      functionName: "previewSwapExactPtForSy",
+      args: [market, syIn],
+    })) as bigint;
+    const floor = (syOut * BigInt(10_000 - slippageBps)) / 10_000n;
+    return floor > 0n ? floor : 1n;
+  } catch {
+    return 1n;
+  }
+}
+
+/**
+ * F6 fix — normalize a Hedera consensus tx-id (`0.0.X@S.NS`) into the dash form
+ * HashScan's URL accepts (`0.0.X-S-NS`). The account keeps its dots; only the
+ * timestamp's seconds.nanos dot becomes a dash. EVM hashes pass through.
+ */
+function hashscanTxId(raw: string): string {
+  const at = raw.indexOf("@");
+  if (at < 0) return raw;
+  const acct = raw.slice(0, at);
+  const ts = raw.slice(at + 1);
+  return `${acct}-${ts.replace(".", "-")}`;
+}
+
+/**
+ * F8 helper — resolve a `0.0.X` Hedera account id from an EVM address via the
+ * mirror node, so the EVM/injected path can run the same association precheck
+ * the Hedera path does. Returns null if the mirror can't map it.
+ */
+async function resolveAccountIdFromEvm(evm: `0x${string}`): Promise<string | null> {
+  try {
+    const r = await fetch(
+      `https://mainnet-public.mirrornode.hedera.com/api/v1/accounts/${evm}`,
+    );
+    if (!r.ok) return null;
+    const data = (await r.json()) as { account?: string };
+    return data.account ?? null;
+  } catch {
+    return null;
+  }
 }

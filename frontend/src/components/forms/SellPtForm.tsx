@@ -6,8 +6,11 @@
  * since v1; UI was missing until now).
  *
  * Same shell as BuyPtForm but unidirectional (PT only, no HBAR zap):
- *   1. Approve PT for Router (if allowance insufficient)
- *   2. Swap PT → SY
+ *   1. setOperator(periphery, true)  (one-time, if not already operator)
+ *   2. Approve SY-share → Periphery  (one-time, for the Tx2 unzap)
+ *   3. Tx1: sellPtForSy (PT → SY shares)  — NO PT approve: PT is freeze-by-
+ *      default and the sell WIPES it; there is no allowance path to consume.
+ *   4. Tx2: unzapSyToHbar (SY shares → HBAR)
  *
  * Post-expiry, prefer `redeemAfterExpiry` (1:1) over swap — the AMM curve
  * pays slightly less than par. The form auto-disables in that case.
@@ -42,12 +45,11 @@ interface Props {
 type FlowKind =
   | { kind: "idle" }
   | { kind: "granting" } // tx0: market.setOperator(periphery, true) — one-time
-  | { kind: "approving" } // approve PT → Periphery
   | { kind: "approvingSy" } // approve SY-share → Periphery (for tx2 unzap)
-  | { kind: "selling" } // tx1: PT → SY
+  | { kind: "selling" } // tx1: PT → SY (no PT approve — the sell WIPES PT)
   | { kind: "unzapping" } // tx2: SY → HBAR
   | { kind: "done"; finalTxHash: string }
-  | { kind: "error"; message: string; failedAt: "grant" | "approve" | "approveSy" | "sell" | "unzap" };
+  | { kind: "error"; message: string; failedAt: "grant" | "approveSy" | "sell" | "unzap" };
 
 export function SellPtForm({ market, detail, user }: Props) {
   const adapter = useWalletAdapter();
@@ -101,11 +103,18 @@ export function SellPtForm({ market, detail, user }: Props) {
       outputs: [{ type: "uint256" }],
     },
   ] as const;
+  // SELL-02: NO PT-approve prerequisite. PT is freeze-by-default and the sell
+  // WIPES the user's PT (the market holds PT's WIPE key) — there is no
+  // allowance/transferFrom path the sell ever consumes. An HTS approve from a
+  // frozen account reverts ACCOUNT_FROZEN_FOR_TOKEN, dead-locking the flow
+  // before the swap. So we don't read PT allowance and we never call approve on
+  // PT (mirrors SellYtForm, which correctly has no token approve). The only
+  // sell prerequisites are: setOperator(periphery, true) [if not already
+  // operator] and the SY-share → Periphery approve for the Tx2 unzap.
   const ptRead = useReadContracts({
     contracts: user
       ? [
           { abi: erc20BalanceAbi, address: detail.pt, functionName: "balanceOf", args: [user] } as const,
-          { abi: erc20AllowanceAbi, address: detail.pt, functionName: "allowance", args: [user, spender] } as const,
           // W2-04: operator grant on the market — the sell routes through the
           // operator-gated swapExactPtForSyFor; without it the Periphery reverts.
           {
@@ -137,14 +146,12 @@ export function SellPtForm({ market, detail, user }: Props) {
   });
   const ptBalance =
     ptRead.data?.[0]?.status === "success" ? (ptRead.data[0].result as bigint) : 0n;
-  const allowance =
-    ptRead.data?.[1]?.status === "success" ? (ptRead.data[1].result as bigint) : 0n;
   const isOperator =
-    ptRead.data?.[2]?.status === "success" ? (ptRead.data[2].result as boolean) : false;
+    ptRead.data?.[1]?.status === "success" ? (ptRead.data[1].result as boolean) : false;
   const syShareAllowance =
-    ptRead.data?.[3]?.status === "success" ? (ptRead.data[3].result as bigint) : 0n;
+    ptRead.data?.[2]?.status === "success" ? (ptRead.data[2].result as bigint) : 0n;
   const onChainSyShare =
-    ptRead.data?.[4]?.status === "success" ? (ptRead.data[4].result as bigint) : 0n;
+    ptRead.data?.[3]?.status === "success" ? (ptRead.data[3].result as bigint) : 0n;
   // Ed25519 long-zero EVM addresses cause HTS-facade balanceOf to revert. Detect
   // that case so the "insufficient balance" gate doesn't dead-lock the form for
   // an Ed25519 user who actually holds PT. When the read failed, we skip the
@@ -207,15 +214,18 @@ export function SellPtForm({ market, detail, user }: Props) {
   // W2-07: minSyOut from the preview × (1 − slippage), no longer a decorative 1n.
   const minSyOut = (syEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
-  // W2-06-style: expected HBAR from unzapping the SY proceeds, for the Tx2
-  // minHbarOut floor (mirrors the /sy page pattern).
-  const expectedHbarOut: number = useMemo(() => {
-    if (syEstimate === 0n || usdPerShare === undefined || hbarUsd === undefined) return 0;
-    const usdValue = Number(syEstimate) * usdPerShare;
-    return usdValue / Math.max(1e-9, hbarUsd);
-  }, [syEstimate, usdPerShare, hbarUsd]);
+  // F3: the Tx2 unzap (SY → HBAR) needs a trustworthy price to set minHbarOut.
+  // When CoinGecko is down (usdPerShare / hbarUsd undefined), the floor used to
+  // collapse to 1n — sandwich-exploitable (the inner USDC→WHBAR leg uses
+  // amountOutMinimum:0, so the whole unzap can settle for ~1 tinybar). Rather
+  // than ship a 1n floor on a value leg, BLOCK the sell: there's a real SY→HBAR
+  // value leg here we can't price safely. Only matters once there's an amount
+  // to sell.
+  const priceFeedUnavailable =
+    parsedPt > 0n && (usdPerShare === undefined || hbarUsd === undefined);
 
-  const needsApprove = parsedPt > 0n && allowance < parsedPt;
+  // SELL-02: no PT-approve. Prerequisites are the operator grant + the
+  // SY-share approve for the Tx2 unzap.
   const needsGrant = parsedPt > 0n && !isOperator;
   const needsSyApprove = parsedPt > 0n && syShareAllowance < syEstimate;
 
@@ -226,7 +236,7 @@ export function SellPtForm({ market, detail, user }: Props) {
   const readSyShareBalance = useCallback(async (): Promise<bigint> => {
     try {
       const r = await ptRead.refetch();
-      if (r.data?.[4]?.status === "success") return r.data[4].result as bigint;
+      if (r.data?.[3]?.status === "success") return r.data[3].result as bigint;
     } catch {
       /* fall through */
     }
@@ -240,7 +250,7 @@ export function SellPtForm({ market, detail, user }: Props) {
       for (let i = 0; i < 5; i++) {
         try {
           const r = await ptRead.refetch();
-          const fresh = r.data?.[4]?.status === "success" ? (r.data[4].result as bigint) : preSell;
+          const fresh = r.data?.[3]?.status === "success" ? (r.data[3].result as bigint) : preSell;
           if (fresh > preSell) return fresh - preSell;
         } catch {
           /* retry */
@@ -277,34 +287,6 @@ export function SellPtForm({ market, detail, user }: Props) {
       return false;
     }
   }, [adapter, market, ptRead, spender, user]);
-
-  const runApprove = useCallback(async (): Promise<boolean> => {
-    if (!user) return false;
-    setFlowState({ kind: "approving" });
-    try {
-      const { txHash } = await adapter.write({
-        kind: "approveErc20",
-        token: detail.pt,
-        spender,
-        // Set-once allowance: every future Sell PT skips the approve prompt.
-        amount: MAX_HTS_APPROVE,
-      });
-      setLastTxHash(txHash);
-      // In EVM mode, writeContractAsync returns on hash, NOT on receipt — the
-      // immediate refetch can race the approve confirmation and the next sell
-      // step would see stale allowance. Hedera-mode `executeWithSigner` already
-      // waits for receipt internally. Either way, wait one mirror-lag cycle
-      // before re-reading allowance so the AMM call sees the post-approve state.
-      await new Promise((r) => setTimeout(r, adapter.mode === "evm" ? 3500 : 1500));
-      await ptRead.refetch();
-      return true;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setWriteError(msg);
-      setFlowState({ kind: "error", message: msg, failedAt: "approve" });
-      return false;
-    }
-  }, [adapter, detail.pt, ptRead, spender, user]);
 
   // W2-05: approve SY-share → Periphery so Tx2 (unzapSyToHbar) can transferFrom.
   const runApproveSy = useCallback(async (): Promise<boolean> => {
@@ -359,18 +341,37 @@ export function SellPtForm({ market, detail, user }: Props) {
     // Tx 2: SY → HBAR via Periphery.unzapSyToHbar.
     // User must have approved SY-share → Periphery (one-time setup, runApproveSy).
     if (!user || sySharesToUnzap === 0n) return false;
+
+    // F3 + SELL-03: derive minHbarOut from the REALIZED SY-share delta (not the
+    // pre-trade estimate) using the live price. If no trustworthy price is
+    // available (CoinGecko down), BLOCK the unzap rather than shipping a 1n
+    // floor — a 1n floor on this value leg is sandwich-exploitable (the inner
+    // USDC→WHBAR swap uses amountOutMinimum:0 and would accept ~1 tinybar).
+    if (usdPerShare === undefined || hbarUsd === undefined) {
+      const msg =
+        "Price feed unavailable — can't safely set a minimum HBAR floor for the SY→HBAR conversion. Your PT is now SY in your wallet; try the conversion again once pricing is back.";
+      setWriteError(msg);
+      setFlowState({ kind: "error", message: msg, failedAt: "unzap" });
+      return false;
+    }
     setFlowState({ kind: "unzapping" });
-    // minHbarOut from the slippage chip (mirrors the /sy page): unzap the full
-    // SY delta and floor the HBAR output rather than passing 1n.
+    // HBAR expected from THIS realized SY delta = shares × usdPerShare / hbarUsd,
+    // floored by the slippage chip. Never 1n.
+    const hbarForDelta = (Number(sySharesToUnzap) * usdPerShare) / Math.max(1e-9, hbarUsd);
     const minHbarOut =
-      expectedHbarOut > 0
-        ? (BigInt(Math.floor(expectedHbarOut * 1e8)) * BigInt(10_000 - slippageBps)) / 10_000n
-        : 1n;
+      (BigInt(Math.floor(hbarForDelta * 1e8)) * BigInt(10_000 - slippageBps)) / 10_000n;
+    if (minHbarOut <= 0n) {
+      const msg =
+        "Computed HBAR floor rounded to zero — refusing to send an unprotected unzap. Try a larger amount or check the price feed.";
+      setWriteError(msg);
+      setFlowState({ kind: "error", message: msg, failedAt: "unzap" });
+      return false;
+    }
     try {
       const { txHash } = await adapter.write({
         kind: "writePeriphery",
         functionName: "unzapSyToHbar",
-        args: [detail.sy, sySharesToUnzap, minHbarOut > 0n ? minHbarOut : 1n, 0n],
+        args: [detail.sy, sySharesToUnzap, minHbarOut, 0n],
       });
       setLastTxHash(txHash);
       setFlowState({ kind: "done", finalTxHash: txHash });
@@ -381,7 +382,7 @@ export function SellPtForm({ market, detail, user }: Props) {
       setFlowState({ kind: "error", message: msg, failedAt: "unzap" });
       return false;
     }
-  }, [adapter, detail.sy, user, expectedHbarOut, slippageBps]);
+  }, [adapter, detail.sy, user, usdPerShare, hbarUsd, slippageBps]);
 
   // Run the remaining steps after the operator grant + PT approve are settled.
   const runSellAndUnzap = useCallback(async (): Promise<void> => {
@@ -404,14 +405,6 @@ export function SellPtForm({ market, detail, user }: Props) {
       if (flowState.failedAt === "grant") {
         const ok = await runGrant();
         if (!ok) return;
-        if (needsApprove) {
-          const okA = await runApprove();
-          if (!okA) return;
-        }
-        await runSellAndUnzap();
-      } else if (flowState.failedAt === "approve") {
-        const ok = await runApprove();
-        if (!ok) return;
         await runSellAndUnzap();
       } else if (flowState.failedAt === "approveSy") {
         const ok = await runApproveSy();
@@ -433,22 +426,19 @@ export function SellPtForm({ market, detail, user }: Props) {
     }
 
     // W2-04: grant operator first if the market doesn't yet authorize the
-    // Periphery (one-time per wallet).
+    // Periphery (one-time per wallet). SELL-02: there is NO PT approve — the
+    // sell wipes PT directly, so the only token approve is SY-share (handled
+    // inside runSellAndUnzap for the Tx2 unzap).
     if (needsGrant) {
       const ok = await runGrant();
       if (!ok) return;
     }
-    if (needsApprove) {
-      const ok = await runApprove();
-      if (!ok) return;
-    }
     await runSellAndUnzap();
-  }, [user, parsedPt, peripheryDeployed, expired, insufficient, sizeLimit.exceeded, flowState, needsGrant, needsApprove, runGrant, runApprove, runApproveSy, runSell, runUnzap, runSellAndUnzap, readSyShareBalance, syEstimate]);
+  }, [user, parsedPt, peripheryDeployed, expired, insufficient, sizeLimit.exceeded, flowState, needsGrant, runGrant, runApproveSy, runSell, runUnzap, runSellAndUnzap, readSyShareBalance, syEstimate]);
 
   const isPending =
     adapter.isWritePending ||
     flowState.kind === "granting" ||
-    flowState.kind === "approving" ||
     flowState.kind === "approvingSy" ||
     flowState.kind === "selling" ||
     flowState.kind === "unzapping";
@@ -513,24 +503,22 @@ export function SellPtForm({ market, detail, user }: Props) {
     if (parsedPt === 0n) return "Enter amount";
     if (insufficient) return "Insufficient PT";
     if (sizeLimit.exceeded) return "Trade too large for pool";
+    if (priceFeedUnavailable) return "Price feed unavailable — try again";
     if (flowState.kind === "error") {
       switch (flowState.failedAt) {
         case "grant": return "Retry enable selling";
-        case "approve": return "Retry approval";
         case "approveSy": return "Retry SY approval";
         case "unzap": return "Retry convert to HBAR";
         default: return "Retry sell";
       }
     }
     if (flowState.kind === "granting") return "Enabling selling…";
-    if (flowState.kind === "approving") return "Approving PT…";
     if (flowState.kind === "approvingSy") return "Approving SY for Periphery…";
     if (flowState.kind === "selling") return "Step 1/2 · Selling PT → SY…";
     if (flowState.kind === "unzapping") return "Step 2/2 · Converting SY → HBAR…";
     if (flowState.kind === "done") return "✓ Done";
     if (isConfirmingFinal) return "Waiting for confirmation…";
     if (needsGrant) return "Enable selling + Sell PT for HBAR";
-    if (needsApprove) return "Approve PT for Periphery";
     return "Sell PT for HBAR";
   };
 
@@ -542,7 +530,9 @@ export function SellPtForm({ market, detail, user }: Props) {
     expired ||
     parsedPt === 0n ||
     insufficient ||
-    sizeLimit.exceeded;
+    sizeLimit.exceeded ||
+    // F3: block the sell while we can't price the SY→HBAR leg.
+    priceFeedUnavailable;
 
   const poolHealthy = !sizeLimit.exceeded && sizeLimit.poolDepth > 0n;
 
@@ -656,7 +646,7 @@ export function SellPtForm({ market, detail, user }: Props) {
               <div className="mb-1 font-semibold uppercase tracking-[1.5px]">
                 {flowState.failedAt === "grant"
                   ? "Enable selling failed"
-                  : flowState.failedAt === "approve" || flowState.failedAt === "approveSy"
+                  : flowState.failedAt === "approveSy"
                     ? "Approval failed"
                     : flowState.failedAt === "unzap"
                       ? "Convert to HBAR failed"
@@ -675,7 +665,7 @@ export function SellPtForm({ market, detail, user }: Props) {
             </div>
             <div className="mt-1.5 flex gap-3">
               <a
-                href={`https://hashscan.io/mainnet/transaction/${lastTxHash}`}
+                href={hashscanTxUrl(lastTxHash)}
                 target="_blank"
                 rel="noreferrer"
                 className="underline underline-offset-2 hover:text-text"
@@ -711,4 +701,18 @@ export function SellPtForm({ market, detail, user }: Props) {
 function shortAddr(addr: string): string {
   if (addr.length <= 12) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+// F6: HashScan rejects a raw Hedera tx-id (`0.0.X@S.NS`) in the URL (400s).
+// The canonical path form is `<acct>-<seconds>-<nanos>`. EVM `0x` hashes pass
+// through unchanged.
+function hashscanTxUrl(txId: string): string {
+  if (txId.startsWith("0x")) {
+    return `https://hashscan.io/mainnet/transaction/${txId}`;
+  }
+  const [acct, ts] = txId.split("@");
+  if (acct && ts) {
+    return `https://hashscan.io/mainnet/transaction/${acct}-${ts.replace(".", "-")}`;
+  }
+  return `https://hashscan.io/mainnet/transaction/${txId}`;
 }

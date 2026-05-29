@@ -26,12 +26,15 @@
  * intervals until we see the delta materialize.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPublicClient, http } from "viem";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
+import { hederaMainnet } from "@/lib/chains";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate } from "@/components/MarketPositionCard";
 import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, HEDERA_TOKENS, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
+import { lensAbi } from "@/lib/abis";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
@@ -187,6 +190,17 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   const needsSy = effectiveSource === "sy" && syBalance === 0n;
   const sizeLimit = computeSizeLimit(syForSwap, detail.totalSy, detail.totalPt);
 
+  // F10: the periphery enforces its own size cap (maxTradeBps = 5% of totalSy,
+  // checked against syIn). The UI's 1%-of-pool-depth guard above already gates
+  // SY mode; mirror the contract's actual revert boundary on the HBAR path so
+  // an oversized zap doesn't sail through to a TradeExceedsCap revert. 500 bps
+  // matches FissionPeriphery.maxTradeBps (initialize default).
+  const CONTRACT_MAX_TRADE_BPS = 500n;
+  const contractTradeCap =
+    detail.totalSy > 0n ? (detail.totalSy * CONTRACT_MAX_TRADE_BPS) / 10_000n : 0n;
+  const hbarExceedsContractCap =
+    effectiveSource === "hbar" && contractTradeCap > 0n && syForSwap > contractTradeCap;
+
   /* ─────────────────────────── PT estimate + slippage floor */
 
   const apy = impliedApyPct(detail.lastLnImpliedRate);
@@ -295,11 +309,36 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
 
   const stepAssociate = useCallback(
     async (tokens: `0x${string}`[]): Promise<boolean> => {
-      if (adapter.mode !== "hedera" || !adapter.accountId) return true; // EVM mode: HIP-904 covers it
       try {
         const { getMissingAssociations, associateTokens, evmAddressToTokenId } =
           await import("@/lib/hedera-wallet/associations");
         const ids = tokens.map(evmAddressToTokenId);
+
+        // F10: precheck associations regardless of wallet mode. Previously the
+        // EVM path returned early on the assumption that HIP-904 auto-assoc
+        // always covers it — but EVM-aliased accounts created with
+        // max_automatic_token_associations = 0 silently fail to receive PT/SY
+        // shares, surfacing as an opaque delivery revert. Resolve the account
+        // id from the EVM address via mirror and verify; HIP-904 unlimited
+        // accounts return no missing tokens and pass through untouched.
+        if (adapter.mode !== "hedera" || !adapter.accountId) {
+          if (!user) return true;
+          const acctId = await resolveAccountIdFromEvm(user);
+          if (!acctId) return true; // can't resolve → let HIP-904 / on-chain handle it
+          const missing = await getMissingAssociations(acctId, ids);
+          if (missing.length === 0) return true;
+          // The injected/EVM signer can't submit a Hedera
+          // TokenAssociateTransaction. Tell the user to associate (or enable
+          // auto-association) rather than letting the buy revert on delivery.
+          const msg =
+            "Your account isn't set up to receive these tokens (PT / SY share). " +
+            "Enable automatic token associations in your wallet, or associate " +
+            "them once, then retry.";
+          setWriteError(msg);
+          setStatus({ kind: "error", message: msg, failedAt: 1 });
+          return false;
+        }
+
         const missing = await getMissingAssociations(adapter.accountId, ids);
         if (missing.length === 0) return true;
         setStatus({ kind: "associating", stepIdx: 1 });
@@ -312,7 +351,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         return false;
       }
     },
-    [adapter.mode, adapter.accountId, hedera, setStatus],
+    [adapter.mode, adapter.accountId, hedera, setStatus, user],
   );
 
   const stepZap = useCallback(
@@ -379,20 +418,20 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     async (syIn: bigint): Promise<boolean> => {
       if (!user) return false;
       setStatus({ kind: "buying", stepIdx: 4 });
-      // W2-01: buySyForPt(market, syIn, minPtOut, receiver, deadline) treats the
-      // 3rd arg as the EXACT ptOut to mint (the contract sets ptOut = minPtOut
-      // and refunds unused SY). Passing the SY budget here minted SY-many PT
-      // (~2% over-ask → revert / shortfall). Derive the PT floor from the PT
-      // estimate for THIS syIn (the actual SY acquired may differ from the
-      // pre-zap estimate), then apply the slippage chip.
-      const ptEstNum = ptRate > 0 ? Number(syIn) / Math.max(1e-9, ptRate) : 0;
-      const ptEstForSyIn = ptEstNum > 0 ? BigInt(Math.floor(ptEstNum)) : 0n;
-      const minPtForSwap = (ptEstForSyIn * BigInt(10_000 - slippageBps)) / 10_000n;
+      // BUY-PT-01/F4: buySyForPt(market, syIn, minPtOut, receiver, deadline)
+      // treats the 3rd arg as the EXACT ptOut to mint while capping spend at
+      // syIn — the curve reverts if it needs > syIn SY for that ptOut.
+      // Tightening slippage with the old JS interest model RAISED the exact-
+      // out ask, pushing the curve cost past the budget → revert at 10/25bps.
+      // Invert the live Lens instead: pick the largest ptOut whose preview
+      // cost fits the slippage-adjusted budget. Cost is then guaranteed
+      // <= syIn, so the curve always accepts it.
+      const exactPtOut = await computePtOutForBudget(market, syIn, slippageBps);
       try {
         const { txHash } = await adapter.write({
           kind: "writePeriphery",
           functionName: "buySyForPt",
-          args: [market, syIn, minPtForSwap > 0n ? minPtForSwap : 1n, user, 0n],
+          args: [market, syIn, exactPtOut > 0n ? exactPtOut : 1n, user, 0n],
         });
         setLastTxHash(txHash);
         setStatus({ kind: "done", finalTxHash: txHash });
@@ -404,7 +443,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         return false;
       }
     },
-    [adapter, market, ptRate, slippageBps, setStatus, user],
+    [adapter, market, slippageBps, setStatus, user],
   );
 
   /* ─────────────────────────── chain orchestrators */
@@ -793,6 +832,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
       if (hbarAmount < 6) return "Min 6 HBAR";
+      if (hbarExceedsContractCap) return "Trade too large for pool";
       if (megaZapAvailable) {
         // Fast path. The MegaZap is a single contract call — at most one
         // associate popup beforehand on Hedera mode.
@@ -841,7 +881,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     isConfirmingFinal ||
     !routerDeployed ||
     (effectiveSource === "hbar"
-      ? hbarAmount === 0 || !zapAvailable || hbarBelowFloor
+      ? hbarAmount === 0 || !zapAvailable || hbarBelowFloor || hbarExceedsContractCap
       : parsedSy === 0n || insufficient || sizeLimit.exceeded);
 
   return (
@@ -997,7 +1037,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
             </div>
             <div className="mt-1.5 flex gap-3">
               <a
-                href={`https://hashscan.io/mainnet/transaction/${lastTxHash}`}
+                href={`https://hashscan.io/mainnet/transaction/${hashscanTxId(lastTxHash)}`}
                 target="_blank"
                 rel="noreferrer"
                 className="underline underline-offset-2 hover:text-text"
@@ -1190,4 +1230,122 @@ function HbarInput({
 function shortAddr(addr: string): string {
   if (addr.length <= 12) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+/* ─────────────────────────────────────────────────────── lens quoter */
+
+// Read-only viem client for trade-time Lens inversion (binary search over
+// ptOut needs dynamic iterations, which wagmi's declarative hooks can't do).
+let _lensClient: ReturnType<typeof createPublicClient> | null = null;
+function lensClient() {
+  if (!_lensClient) {
+    _lensClient = createPublicClient({ chain: hederaMainnet, transport: http() });
+  }
+  return _lensClient;
+}
+
+/**
+ * BUY-PT-01/F4 fix — invert the Lens to pick the EXACT ptOut to mint.
+ *
+ * The periphery's `buySyForPt(market, syIn, minPtOut=ptOut, …)` treats arg3 as
+ * the exact PT to mint and caps the SY it may spend at `syIn`. The market
+ * reverts (InsufficientOutput) when the curve needs > syIn SY for that ptOut.
+ * `lens.previewSwapExactSyForPt(market, ptOut)` returns exactly that required
+ * SY (same MarketMath.executeTradeCore path the swap uses), so we pick the
+ * largest ptOut whose preview cost fits the slippage-adjusted budget:
+ *
+ *     previewSwapExactSyForPt(market, ptOut) <= syIn · (10000 - slippageBps)/10000
+ *
+ * Returns 0n if the lens is unreachable / no ptOut fits (caller floors to 1n,
+ * which then trivially passes the curve and just mints minimal PT).
+ */
+async function computePtOutForBudget(
+  market: `0x${string}`,
+  syIn: bigint,
+  slippageBps: number,
+): Promise<bigint> {
+  if (syIn <= 0n) return 0n;
+  const budget = (syIn * BigInt(10_000 - slippageBps)) / 10_000n;
+  if (budget <= 0n) return 0n;
+  const client = lensClient();
+  const preview = (ptOut: bigint) =>
+    client.readContract({
+      abi: lensAbi,
+      address: ADDRESSES.lens,
+      functionName: "previewSwapExactSyForPt",
+      args: [market, ptOut],
+    }) as Promise<bigint>;
+
+  try {
+    // Bracket the search. PT trades near 1:1 with SY, so budget is a good
+    // lower seed; double `hi` until its cost exceeds the budget (or the
+    // preview reverts, which bounds it from above).
+    let lo = 1n;
+    let hi = budget > 1n ? budget : 2n;
+    for (let i = 0; i < 40; i++) {
+      let c: bigint | null = null;
+      try {
+        c = await preview(hi);
+      } catch {
+        c = null; // preview reverted → hi is already past the feasible region
+      }
+      if (c === null || c > budget) break;
+      lo = hi;
+      hi *= 2n;
+    }
+    // Binary search for the largest ptOut with cost <= budget.
+    let best = 0n;
+    while (lo <= hi) {
+      const mid = (lo + hi) / 2n;
+      let cost: bigint;
+      try {
+        cost = await preview(mid);
+      } catch {
+        hi = mid - 1n;
+        continue;
+      }
+      if (cost <= budget) {
+        best = mid;
+        lo = mid + 1n;
+      } else {
+        hi = mid - 1n;
+      }
+    }
+    return best;
+  } catch {
+    return 0n;
+  }
+}
+
+/**
+ * F6 fix — normalize a Hedera consensus tx-id (`0.0.X@S.NS`) into the
+ * dash form HashScan's URL accepts (`0.0.X-S-NS`). The account keeps its
+ * dots; only the timestamp's seconds.nanos dot becomes a dash. EVM hashes
+ * (`0x…`) and already-normalized ids pass through unchanged.
+ */
+function hashscanTxId(raw: string): string {
+  const at = raw.indexOf("@");
+  if (at < 0) return raw;
+  const acct = raw.slice(0, at);
+  const ts = raw.slice(at + 1);
+  return `${acct}-${ts.replace(".", "-")}`;
+}
+
+/**
+ * F10 helper — resolve a `0.0.X` Hedera account id from an EVM address via the
+ * mirror node, so the EVM/injected path can run the same association precheck
+ * the Hedera path does. Returns null if the mirror can't map it (the buy then
+ * proceeds and relies on HIP-904 / on-chain delivery, i.e. unchanged behavior).
+ */
+async function resolveAccountIdFromEvm(evm: `0x${string}`): Promise<string | null> {
+  try {
+    const r = await fetch(
+      `https://mainnet-public.mirrornode.hedera.com/api/v1/accounts/${evm}`,
+    );
+    if (!r.ok) return null;
+    const data = (await r.json()) as { account?: string };
+    return data.account ?? null;
+  } catch {
+    return null;
+  }
 }

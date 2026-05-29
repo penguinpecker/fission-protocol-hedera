@@ -29,11 +29,17 @@ export interface CachedMarket {
 }
 
 // Cache freshness window. Rows older than this are treated as missing so the
-// caller falls through to a live wagmi multicall. Picked at 5 min as a sweet
-// spot between "definitely current" and "cheap to serve". The Vercel cron
-// only runs once a day on the Hobby plan, so without this guard any pool
-// movement (addLiquidity, swap) silently lingered as stale TVL for hours.
-const CACHE_TTL_MS = 5 * 60 * 1000;
+// caller falls through to a live wagmi multicall.
+//
+// F9: this was 5 min, but the refresher (Vercel cron) only runs ONCE A DAY on
+// the Hobby plan. With a 5-min window the cache rows were almost always older
+// than the TTL, so every list view discarded the whole cache and fell through
+// to a live Hashio multicall — the cached path was effectively dead. Matching
+// the TTL to the actual refresh cadence (~24h, with a little slack) means a
+// normally-refreshed row is accepted and served from cache, which is the point
+// of the cache. Genuinely stale data (cron stalled for >25h) still falls
+// through to on-chain, and an empty cache still triggers the on-chain fallback.
+const CACHE_TTL_MS = 25 * 60 * 60 * 1000; // ~25h — one daily refresh + slack
 
 export function useCachedMarkets(opts: { includeArchived?: boolean } = {}) {
   const [markets, setMarkets] = useState<CachedMarket[] | null>(null);

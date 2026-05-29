@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useChainId } from "wagmi";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
+import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { WalletGate } from "@/components/WalletGate";
@@ -15,7 +16,7 @@ import { useWatchlist } from "@/hooks/useWatchlist";
 import { impliedApyPct, daysUntil, formatCompact } from "@/hooks/useMarkets";
 import { ptToSyRate, ytToSyRate, type UserPosition } from "@/components/MarketPositionCard";
 import { getMarketDisplay } from "@/lib/markets-metadata";
-import { ADDRESSES, isDeployed } from "@/lib/addresses";
+import { ADDRESSES, HEDERA_TOKENS, USDC_DECIMALS, WHBAR_DECIMALS, isDeployed } from "@/lib/addresses";
 
 /**
  * Terminal-style portfolio page. Sections:
@@ -46,6 +47,8 @@ type PosKind = "SY" | "PT" | "YT" | "LP";
 
 interface PortfolioRow {
   market: `0x${string}`;
+  /** HTS SY-share token for this market — needed to pre-associate before a claim. */
+  syShare: `0x${string}`;
   symbol: string;
   kind: PosKind;
   amountRaw: bigint;
@@ -352,6 +355,7 @@ function PositionRow({ row, user }: { row: PortfolioRow; user: `0x${string}` | u
   // dead-linking to a page with no claim/redeem action. Sell/Add/Remove stay
   // navigation links to the existing strategy forms (those forms do the work).
   const adapter = useWalletAdapter();
+  const hedera = useHederaWallet();
   const base = `/markets/${row.market}`;
   const [txState, setTxState] = useState<"idle" | "pending" | "done" | "error">("idle");
   const [txHash, setTxHash] = useState<string | undefined>(undefined);
@@ -385,6 +389,14 @@ function PositionRow({ row, user }: { row: PortfolioRow; user: `0x${string}` | u
     setTxErr(null);
     setTxState("pending");
     try {
+      // SELL-01: associate USDC + WHBAR (claimRewards) and the SY-share
+      // (claimAmmRewards) before claiming, or a limited-association wallet
+      // reverts TOKEN_NOT_ASSOCIATED at consensus.
+      await ensureRewardAssociations(adapter.mode, adapter.accountId, hedera.getConnector(), [
+        HEDERA_TOKENS.USDC,
+        HEDERA_TOKENS.WHBAR,
+        row.syShare,
+      ]);
       const a = await adapter.write({ kind: "claimAmmRewards", market: row.market, receiver: user });
       setTxHash(a.txHash);
       const b = await adapter.write({ kind: "claimRewards", market: row.market, receiver: user });
@@ -394,7 +406,7 @@ function PositionRow({ row, user }: { row: PortfolioRow; user: `0x${string}` | u
       setTxErr(e instanceof Error ? e.message : String(e));
       setTxState("error");
     }
-  }, [adapter, row.market, user]);
+  }, [adapter, hedera, row.market, row.syShare, user]);
 
   interface RowAction {
     label: string;
@@ -483,7 +495,7 @@ function PositionRow({ row, user }: { row: PortfolioRow; user: `0x${string}` | u
           </div>
           {txState === "done" && txHash && (
             <a
-              href={`https://hashscan.io/mainnet/transaction/${txHash}`}
+              href={hashscanTxUrl(txHash)}
               target="_blank"
               rel="noreferrer"
               className="font-mono text-[10px] text-success underline underline-offset-2 hover:text-white"
@@ -560,6 +572,12 @@ function PendingClaimsCard({
   user: `0x${string}` | undefined;
 }) {
   const adapter = useWalletAdapter();
+  const hedera = useHederaWallet();
+  // SELL-01: the live market's SY-share address, so "Claim All" can
+  // pre-associate it (alongside USDC/WHBAR) before claiming.
+  const { data: marketDetail } = useMarketDetail(
+    isDeployed(ADDRESSES.market) ? ADDRESSES.market : undefined,
+  );
   // Yield is paid in SY shares; at claim time those decompose into the SY's
   // underlying V3 LP balance (USDC + WHBAR). We show the equivalent each
   // would yield right now, derived from the V3 NFT amounts / total supply.
@@ -582,6 +600,18 @@ function PendingClaimsCard({
     setTxErr(null);
     setTxState("pending");
     try {
+      // SELL-01: associate the reward tokens this claim delivers before firing
+      // it. USDC + WHBAR come from claimRewards; the SY-share from
+      // claimAmmRewards. Skipping this reverts TOKEN_NOT_ASSOCIATED at
+      // consensus on a limited-association wallet (invisible to eth_call).
+      const rewardTokens: `0x${string}`[] = [HEDERA_TOKENS.USDC, HEDERA_TOKENS.WHBAR];
+      if (marketDetail?.syShare) rewardTokens.push(marketDetail.syShare);
+      await ensureRewardAssociations(
+        adapter.mode,
+        adapter.accountId,
+        hedera.getConnector(),
+        rewardTokens,
+      );
       const a = await adapter.write({ kind: "claimAmmRewards", market: ADDRESSES.market, receiver: user });
       setTxHash(a.txHash);
       const b = await adapter.write({ kind: "claimRewards", market: ADDRESSES.market, receiver: user });
@@ -591,7 +621,7 @@ function PendingClaimsCard({
       setTxErr(e instanceof Error ? e.message : String(e));
       setTxState("error");
     }
-  }, [adapter, user]);
+  }, [adapter, hedera, marketDetail?.syShare, user]);
 
   return (
     <div className="flex flex-col gap-px border border-border bg-border">
@@ -615,7 +645,7 @@ function PendingClaimsCard({
         </button>
         {txState === "done" && txHash && (
           <a
-            href={`https://hashscan.io/mainnet/transaction/${txHash}`}
+            href={hashscanTxUrl(txHash)}
             target="_blank"
             rel="noreferrer"
             className="mt-2 block font-mono text-[10px] text-success underline underline-offset-2 hover:text-white"
@@ -782,6 +812,67 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
   );
 }
 
+/**
+ * F6: build a working HashScan transaction URL from whatever the adapter
+ * returns as `txHash`.
+ *
+ *   - Hedera-native mode returns a Hedera transaction ID in the form
+ *     `0.0.X@SECONDS.NANOS`. HashScan's /transaction/ route 400s on that raw
+ *     id — it wants `0.0.X-SECONDS-NANOS` (the `@` and the seconds/nanos dot
+ *     become dashes; the payer's `0.0.` dots stay).
+ *   - EVM mode returns a `0x…` hash, which has no `@` and is already valid.
+ *
+ * Splitting on `@` handles both: with no `@` we pass the value through
+ * untouched; with one we dash-join the payer and the timestamp.
+ */
+function hashscanTxUrl(txHash: string): string {
+  const [acct, ts] = txHash.split("@");
+  const id = ts === undefined ? acct : `${acct}-${ts.replace(".", "-")}`;
+  return `https://hashscan.io/mainnet/transaction/${id}`;
+}
+
+/**
+ * SELL-01: associate the reward tokens a claim will deliver BEFORE claiming.
+ *
+ * `claimRewards` safe-transfers USDC (+ WHBAR) to the user and `claimAmmRewards`
+ * delivers the SY-share token. On a limited-association wallet (HIP-904
+ * `max_automatic_token_associations: 0`) a transfer of an un-associated token
+ * reverts with TOKEN_NOT_ASSOCIATED at consensus — invisible to the eth_call
+ * gas estimate, so the claim silently fails in the wallet. None of the buy
+ * flows pre-associate USDC, so a wallet that only ever bought PT/YT/LP can hit
+ * this. We batch the missing ones into a single associate prompt (mirrors the
+ * buy forms' `stepAssociate`).
+ *
+ * EVM mode is a no-op: EVM-aliased accounts get HIP-904 unlimited associations,
+ * so the receiver side is already covered.
+ */
+async function ensureRewardAssociations(
+  adapterMode: "evm" | "hedera" | null,
+  accountId: string | null,
+  connector: unknown,
+  tokens: `0x${string}`[],
+): Promise<void> {
+  if (adapterMode !== "hedera" || !accountId) return;
+  const { getMissingAssociations, associateTokens, evmAddressToTokenId } =
+    await import("@/lib/hedera-wallet/associations");
+  // Some tokens (e.g. an un-resolved SY-share) may not be long-zero; skip
+  // those rather than throwing — the contract still reverts clearly if one is
+  // genuinely missing, and USDC/WHBAR (the at-risk ones) always resolve.
+  const ids = tokens
+    .map((t) => {
+      try {
+        return evmAddressToTokenId(t);
+      } catch {
+        return null;
+      }
+    })
+    .filter((t): t is string => t !== null);
+  if (ids.length === 0) return;
+  const missing = await getMissingAssociations(accountId, ids);
+  if (missing.length === 0) return;
+  await associateTokens(connector, accountId, missing);
+}
+
 function formatAgo(ms: number): string {
   const diff = Date.now() - ms;
   if (diff < 60_000) return "just now";
@@ -898,6 +989,18 @@ function buildRows(
 
   const rows: PortfolioRow[] = [];
 
+  // F7: the real accrued rewards come straight off the position object, which
+  // `useUserPosition` populates from market.previewRewards (USDC 6dec + WHBAR
+  // 8dec) plus the Lens AMM-fee pending. `UserPosition` (owned by
+  // MarketPositionCard) doesn't declare these fields, but the runtime object
+  // carries them — read them through a narrow optional view so this compiles
+  // regardless of the interface shape. Exact field names from useMarket.ts:
+  // `unclaimedRewardsUsd` (number) + `unclaimedRewardsRaw.{usdc,whbar}` (bigints).
+  const f7 = position as Partial<{
+    unclaimedRewardsUsd: number;
+    unclaimedRewardsRaw: { usdc: bigint; whbar: bigint; pendingPtAmm: bigint; pendingYtAmm: bigint };
+  }>;
+
   // SY row — loose SY balance in wallet (not in LP, not split into PT/YT).
   // Value 1:1 in SY by definition. Surfaced so users can see + redeem to
   // HBAR (or use as input to Buy PT / YT / LP) instead of leaving it dust.
@@ -905,6 +1008,7 @@ function buildRows(
     const sySy = Number(position.sy) / div;
     rows.push({
       market,
+      syShare: detail.syShare,
       symbol,
       kind: "SY",
       amountRaw: position.sy,
@@ -925,6 +1029,7 @@ function buildRows(
     const unrealisedSy = projectedSy - currentSy;
     rows.push({
       market,
+      syShare: detail.syShare,
       symbol,
       kind: "PT",
       amountRaw: position.pt,
@@ -939,16 +1044,21 @@ function buildRows(
 
   // YT row — value decays to 0 at maturity. Claimable yield gets its own
   // override on the unrealised column so the user sees the $-equivalent.
-  if (position.yt > 0n || position.claimableYield > 0n) {
+  if (position.yt > 0n || position.claimableYield > 0n || (f7.unclaimedRewardsUsd ?? 0) > 0) {
     const ytCount = Number(position.yt) / div;
     const currentSy = ytCount * ytRate;
     const claimableSy = Number(position.claimableYield) / div;
+    // F7: show the real accrued rewards (previewRewards USDC/WHBAR + AMM-fee
+    // pending) when available; fall back to the legacy per-share estimate.
     const usdClaim =
-      usdPerShare !== undefined
-        ? Number(position.claimableYield) * usdPerShare
-        : undefined;
+      f7.unclaimedRewardsUsd !== undefined
+        ? f7.unclaimedRewardsUsd
+        : usdPerShare !== undefined
+          ? Number(position.claimableYield) * usdPerShare
+          : undefined;
     rows.push({
       market,
+      syShare: detail.syShare,
       symbol,
       kind: "YT",
       amountRaw: position.yt,
@@ -973,6 +1083,7 @@ function buildRows(
     const parSy = (userPtInLp + userSyInLp) / div;
     rows.push({
       market,
+      syShare: detail.syShare,
       symbol,
       kind: "LP",
       amountRaw: position.lp,
@@ -1003,20 +1114,33 @@ function buildRows(
 
   const ptPayoutUsd =
     usdPerShare !== undefined ? Number(position.pt) * usdPerShare : undefined;
+
+  // F7: the real accrued rewards come off the position object (see `f7` above).
+  // The old path multiplied an always-0 `previewYield`-derived claimableYield by
+  // a per-share price, so the column read $0. We read the explicit F7 fields and
+  // only fall back to the legacy per-share estimate if they aren't present yet.
   const unclaimedYieldUsd =
-    usdPerShare !== undefined
-      ? Number(position.claimableYield) * usdPerShare
-      : undefined;
-  // Per-asset breakdown of the unclaimed yield — what redeeming this SY
-  // amount through the V3 LP would land in the user's wallet.
+    f7.unclaimedRewardsUsd !== undefined
+      ? f7.unclaimedRewardsUsd
+      : usdPerShare !== undefined
+        ? Number(position.claimableYield) * usdPerShare
+        : undefined;
+
+  // Per-asset breakdown of the unclaimed yield. Prefer the real raw reward
+  // amounts (USDC 6dec, WHBAR 8dec) converted to human units; fall back to the
+  // legacy per-share estimate when the F7 raw fields aren't available.
   const unclaimedUsdc =
-    usdcPerShare !== undefined
-      ? Number(position.claimableYield) * usdcPerShare
-      : undefined;
+    f7.unclaimedRewardsRaw !== undefined
+      ? Number(f7.unclaimedRewardsRaw.usdc) / 10 ** USDC_DECIMALS
+      : usdcPerShare !== undefined
+        ? Number(position.claimableYield) * usdcPerShare
+        : undefined;
   const unclaimedWhbar =
-    whbarPerShare !== undefined
-      ? Number(position.claimableYield) * whbarPerShare
-      : undefined;
+    f7.unclaimedRewardsRaw !== undefined
+      ? Number(f7.unclaimedRewardsRaw.whbar) / 10 ** WHBAR_DECIMALS
+      : whbarPerShare !== undefined
+        ? Number(position.claimableYield) * whbarPerShare
+        : undefined;
 
   return {
     rows,

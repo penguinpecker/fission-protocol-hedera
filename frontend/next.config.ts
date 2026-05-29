@@ -1,11 +1,24 @@
 import type { NextConfig } from "next";
 
-// LP-2: Content-Security-Policy — ENFORCED.
+// LP-2: Content-Security-Policy — REPORT-ONLY (do NOT enforce).
 //
-// Verified clean (zero violations / zero blocked requests) via browser console
-// across home / markets / market-detail / profile + the full wallet-connect modal
-// flow (HashPack connect → WC relay + verify iframe) on 2026-05-30, then flipped
-// from report-only to enforce.
+// This policy ships as `Content-Security-Policy-Report-Only` (see the header
+// block below). It MUST stay report-only. Enforcing it (attempted 2026-05-30)
+// broke the wallet: the Hedera SDK connects DIRECTLY to *.swirldslabs.com
+// consensus nodes during a signed tx's receipt/health query, and those calls
+// (plus Google Fonts) were blocked under enforcement → the signature prompt
+// never appeared and the dApp was unusable.
+//
+// A browser-console scan only ever exercised the wallet-connect MODAL (HashPack
+// connect → WC relay + verify iframe), NOT a real signed tx + receipt query, so
+// it reported "clean" and gave a false sense that enforcement was safe. It is
+// not. Report-only keeps full violation visibility without blocking any request,
+// so the dApp works while we still see anything the policy would flag.
+//
+// Future maintainer: do NOT switch the header key to `Content-Security-Policy`.
+// A clean modal scan is insufficient evidence — only flip to enforce after a
+// FULL real-tx test (buy/sell + on-chain receipt query through *.swirldslabs.com)
+// reports zero blocked requests, which it currently does not.
 //
 // connect-src must cover every origin the app talks to at runtime:
 //   - 'self'                          : our own API routes
