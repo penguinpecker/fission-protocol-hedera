@@ -371,6 +371,16 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
       // the PT-sale's SY output, so minSyOut = that × (1 − slippage) is always
       // reachable.
       const minSyOut = await computeMinSyOutForYt(market, syIn, slippageBps);
+      // BUYLP-2: on a Lens-read failure computeMinSyOutForYt returns the 0n
+      // sentinel. Previously the fallback was minSyOut=1, leaving the PT-resale
+      // refund leg with no slippage protection. Abort with a clear error
+      // instead of submitting an unprotected trade.
+      if (minSyOut <= 0n) {
+        const msg = "Price quoter unreachable — couldn't set slippage protection. Please try again in a moment.";
+        setWriteError(msg);
+        setStatus({ kind: "error", message: msg, failedAt: 4 });
+        return false;
+      }
       try {
         const { txHash } = await adapter.write({
           kind: "writePeriphery",
@@ -1137,15 +1147,18 @@ function lensClient() {
  * buySyForYt sells the PT half for SY and reverts if that SY output is below
  * `minSyOutFromPtSale`. `lens.previewSwapExactPtForSy(market, syIn)` returns
  * exactly that SY output (same MarketMath path), so flooring it by the slippage
- * chip yields a target that's always reachable. Falls back to 1n if the lens
- * is unreachable (the contract then accepts any positive SY output).
+ * chip yields a target that's always reachable.
+ *
+ * BUYLP-2: returns the 0n sentinel when the lens is unreachable (or syIn is
+ * non-positive). The caller MUST treat 0n as "abort" rather than submitting an
+ * unprotected (minSyOut=1) refund leg.
  */
 async function computeMinSyOutForYt(
   market: `0x${string}`,
   syIn: bigint,
   slippageBps: number,
 ): Promise<bigint> {
-  if (syIn <= 0n) return 1n;
+  if (syIn <= 0n) return 0n;
   try {
     const syOut = (await lensClient().readContract({
       abi: lensAbi,
@@ -1154,9 +1167,9 @@ async function computeMinSyOutForYt(
       args: [market, syIn],
     })) as bigint;
     const floor = (syOut * BigInt(10_000 - slippageBps)) / 10_000n;
-    return floor > 0n ? floor : 1n;
+    return floor; // 0n if the preview itself returned 0 → caller aborts
   } catch {
-    return 1n;
+    return 0n;
   }
 }
 

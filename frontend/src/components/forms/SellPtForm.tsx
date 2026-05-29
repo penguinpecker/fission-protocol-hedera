@@ -24,6 +24,7 @@ import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
 import { lensAbi } from "@/lib/abis";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
+import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
 import {
@@ -53,6 +54,7 @@ type FlowKind =
 
 export function SellPtForm({ market, detail, user }: Props) {
   const adapter = useWalletAdapter();
+  const hedera = useHederaWallet();
   const { usdPerShare } = useSyValueUsd(detail.sy);
   const hbarUsd = useHbarUsd();
 
@@ -214,13 +216,16 @@ export function SellPtForm({ market, detail, user }: Props) {
   // W2-07: minSyOut from the preview × (1 − slippage), no longer a decorative 1n.
   const minSyOut = (syEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
-  // F3: the Tx2 unzap (SY → HBAR) needs a trustworthy price to set minHbarOut.
-  // When CoinGecko is down (usdPerShare / hbarUsd undefined), the floor used to
-  // collapse to 1n — sandwich-exploitable (the inner USDC→WHBAR leg uses
-  // amountOutMinimum:0, so the whole unzap can settle for ~1 tinybar). Rather
-  // than ship a 1n floor on a value leg, BLOCK the sell: there's a real SY→HBAR
-  // value leg here we can't price safely. Only matters once there's an amount
-  // to sell.
+  // F3/F4: the Tx2 unzap (SY → HBAR) needs a trustworthy price to set
+  // minHbarOut. A 1n floor is NOT acceptable here — the inner USDC→WHBAR leg
+  // uses amountOutMinimum:0, so a 1n outer floor is sandwich-exploitable.
+  //
+  // F4: `usdPerShare` and `hbarUsd` now carry a CoinGecko-INDEPENDENT fallback
+  // derived from the SaucerSwap V2 USDC/WHBAR pool slot0 (see useSyValueUsd).
+  // So when CoinGecko is merely blocked (uBlock/Brave) or 429ing, the on-chain
+  // price keeps both defined and the sell PROCEEDS with a real on-chain-derived
+  // minHbarOut. We only end up here — and hard-block — when BOTH CoinGecko AND
+  // the on-chain pool read fail. Only matters once there's an amount to sell.
   const priceFeedUnavailable =
     parsedPt > 0n && (usdPerShare === undefined || hbarUsd === undefined);
 
@@ -261,6 +266,33 @@ export function SellPtForm({ market, detail, user }: Props) {
     },
     [ptRead],
   );
+
+  // SELL-NO-SYSHARE-ASSOC: Tx1 (sellPtForSy) ends by delivering SY-share to the
+  // user via safeTransfer. On a HIP-904 limited-association wallet (max_auto=0)
+  // that has never held SY-share, that transfer reverts TOKEN_NOT_ASSOCIATED at
+  // consensus — invisible to eth_call, so it surfaces only as a failed tx. The
+  // Buy PT flow pre-associates [syShare,…]; the sell path did not. Run the same
+  // precheck before Tx1. No-op in EVM mode and for HIP-904-unlimited wallets
+  // (getMissingAssociations short-circuits on max_auto === -1).
+  const runAssociateSyShare = useCallback(async (): Promise<boolean> => {
+    if (adapter.mode !== "hedera" || !adapter.accountId) return true; // EVM: no-op.
+    try {
+      const { getMissingAssociations, associateTokens, evmAddressToTokenId } =
+        await import("@/lib/hedera-wallet/associations");
+      const ids = [detail.syShare].map(evmAddressToTokenId);
+      const missing = await getMissingAssociations(adapter.accountId, ids);
+      if (missing.length > 0) {
+        await associateTokens(hedera.getConnector(), adapter.accountId, missing);
+        await ptRead.refetch();
+      }
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setWriteError(msg);
+      setFlowState({ kind: "error", message: msg, failedAt: "sell" });
+      return false;
+    }
+  }, [adapter.mode, adapter.accountId, detail.syShare, hedera, ptRead]);
 
   // W2-04: one-time operator grant on the market. The Periphery's sellPtForSy
   // calls market.swapExactPtForSyFor(user, …) and reverts (NotAuthorized) until
@@ -342,11 +374,12 @@ export function SellPtForm({ market, detail, user }: Props) {
     // User must have approved SY-share → Periphery (one-time setup, runApproveSy).
     if (!user || sySharesToUnzap === 0n) return false;
 
-    // F3 + SELL-03: derive minHbarOut from the REALIZED SY-share delta (not the
-    // pre-trade estimate) using the live price. If no trustworthy price is
-    // available (CoinGecko down), BLOCK the unzap rather than shipping a 1n
-    // floor — a 1n floor on this value leg is sandwich-exploitable (the inner
-    // USDC→WHBAR swap uses amountOutMinimum:0 and would accept ~1 tinybar).
+    // F3 + F4 + SELL-03: derive minHbarOut from the REALIZED SY-share delta (not
+    // the pre-trade estimate) using the live price. `usdPerShare`/`hbarUsd` carry
+    // a SaucerSwap-pool on-chain fallback (F4), so CoinGecko being blocked no
+    // longer trips this. We only reach this guard when BOTH CoinGecko AND the
+    // on-chain pool read failed — then BLOCK rather than ship a 1n floor (the
+    // inner USDC→WHBAR swap uses amountOutMinimum:0 and would accept ~1 tinybar).
     if (usdPerShare === undefined || hbarUsd === undefined) {
       const msg =
         "Price feed unavailable — can't safely set a minimum HBAR floor for the SY→HBAR conversion. Your PT is now SY in your wallet; try the conversion again once pricing is back.";
@@ -403,6 +436,9 @@ export function SellPtForm({ market, detail, user }: Props) {
     if (flowState.kind === "error") {
       // Resume from the failed step, walking the rest of the chain.
       if (flowState.failedAt === "grant") {
+        // SELL-NO-SYSHARE-ASSOC: a "grant"/"sell"-tagged failure may actually be
+        // a missing SY-share association — re-run the (idempotent) precheck.
+        if (!(await runAssociateSyShare())) return;
         const ok = await runGrant();
         if (!ok) return;
         await runSellAndUnzap();
@@ -413,6 +449,9 @@ export function SellPtForm({ market, detail, user }: Props) {
         if (syOut === null) return;
         await runUnzap(syOut);
       } else if (flowState.failedAt === "sell") {
+        // SELL-NO-SYSHARE-ASSOC: re-run the idempotent association precheck — a
+        // sell-tagged failure is most often a missing SY-share association.
+        if (!(await runAssociateSyShare())) return;
         const syOut = await runSell();
         if (syOut === null) return;
         await runUnzap(syOut);
@@ -425,6 +464,11 @@ export function SellPtForm({ market, detail, user }: Props) {
       return;
     }
 
+    // SELL-NO-SYSHARE-ASSOC: associate SY-share before anything else (Tx1
+    // delivers it; a limited-association wallet would otherwise revert at
+    // consensus). No-op in EVM mode / for HIP-904-unlimited wallets.
+    if (!(await runAssociateSyShare())) return;
+
     // W2-04: grant operator first if the market doesn't yet authorize the
     // Periphery (one-time per wallet). SELL-02: there is NO PT approve — the
     // sell wipes PT directly, so the only token approve is SY-share (handled
@@ -434,7 +478,7 @@ export function SellPtForm({ market, detail, user }: Props) {
       if (!ok) return;
     }
     await runSellAndUnzap();
-  }, [user, parsedPt, peripheryDeployed, expired, insufficient, sizeLimit.exceeded, flowState, needsGrant, runGrant, runApproveSy, runSell, runUnzap, runSellAndUnzap, readSyShareBalance, syEstimate]);
+  }, [user, parsedPt, peripheryDeployed, expired, insufficient, sizeLimit.exceeded, flowState, needsGrant, runAssociateSyShare, runGrant, runApproveSy, runSell, runUnzap, runSellAndUnzap, readSyShareBalance, syEstimate]);
 
   const isPending =
     adapter.isWritePending ||

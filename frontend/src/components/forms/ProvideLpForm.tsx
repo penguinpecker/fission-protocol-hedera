@@ -78,23 +78,14 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
             functionName: "allowance",
             args: [user, market],
           } as const,
-          {
-            abi: [
-              {
-                type: "function",
-                name: "allowance",
-                stateMutability: "view",
-                inputs: [
-                  { name: "owner", type: "address" },
-                  { name: "spender", type: "address" },
-                ],
-                outputs: [{ type: "uint256" }],
-              },
-            ] as const,
-            address: detail.pt,
-            functionName: "allowance",
-            args: [user, market],
-          } as const,
+          // F3: NO PT→market allowance read. The SY-mode Add-LP self-calls
+          // market.addLiquidity which pulls PT via _pullPtFrom → _wipeFrozen
+          // (the market holds PT's WIPE key) — there is NO transferFrom on PT,
+          // so a PT allowance is never consumed. PT is also freeze-by-delivery
+          // (_ferryFrozen), so an HTS approve from a frozen holder reverts
+          // ACCOUNT_FROZEN_FOR_TOKEN and dead-locks the flow. Same trap that was
+          // already fixed in SellPtForm; this read + approve were the only thing
+          // dragging the broken PT-approve into the Add-LP chain.
           // BUY-LP-02: SY-share → Periphery allowance. The HBAR-source Add-LP
           // flow's Tx2 (buySyForLp) pulls the zapped SY via transferFrom; without
           // this approve it reverts. (SY-mode approves SY → market instead.)
@@ -129,9 +120,9 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
   const ptBalance = pluck<bigint>(balRead.data?.[0] as never) ?? 0n;
   const lpBalance = pluck<bigint>(balRead.data?.[1] as never) ?? 0n;
   const syAllowance = pluck<bigint>(balRead.data?.[2] as never) ?? 0n;
-  const ptAllowance = pluck<bigint>(balRead.data?.[3] as never) ?? 0n;
-  const syShareToPeripheryAllowance = pluck<bigint>(balRead.data?.[4] as never) ?? 0n;
-  const onChainSyShare = pluck<bigint>(balRead.data?.[5] as never) ?? 0n;
+  // F3: PT allowance read removed — the market WIPES PT (no transferFrom path).
+  const syShareToPeripheryAllowance = pluck<bigint>(balRead.data?.[3] as never) ?? 0n;
+  const onChainSyShare = pluck<bigint>(balRead.data?.[4] as never) ?? 0n;
 
   return (
     <div className="flex flex-col gap-3">
@@ -174,7 +165,6 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
           syBalance={syBalance}
           ptBalance={ptBalance}
           syAllowance={syAllowance}
-          ptAllowance={ptAllowance}
           syShareToPeripheryAllowance={syShareToPeripheryAllowance}
           onChainSyShare={onChainSyShare}
           refetchAllowances={balRead.refetch}
@@ -184,7 +174,9 @@ export function ProvideLpForm({ market, detail, user, syBalance }: Props) {
             for (let i = 0; i < 5; i++) {
               try {
                 const r = await balRead.refetch();
-                const fresh = pluck<bigint>(r.data?.[5] as never) ?? preZap;
+                // F3: SY-share balanceOf moved to index [4] after removing the
+                // PT-allowance read.
+                const fresh = pluck<bigint>(r.data?.[4] as never) ?? preZap;
                 if (fresh > preZap) return fresh - preZap;
               } catch {
                 /* retry */
@@ -218,7 +210,6 @@ interface AddProps {
   syBalance: bigint;
   ptBalance: bigint;
   syAllowance: bigint;
-  ptAllowance: bigint;
   /** SY-share → Periphery allowance (HBAR-source Tx2 buySyForLp transferFrom). */
   syShareToPeripheryAllowance: bigint;
   /** Current on-chain SY-share balance — pre-zap snapshot fallback. */
@@ -239,7 +230,6 @@ function AddLp({
   syBalance,
   ptBalance,
   syAllowance,
-  ptAllowance,
   syShareToPeripheryAllowance,
   onChainSyShare,
   refetchAllowances,
@@ -260,14 +250,14 @@ function AddLp({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
   // Hard re-entry guard. setIsSubmitting briefly toggles false between each
-  // leg of the chained flow (approve SY → approve PT → addLiquidity), so a
-  // user click landing during that gap would launch a second concurrent
-  // chain and produce a duplicate addLiquidity. Without this, after a
-  // successful add the user could double-click and the second click would
-  // skip approves (allowance already MAX) and submit a second addLiquidity
-  // that reverts on `safeTransferFrom(PT)` because TX1 already pulled all
-  // their PT. Use a ref so the check is synchronous and doesn't need a
-  // re-render to apply. Observed live: tx 0.0.10457309@1779479920.
+  // leg of the chained flow (approve SY → addLiquidity; F3 dropped the broken
+  // PT-approve leg), so a user click landing during that gap would launch a
+  // second concurrent chain and produce a duplicate addLiquidity. Without this,
+  // after a successful add the user could double-click and the second click
+  // would skip the SY approve (allowance already MAX) and submit a second
+  // addLiquidity that reverts because TX1 already wiped all their PT. Use a ref
+  // so the check is synchronous and doesn't need a re-render to apply. Observed
+  // live: tx 0.0.10457309@1779479920.
   const chainInFlight = useRef(false);
 
   const useWagmiReceipt = adapter.mode === "evm";
@@ -328,7 +318,9 @@ function AddLp({
   const insufficientSy = parsedSy > syBalance;
   const insufficientPt = parsedPt > ptBalance;
   const needsSyApprove = parsedSy > 0n && syAllowance < parsedSy;
-  const needsPtApprove = parsedPt > 0n && ptAllowance < parsedPt;
+  // F3: no PT approve. market.addLiquidity WIPES PT (no transferFrom path) and
+  // PT is freeze-by-delivery — an HTS approve from a frozen holder reverts
+  // ACCOUNT_FROZEN_FOR_TOKEN. Only the SY-share → market approve is real.
   const noInput = parsedSy === 0n || parsedPt === 0n;
 
   // Need PT to add proportional liquidity. The user must already hold PT
@@ -374,23 +366,10 @@ function AddLp({
     }
   };
 
-  const onApprovePt = async (): Promise<boolean> => {
-    try {
-      const { txHash: hash } = await wrap(() =>
-        adapter.write({
-          kind: "approveErc20",
-          token: detail.pt,
-          spender: market,
-          amount: MAX_HTS_APPROVE,
-        }),
-      );
-      setTxHash(hash as `0x${string}`);
-      await refetchAllowances();
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  // F3: onApprovePt removed entirely. The SY-mode Add-LP self-calls
+  // market.addLiquidity, which pulls PT via _pullPtFrom → _wipeFrozen (WIPE
+  // key, no transferFrom) — there is no PT allowance to set, and an HTS approve
+  // from the freeze-on-delivery PT holder reverts ACCOUNT_FROZEN_FOR_TOKEN.
 
   // BUY-LP-02: the HBAR-source flow's Tx2 (buySyForLp) pulls the zapped SY via
   // transferFrom on the PERIPHERY (not the market). Approve SY-share → Periphery
@@ -479,15 +458,14 @@ function AddLp({
         await onZapHbarToLp();
         return;
       }
+      // F3: SY-mode Add-LP now chains ONLY the SY-share → market approve, then
+      // addLiquidity. The old PT-approve leg is gone — addLiquidity wipes PT
+      // (no transferFrom), and approving frozen PT reverted ACCOUNT_FROZEN_FOR_
+      // TOKEN, dead-locking the chain before it ever reached addLiquidity.
       const doSyApprove = needsSyApprove;
-      const doPtApprove = needsPtApprove;
 
       if (doSyApprove) {
         const ok = await onApproveSy();
-        if (!ok) return;
-      }
-      if (doPtApprove) {
-        const ok = await onApprovePt();
         if (!ok) return;
       }
       const addOk = await onAdd();
@@ -657,10 +635,10 @@ function AddLp({
       let preZapSy: bigint = onChainSyShare;
       try {
         const rb = await refetchAllowances();
-        // refetchAllowances returns the wagmi query result; index [5] is the
-        // SY-share balanceOf entry added to balRead.
+        // refetchAllowances returns the wagmi query result; index [4] is the
+        // SY-share balanceOf entry (was [5] before the F3 PT-allowance removal).
         const fresh = (rb as { data?: ReadonlyArray<{ status: string; result?: unknown }> })
-          ?.data?.[5];
+          ?.data?.[4];
         if (fresh?.status === "success") preZapSy = fresh.result as bigint;
       } catch {
         /* fall back to cached */
@@ -743,7 +721,7 @@ function AddLp({
                 <StatusPill tone="info">Price loading</StatusPill>
               )}
               <StatusPill tone="neutral">{ratioLabel}</StatusPill>
-              {(needsSyApprove || needsPtApprove) && (
+              {needsSyApprove && (
                 <StatusPill tone="warning">Needs approval</StatusPill>
               )}
             </>
@@ -1021,14 +999,12 @@ function AddLp({
                             ? "Waiting for confirmation…"
                             : needsSyApprove
                               ? "Approve SY for Router"
-                              : needsPtApprove
-                                ? "Approve PT for Router"
-                                : "Add liquidity"}
+                              : "Add liquidity"}
         </button>
 
-        {effectiveSource === "sy" && (needsSyApprove || needsPtApprove) && !noInput && (
+        {effectiveSource === "sy" && needsSyApprove && !noInput && (
           <p className="mt-2 font-mono text-[10px] leading-relaxed text-textDim">
-            Two approvals (SY + PT for the Router), then the add-liquidity tx. One HashPack popup each.
+            One SY approval, then the add-liquidity tx. (PT needs no approval — the market wipes it directly.) One HashPack popup each.
           </p>
         )}
         {effectiveSource === "hbar" && hbarAmount > 0 && (
@@ -1094,6 +1070,7 @@ interface RemoveProps {
 }
 
 function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
+  const hedera = useHederaWallet();
   const { usdPerShare } = useSyValueUsd(detail.sy);
   const hbarUsd = useHbarUsd();
   const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
@@ -1294,6 +1271,22 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
   const onRemove = async (): Promise<boolean> => {
     if (!user || parsedLp === 0n || !routerDeployed || insufficientLp) return false;
     try {
+      // SELL-NO-SYSHARE-ASSOC: Tx1 (sellLpForSy / removeLiquidity) delivers
+      // SY-share to the user via safeTransfer. On a HIP-904 limited-association
+      // wallet (max_auto=0) that has never held SY-share, that transfer reverts
+      // TOKEN_NOT_ASSOCIATED at consensus (invisible to eth_call). Pre-associate
+      // it the same way the Buy forms do. No-op in EVM mode and for HIP-904-
+      // unlimited wallets (getMissingAssociations short-circuits on -1).
+      if (adapter.mode === "hedera" && adapter.accountId) {
+        const { getMissingAssociations, associateTokens, evmAddressToTokenId } =
+          await import("@/lib/hedera-wallet/associations");
+        const ids = [detail.syShare].map(evmAddressToTokenId);
+        const missing = await getMissingAssociations(adapter.accountId, ids);
+        if (missing.length > 0) {
+          await wrap(() => associateTokens(hedera.getConnector(), adapter.accountId!, missing));
+        }
+      }
+
       // Snapshot SY-share balance pre-Tx1 so Tx2 unzaps the exact delta (W2-02).
       const preSell = await readSyShareBalance();
 

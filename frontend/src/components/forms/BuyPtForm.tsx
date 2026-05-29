@@ -427,11 +427,21 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
       // cost fits the slippage-adjusted budget. Cost is then guaranteed
       // <= syIn, so the curve always accepts it.
       const exactPtOut = await computePtOutForBudget(market, syIn, slippageBps);
+      // BUYLP-1: when the Lens quoter is unreachable (RPC blocked/throttled) it
+      // returns 0n. Submitting a 0n/1n ptOut reverts InsufficientOutput() and
+      // surfaces as a confusing "Step 4 failed". Abort BEFORE submitting with a
+      // clear, actionable message instead.
+      if (exactPtOut <= 0n) {
+        const msg = "Price quoter unreachable — couldn't size your PT output. Please try again in a moment.";
+        setWriteError(msg);
+        setStatus({ kind: "error", message: msg, failedAt: 4 });
+        return false;
+      }
       try {
         const { txHash } = await adapter.write({
           kind: "writePeriphery",
           functionName: "buySyForPt",
-          args: [market, syIn, exactPtOut > 0n ? exactPtOut : 1n, user, 0n],
+          args: [market, syIn, exactPtOut, user, 0n],
         });
         setLastTxHash(txHash);
         setStatus({ kind: "done", finalTxHash: txHash });

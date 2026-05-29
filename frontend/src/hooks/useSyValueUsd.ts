@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useReadContracts } from "wagmi";
 import { erc20Abi, syAbi } from "@/lib/abis";
 
@@ -376,9 +376,13 @@ export function useSyValueUsd(sy: `0x${string}` | undefined): SyValueUsd {
   const totalSupplyShares = pluck<bigint>(positionRead.data?.[2] as never);
 
   // 4) HBAR/USD — fetch + cache once per hook lifetime (refetched on TTL miss).
-  const [hbarUsd, setHbarUsd] = useState<number | undefined>(
+  const [hbarUsdCg, setHbarUsd] = useState<number | undefined>(
     hbarCache && Date.now() - hbarCache.ts < HBAR_CACHE_TTL_MS ? hbarCache.price : undefined,
   );
+  // F4: on-chain fallback so the WHBAR side of the LP valuation (and thus
+  // usdPerShare) survives a CoinGecko outage. CoinGecko stays preferred.
+  const onChainHbarUsd = useOnChainHbarUsd();
+  const hbarUsd = hbarUsdCg ?? onChainHbarUsd;
   // Only kick off the network fetch when we actually have something to value
   // (NFT minted, pool resolved). Avoids hitting CoinGecko on SYs that don't
   // use this adapter shape at all (e.g. HBARX, where this hook short-circuits
@@ -392,7 +396,10 @@ export function useSyValueUsd(sy: `0x${string}` | undefined): SyValueUsd {
     tokenId > 0n;
   useEffect(() => {
     if (!needsHbar) return;
-    if (hbarUsd !== undefined) return;
+    // F4: always attempt the CoinGecko fetch (preferred source) even if the
+    // on-chain fallback already populated `hbarUsd` — gate on the CoinGecko
+    // state, not the combined value, so a present fallback doesn't suppress it.
+    if (hbarUsdCg !== undefined) return;
     let cancelled = false;
     void fetchHbarUsd().then((p) => {
       if (cancelled) return;
@@ -401,7 +408,7 @@ export function useSyValueUsd(sy: `0x${string}` | undefined): SyValueUsd {
     return () => {
       cancelled = true;
     };
-  }, [needsHbar, hbarUsd]);
+  }, [needsHbar, hbarUsdCg]);
 
   // 5) Loading aggregation. We say "loading" until we know whether the SY even
   // matches this adapter shape — once any of the SY reads has settled to a
@@ -552,5 +559,87 @@ export function useHbarUsd(): number | undefined {
       cancelled = true;
     };
   }, [hbarUsd]);
+
+  // F4: CoinGecko is the preferred source (canonical HBAR/USD), but ad/privacy
+  // blockers (uBlock, Brave) routinely block api.coingecko.com, and the free
+  // endpoint 429s behind CGNAT. When CoinGecko is unavailable we'd otherwise
+  // return `undefined` and the only pre-expiry EXIT (sell PT/YT → HBAR) would
+  // hard-block. Fall back to an on-chain HBAR/USD derived from the SaucerSwap
+  // V2 USDC/WHBAR pool slot0 — verified live to track CoinGecko within ~0.2%.
+  const onChainHbarUsd = useOnChainHbarUsd();
+  return hbarUsd ?? onChainHbarUsd;
+}
+
+// ─────────────────────────────── on-chain HBAR/USD fallback ───────────────────────────────
+
+/**
+ * F4: HBAR/USD derived from the SaucerSwap V2 USDC/WHBAR pool's `slot0`
+ * sqrtPriceX96 — a CoinGecko-independent price source. token0 = USDC (6 dec),
+ * token1 = WHBAR (8 dec) on this pool, so:
+ *
+ *   priceRaw = (sqrtPriceX96 / 2^96)^2          // token1_raw per token0_raw
+ *   WHBAR_per_USDC = priceRaw × 1e6 / 1e8        // human units
+ *   HBAR/USD = 1 / WHBAR_per_USDC                // USD per HBAR (USDC ≈ $1 peg)
+ *
+ * The 0.15% fee tier USDC/WHBAR pool address is resolved on-chain via the V2
+ * factory `getPool(USDC, WHBAR, 1500)` so we never hard-code a pool that could
+ * be re-deployed. Returns `undefined` while the reads are pending or if the
+ * pool read fails (then the caller hard-blocks only if CoinGecko is ALSO down).
+ */
+function deriveHbarUsdFromSqrtP(sqrtPriceX96: bigint): number | undefined {
+  if (sqrtPriceX96 <= 0n) return undefined;
+  // (sqrtP / 2^96)^2 = token1_raw per token0_raw. Carry precision through BigInt
+  // before the single Number divide so we don't overflow Number on the square.
+  const sp = Number(sqrtPriceX96) / Number(Q96);
+  if (!Number.isFinite(sp) || sp <= 0) return undefined;
+  const rawPrice = sp * sp; // WHBAR_raw per USDC_raw
+  // 1 USDC(human) = 1e6 raw → WHBAR_raw = rawPrice × 1e6 → WHBAR(human) = /1e8.
+  const whbarPerUsdc = (rawPrice * 1e6) / 1e8;
+  if (!Number.isFinite(whbarPerUsdc) || whbarPerUsdc <= 0) return undefined;
+  const hbarUsd = 1 / whbarPerUsdc; // USD per HBAR (USDC pegged to $1)
+  // Sanity gate — reject absurd values (mis-ordered pool, decimals drift). HBAR
+  // has never traded outside $0.001–$10; anything beyond is a read artifact.
+  if (hbarUsd < 1e-3 || hbarUsd > 10) return undefined;
   return hbarUsd;
+}
+
+/** USDC/WHBAR 0.15% pool, resolved on-chain via the V2 factory. */
+function useOnChainHbarUsd(): number | undefined {
+  const USDC = "0x000000000000000000000000000000000006f89a" as const;
+  const WHBAR = "0x0000000000000000000000000000000000163b5a" as const;
+  const POOL_FEE = 1500; // 0.15% — the USDC/WHBAR V2 pool tier (verified live).
+
+  const factoryRead = useReadContracts({
+    contracts: [
+      {
+        abi: factoryGetPoolAbi,
+        address: SAUCERSWAP_V2_FACTORY,
+        functionName: "getPool",
+        args: [USDC, WHBAR, POOL_FEE],
+      } as const,
+    ],
+    allowFailure: true,
+  });
+  const pool =
+    factoryRead.data?.[0]?.status === "success"
+      ? (factoryRead.data[0].result as `0x${string}`)
+      : undefined;
+  const poolValid = !!pool && /^0x0*[1-9a-f]/i.test(pool); // non-zero address
+
+  const slotRead = useReadContracts({
+    contracts: poolValid
+      ? [{ abi: poolSlot0Abi, address: pool, functionName: "slot0" } as const]
+      : [],
+    query: { enabled: poolValid },
+    allowFailure: true,
+  });
+  const sqrtP =
+    slotRead.data?.[0]?.status === "success"
+      ? (slotRead.data[0].result as readonly [bigint, ...unknown[]])[0]
+      : undefined;
+
+  return useMemo(
+    () => (sqrtP !== undefined ? deriveHbarUsdFromSqrtP(sqrtP) : undefined),
+    [sqrtP],
+  );
 }

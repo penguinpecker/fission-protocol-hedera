@@ -180,6 +180,34 @@ function longZeroFromAccountId(accountId: string): string {
   return "0x" + num.toString(16).padStart(40, "0");
 }
 
+/**
+ * CSPK-01: pick the ONE canonical EVM address that keys this account's session,
+ * nonce, profile, and watchlist — it MUST match the address the client minted
+ * the nonce under.
+ *
+ * The frontend provider (hedera-wallet/provider.tsx `resolveEvmAddress`) resolves
+ * the account's REAL ECDSA alias from Mirror Node's `evm_address` and the SIWE
+ * hook (useSiweAuth.ts) mints the nonce under THAT alias. So the server must
+ * consume the nonce under the same real alias. Only fall back to the long-zero
+ * for true Ed25519 accounts, which never registered a real alias — for those
+ * Mirror returns the long-zero (or null) in `evm_address`, so there is nothing
+ * else to key on. This mirrors the provider's logic exactly: one wallet → one
+ * identity on both sides.
+ */
+function canonicalAddressForHedera(accountId: string, mirrorEvmAddress: string | null): string {
+  const longZero = longZeroFromAccountId(accountId).toLowerCase();
+  if (
+    mirrorEvmAddress &&
+    /^0x[0-9a-fA-F]{40}$/.test(mirrorEvmAddress) &&
+    mirrorEvmAddress.toLowerCase() !== longZero
+  ) {
+    // Genuine ECDSA alias — the form the client minted under.
+    return mirrorEvmAddress.toLowerCase();
+  }
+  // Ed25519 (no real alias): long-zero is the only address such accounts have.
+  return longZero;
+}
+
 async function verifyHedera(body: HederaBody, req: NextRequest, originHost: string) {
   const { accountId, message, signatureMap } = body;
   if (typeof accountId !== "string" || typeof message !== "string" || typeof signatureMap !== "string") {
@@ -204,16 +232,20 @@ async function verifyHedera(body: HederaBody, req: NextRequest, originHost: stri
 
   // 1. Fetch the account's current public key from Mirror Node — authoritative
   //    source of truth. Never trust a key embedded in the signatureMap.
+  //    The SAME response also carries `evm_address`, which we use below to pick
+  //    the canonical session/nonce key (CSPK-01) — so this is one round trip.
   let publicKeyString: string;
+  let mirrorEvmAddress: string | null = null;
   try {
     const r = await fetch(
       `https://mainnet-public.mirrornode.hedera.com/api/v1/accounts/${accountId}`,
       { cache: "no-store" },
     );
     if (!r.ok) throw new Error(`mirror node ${r.status}`);
-    const j = (await r.json()) as { key?: { key?: string } };
+    const j = (await r.json()) as { key?: { key?: string }; evm_address?: string | null };
     if (!j.key?.key) throw new Error("no key in mirror response");
     publicKeyString = j.key.key;
+    mirrorEvmAddress = j.evm_address ?? null;
   } catch (e) {
     // WEB2-04: opaque code out, detail to server logs only.
     console.error("mirror_lookup_failed", String(e));
@@ -253,10 +285,13 @@ async function verifyHedera(body: HederaBody, req: NextRequest, originHost: stri
     return NextResponse.json({ error: "no_nonce_in_message" }, { status: 400 });
   }
 
-  // 4. The session is keyed by the long-zero EVM address derived from the
-  //    Hedera account ID — same column as ECDSA users so all downstream
-  //    code (RLS, watchlists, profile) stays identical.
-  const address = longZeroFromAccountId(accountId).toLowerCase();
+  // 4. CSPK-01: key the session/nonce/profile on the SAME canonical address the
+  //    client minted the nonce under. For ECDSA accounts that's the real Mirror
+  //    `evm_address` alias (the provider resolves it; the SIWE hook nonces under
+  //    it). For true Ed25519 accounts it's the long-zero. Consuming under the
+  //    long-zero for an ECDSA account matched 0 rows → invalid_or_expired_nonce
+  //    401 after a valid signature, breaking every ECDSA HashPack login.
+  const address = canonicalAddressForHedera(accountId, mirrorEvmAddress);
   return consumeNonceAndIssueCookie(address, nonce, req, EXPECTED_CHAIN_ID);
 }
 

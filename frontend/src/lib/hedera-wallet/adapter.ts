@@ -17,7 +17,8 @@
 
 import { useCallback, useMemo } from "react";
 import { useAccount, useChainId, useDisconnect, useWriteContract, useSignMessage } from "wagmi";
-import { parseEther } from "viem";
+import { createPublicClient, http, parseEther } from "viem";
+import { hederaMainnet } from "@/lib/chains";
 import { HEDERA_MAINNET_CHAIN_ID } from "@/lib/wagmi";
 import { useHederaWallet } from "./provider";
 import {
@@ -327,7 +328,44 @@ export function useWalletAdapter(): AdapterAPI {
 
 /* ───────────────────────────────────────────────────────── EVM path */
 
+/**
+ * Read-only viem public client used purely to await tx finality in EVM mode.
+ * `writeContractAsync` (wagmi) resolves the moment the tx is SUBMITTED, not
+ * when it's mined — multi-step flows (setOperator→sell, approve→action) then
+ * fire the dependent tx against stale chain state (isOperator=false,
+ * allowance=0) and revert (NotAuthorized / AMOUNT_EXCEEDS_ALLOWANCE).
+ *
+ * SELL-EVM-RECEIPT-RACE fix: after every submit we block on
+ * waitForTransactionReceipt so the hash we return is final — exactly what the
+ * Hedera path already does via getReceiptWithSigner. Every form's
+ * dependent-tx sequencing (Buy/Sell/LP) gets correct ordering for free.
+ */
+let _evmPublicClient: ReturnType<typeof createPublicClient> | null = null;
+function evmPublicClient() {
+  if (!_evmPublicClient) {
+    _evmPublicClient = createPublicClient({ chain: hederaMainnet, transport: http() });
+  }
+  return _evmPublicClient;
+}
+
+/**
+ * Submit the op via wagmi, then await its receipt before returning, so the
+ * returned hash is mined/final. Mirrors the Hedera path's receipt wait.
+ */
 async function writeEvm(
+  op: WriteOp,
+  writeContractAsync: ReturnType<typeof useWriteContract>["writeContractAsync"],
+): Promise<{ txHash: string }> {
+  const { txHash } = await writeEvmSubmit(op, writeContractAsync);
+  // Wait for finality. If the hash isn't an EVM tx hash for some reason
+  // (shouldn't happen on the wagmi path), skip the wait rather than throw.
+  if (txHash.startsWith("0x")) {
+    await evmPublicClient().waitForTransactionReceipt({ hash: txHash as `0x${string}` });
+  }
+  return { txHash };
+}
+
+async function writeEvmSubmit(
   op: WriteOp,
   writeContractAsync: ReturnType<typeof useWriteContract>["writeContractAsync"],
 ): Promise<{ txHash: string }> {

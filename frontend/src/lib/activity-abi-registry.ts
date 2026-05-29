@@ -156,7 +156,13 @@ function shortAddr(addr: string): string {
  * address (both CREATE2 + long-zero where they exist).
  *
  * SY share token / PT / YT / LP are HTS-native tokens — Hedera mints them with
- * the decimals declared in the constructor; we mirror that here.
+ * `decimals()=18` declared in the constructor, which we mirror here. BUT the
+ * protocol ISSUES + TRACKS them as RAW INTEGER COUNTS, so the whole app renders
+ * them with the compact raw-integer formatter (NO division by 10**18). The
+ * activity route therefore treats these `sy`/`pt`/`yt`/`lp` kinds as 0
+ * display-decimals at format time (see `makeAmount` in /api/activity) — the 18
+ * here documents the on-chain declaration and feeds the USD-per-raw-share math,
+ * it is NOT a display divisor for these tokens. USDC(6)/WHBAR(8) are real-decimal.
  *
  * "kind" lets the route attach a USD value: only `sy` is currently priced via
  * the V3-NFT-derived `usdPerShare` (see `useSyValueUsd`). PT pays 1:1 in SY at

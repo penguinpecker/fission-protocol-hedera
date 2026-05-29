@@ -20,6 +20,7 @@ import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ytToSyRate } from "@/components/MarketPositionCard";
 import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
+import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
 import { ADDRESSES, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
@@ -51,6 +52,7 @@ type FlowKind =
 
 export function SellYtForm({ market, detail, user }: Props) {
   const adapter = useWalletAdapter();
+  const hedera = useHederaWallet();
   const { usdPerShare } = useSyValueUsd(detail.sy);
   const hbarUsd = useHbarUsd();
 
@@ -243,11 +245,13 @@ export function SellYtForm({ market, detail, user }: Props) {
   const syEstimate = lensSyOut ?? linearEstimate;
   const minSyOut = (syEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
-  // F3: the Tx3 unzap (SY → HBAR) needs a trustworthy price to set minHbarOut.
-  // When CoinGecko is down (usdPerShare / hbarUsd undefined) the floor used to
-  // collapse to 1n — sandwich-exploitable (the inner USDC→WHBAR leg uses
-  // amountOutMinimum:0, so the whole unzap can settle for ~1 tinybar). BLOCK the
-  // sell instead of shipping a 1n floor. Only matters once there's an amount.
+  // F3/F4: the Tx3 unzap (SY → HBAR) needs a trustworthy price to set
+  // minHbarOut. A 1n floor is sandwich-exploitable (the inner USDC→WHBAR leg
+  // uses amountOutMinimum:0). F4: `usdPerShare`/`hbarUsd` now carry a
+  // CoinGecko-INDEPENDENT fallback derived from the SaucerSwap V2 USDC/WHBAR
+  // pool slot0 (see useSyValueUsd), so CoinGecko being blocked no longer trips
+  // this — the sell PROCEEDS with a real on-chain-derived floor. We only reach
+  // here (and hard-block) when BOTH CoinGecko AND the on-chain pool read fail.
   const priceFeedUnavailable =
     parsedYt > 0n && (usdPerShare === undefined || hbarUsd === undefined);
 
@@ -272,8 +276,10 @@ export function SellYtForm({ market, detail, user }: Props) {
     if (chainInFlight.current) return;
     if (!user || parsedYt === 0n || expired) return;
     if (insufficient || sizeLimit.exceeded) return;
-    // F3: refuse to start a sell we can't price — the Tx3 unzap would otherwise
-    // fall back to a 1n minHbarOut, which is sandwich-exploitable.
+    // F3/F4: refuse to start a sell we can't price — the Tx3 unzap would
+    // otherwise fall back to a 1n minHbarOut, which is sandwich-exploitable.
+    // With the F4 on-chain (SaucerSwap pool) fallback wired into usdPerShare/
+    // hbarUsd, this only fires when BOTH CoinGecko AND the pool read are down.
     if (usdPerShare === undefined || hbarUsd === undefined) {
       setWriteError("Price feed unavailable — can't safely set a minimum HBAR floor for the SY→HBAR conversion. Try again once pricing is back.");
       return;
@@ -281,6 +287,24 @@ export function SellYtForm({ market, detail, user }: Props) {
     chainInFlight.current = true;
     setWriteError(null);
     try {
+      // SELL-NO-SYSHARE-ASSOC: Step 1 (sellYtForSy) delivers SY-share to the
+      // user via safeTransfer. On a HIP-904 limited-association wallet
+      // (max_auto=0) that has never held SY-share, that transfer reverts
+      // TOKEN_NOT_ASSOCIATED at consensus (invisible to eth_call). The Buy
+      // forms pre-associate [syShare,…]; this path did not. Run the same
+      // precheck first. No-op in EVM mode and for HIP-904-unlimited wallets
+      // (getMissingAssociations short-circuits on max_auto === -1).
+      if (adapter.mode === "hedera" && adapter.accountId) {
+        const { getMissingAssociations, associateTokens, evmAddressToTokenId } =
+          await import("@/lib/hedera-wallet/associations");
+        const ids = [detail.syShare].map(evmAddressToTokenId);
+        const missing = await getMissingAssociations(adapter.accountId, ids);
+        if (missing.length > 0) {
+          await associateTokens(hedera.getConnector(), adapter.accountId, missing);
+          await syAllowanceRead.refetch();
+        }
+      }
+
       // Post-rebuild (2026-05-27): 2-tx Periphery flow.
       //
       // Step 0 (W2-04): market.setOperator(periphery, true) — one-time per
@@ -382,7 +406,7 @@ export function SellYtForm({ market, detail, user }: Props) {
     } finally {
       chainInFlight.current = false;
     }
-  }, [adapter, detail.sy, detail.syShare, expired, hbarUsd, insufficient, isOperator, market, minSyOut, onChainSyShare, parsedYt, sizeLimit.exceeded, slippageBps, syAllowance, syAllowanceRead, syEstimate, usdPerShare, user]);
+  }, [adapter, detail.sy, detail.syShare, expired, hbarUsd, hedera, insufficient, isOperator, market, minSyOut, onChainSyShare, parsedYt, sizeLimit.exceeded, slippageBps, syAllowance, syAllowanceRead, syEstimate, usdPerShare, user]);
 
   const isPending =
     adapter.isWritePending ||

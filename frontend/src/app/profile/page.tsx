@@ -388,6 +388,11 @@ function PositionRow({ row, user }: { row: PortfolioRow; user: `0x${string}` | u
     if (!user) return;
     setTxErr(null);
     setTxState("pending");
+    // F5: the two claim legs (AMM-fee share + SY yield) are independent txs.
+    // Track per-leg success so a leg-B failure doesn't mask a leg-A success
+    // with a blanket error — the user has already claimed (and paid gas for)
+    // the AMM fees and must not be told the whole thing failed.
+    let ammClaimed = false;
     try {
       // SELL-01: associate USDC + WHBAR (claimRewards) and the SY-share
       // (claimAmmRewards) before claiming, or a limited-association wallet
@@ -398,12 +403,18 @@ function PositionRow({ row, user }: { row: PortfolioRow; user: `0x${string}` | u
         row.syShare,
       ]);
       const a = await adapter.write({ kind: "claimAmmRewards", market: row.market, receiver: user });
+      ammClaimed = true;
       setTxHash(a.txHash);
       const b = await adapter.write({ kind: "claimRewards", market: row.market, receiver: user });
       setTxHash(b.txHash);
       setTxState("done");
     } catch (e) {
-      setTxErr(e instanceof Error ? e.message : String(e));
+      const detail = e instanceof Error ? e.message : String(e);
+      setTxErr(
+        ammClaimed
+          ? `AMM-fee claim succeeded; yield claim failed — retry. (${detail})`
+          : detail,
+      );
       setTxState("error");
     }
   }, [adapter, hedera, row.market, row.syShare, user]);
@@ -456,13 +467,13 @@ function PositionRow({ row, user }: { row: PortfolioRow; user: `0x${string}` | u
         </span>
       </PosTd>
       <PosNum>{formatRaw(row.amountRaw, row.decimals)}</PosNum>
-      <PosNum>{row.costBasisSy.toFixed(4)} SY</PosNum>
-      <PosNum>{row.currentValueSy.toFixed(4)} SY</PosNum>
+      <PosNum>{formatCompactNum(row.costBasisSy)} SY</PosNum>
+      <PosNum>{formatCompactNum(row.currentValueSy)} SY</PosNum>
       <PosNum>
         <span className={unrealisedColor}>
           {row.unrealisedOverride
             ? row.unrealisedOverride
-            : `${row.unrealisedSy >= 0 ? "+" : ""}${row.unrealisedSy.toFixed(4)} SY`}
+            : `${row.unrealisedSy >= 0 ? "+" : ""}${formatCompactNum(row.unrealisedSy)} SY`}
         </span>
       </PosNum>
       <PosNum dim={row.maturity.never}>{row.maturity.never ? "never" : `${row.maturity.days}d`}</PosNum>
@@ -599,6 +610,22 @@ function PendingClaimsCard({
     if (!user || !isDeployed(ADDRESSES.market)) return;
     setTxErr(null);
     setTxState("pending");
+    // F5: the two legs (AMM-fee share + SY yield) are independent txs. Track
+    // per-leg success so a leg-B failure doesn't mask a successful leg-A claim.
+    let ammClaimed = false;
+    // F5 (optional): skip the yield leg when its preview is DEFINITIVELY 0
+    // (all of usdc/whbar/yieldUsd are loaded and zero) — saves the user a
+    // pointless second tx + gas. `undefined` means "still loading", so we do
+    // NOT skip then (claim both to be safe).
+    const yieldPreviewLoaded =
+      unclaimedUsdc !== undefined &&
+      unclaimedWhbar !== undefined &&
+      unclaimedYieldUsd !== undefined;
+    const yieldPreviewZero =
+      yieldPreviewLoaded &&
+      unclaimedUsdc === 0 &&
+      unclaimedWhbar === 0 &&
+      unclaimedYieldUsd === 0;
     try {
       // SELL-01: associate the reward tokens this claim delivers before firing
       // it. USDC + WHBAR come from claimRewards; the SY-share from
@@ -613,15 +640,23 @@ function PendingClaimsCard({
         rewardTokens,
       );
       const a = await adapter.write({ kind: "claimAmmRewards", market: ADDRESSES.market, receiver: user });
+      ammClaimed = true;
       setTxHash(a.txHash);
-      const b = await adapter.write({ kind: "claimRewards", market: ADDRESSES.market, receiver: user });
-      setTxHash(b.txHash);
+      if (!yieldPreviewZero) {
+        const b = await adapter.write({ kind: "claimRewards", market: ADDRESSES.market, receiver: user });
+        setTxHash(b.txHash);
+      }
       setTxState("done");
     } catch (e) {
-      setTxErr(e instanceof Error ? e.message : String(e));
+      const detail = e instanceof Error ? e.message : String(e);
+      setTxErr(
+        ammClaimed
+          ? `AMM-fee claim succeeded; yield claim failed — retry. (${detail})`
+          : detail,
+      );
       setTxState("error");
     }
-  }, [adapter, hedera, marketDetail?.syShare, user]);
+  }, [adapter, hedera, marketDetail?.syShare, user, unclaimedUsdc, unclaimedWhbar, unclaimedYieldUsd]);
 
   return (
     <div className="flex flex-col gap-px border border-border bg-border">
@@ -981,11 +1016,13 @@ function buildRows(
   const ptRate = ptToSyRate(apy, days);
   const ytRate = ytToSyRate(apy, days);
 
-  // SY-units valuations. We use raw bigint → Number with a 1e18 / decimals
-  // round-trip ONLY for the cost-basis / current-value columns (UI-only), so
-  // float precision at the cent level is fine.
+  // F1: SY/PT/YT/LP tokens declare decimals()=18 but are ISSUED + TRACKED as
+  // RAW INTEGER COUNTS (the whole app — KPI strip, trade forms — renders them
+  // with `formatCompact`, NO division by 10**18). So the SY-denominated
+  // cost-basis / current-value / unrealised columns are computed in RAW COUNTS
+  // too (no `/ 10**18`), then rendered via the same compact formatter. Dividing
+  // here produced "3.02e-9 PT" / "0.0000 SY" rows that contradicted the KPIs.
   const dec = detail.syDecimals || 18;
-  const div = 10 ** dec;
 
   const rows: PortfolioRow[] = [];
 
@@ -1005,7 +1042,7 @@ function buildRows(
   // Value 1:1 in SY by definition. Surfaced so users can see + redeem to
   // HBAR (or use as input to Buy PT / YT / LP) instead of leaving it dust.
   if (position.sy > 0n) {
-    const sySy = Number(position.sy) / div;
+    const sySy = Number(position.sy); // raw count — 1 SY share == 1 unit
     rows.push({
       market,
       syShare: detail.syShare,
@@ -1023,7 +1060,7 @@ function buildRows(
 
   // PT row — mark-to-AMM today vs. par at maturity (1 PT → 1 SY).
   if (position.pt > 0n) {
-    const ptCount = Number(position.pt) / div;
+    const ptCount = Number(position.pt); // raw count
     const currentSy = ptCount * ptRate;
     const projectedSy = ptCount; // pays 1:1 in SY at maturity
     const unrealisedSy = projectedSy - currentSy;
@@ -1045,9 +1082,9 @@ function buildRows(
   // YT row — value decays to 0 at maturity. Claimable yield gets its own
   // override on the unrealised column so the user sees the $-equivalent.
   if (position.yt > 0n || position.claimableYield > 0n || (f7.unclaimedRewardsUsd ?? 0) > 0) {
-    const ytCount = Number(position.yt) / div;
+    const ytCount = Number(position.yt); // raw count
     const currentSy = ytCount * ytRate;
-    const claimableSy = Number(position.claimableYield) / div;
+    const claimableSy = Number(position.claimableYield); // raw count
     // F7: show the real accrued rewards (previewRewards USDC/WHBAR + AMM-fee
     // pending) when available; fall back to the legacy per-share estimate.
     const usdClaim =
@@ -1076,11 +1113,13 @@ function buildRows(
 
   // LP row — pro-rata composition. PT leg discounts via ptRate; SY leg is par.
   if (position.lp > 0n && detail.lpSupply > 0n) {
-    const lpCount = Number(position.lp) / div;
+    const lpCount = Number(position.lp); // raw count
     const userPtInLp = (Number(position.lp) * Number(detail.totalPt)) / Number(detail.lpSupply);
     const userSyInLp = (Number(position.lp) * Number(detail.totalSy)) / Number(detail.lpSupply);
-    const currentSy = (userPtInLp * ptRate + userSyInLp) / div;
-    const parSy = (userPtInLp + userSyInLp) / div;
+    // Raw-count SY value (no `/ 10**18`) — userPtInLp / userSyInLp are already
+    // raw counts (pro-rata of the raw totals), so the SY-denominated value is too.
+    const currentSy = userPtInLp * ptRate + userSyInLp;
+    const parSy = userPtInLp + userSyInLp;
     rows.push({
       market,
       syShare: detail.syShare,
@@ -1158,15 +1197,29 @@ function buildRows(
 }
 
 function formatRaw(v: bigint, decimals: number): string {
-  // Divide by the token's declared decimals so the table shows a human-readable
-  // count (the template renders "52.4100"). For very large or very small magnitudes
-  // we fall back to the compact bucket formatter so the column never overflows.
-  if (v === 0n) return "0.0000";
-  const div = 10 ** decimals;
-  const n = Number(v) / div;
-  if (!Number.isFinite(n)) return formatCompact(v);
-  if (n >= 1e9) return formatCompact(v);
-  if (n >= 1) return n.toFixed(4);
-  if (n >= 0.0001) return n.toFixed(6);
-  return n.toExponential(2);
+  // F1: the position table only ever holds the protocol's SY/PT/YT/LP tokens.
+  // These declare decimals()=18 but are ISSUED + TRACKED as RAW INTEGER COUNTS,
+  // so the whole app (KPI strip, trade forms) renders them with `formatCompact`
+  // (raw integer + K/M/B suffix, NO division by 10**18). Use that SAME
+  // convention here so a 3,016,820,951-unit PT balance renders "3.016B PT" — not
+  // the "3.02e-9 PT" the old `/ 10**18` round-trip produced.
+  void decimals; // raw-count tokens: declared decimals are NOT a divisor here
+  return formatCompact(v);
+}
+
+/**
+ * F1: numeric companion to `formatCompact` for the SY-denominated value columns
+ * (cost basis / current value / unrealised). Those are raw-count `number`s after
+ * a rate multiply (e.g. ptCount * ptRate), so we floor to a bigint and reuse the
+ * exact same compact formatter the rest of the app uses — keeping the table
+ * consistent with the KPI strip. Sub-unit magnitudes (rare, e.g. a near-zero
+ * unrealised delta) fall back to a fixed-4 render with sign preserved.
+ */
+function formatCompactNum(n: number): string {
+  if (!Number.isFinite(n)) return "0";
+  if (n === 0) return "0";
+  const abs = Math.abs(n);
+  if (abs < 1) return n.toFixed(4);
+  const floored = BigInt(Math.trunc(n));
+  return formatCompact(floored);
 }
