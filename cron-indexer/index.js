@@ -43,7 +43,31 @@ const DEPLOYMENTS_PATH = process.env.DEPLOYMENTS_PATH
   ?? (existsSync(LOCAL_BUNDLED) ? LOCAL_BUNDLED : PARENT_REPO);
 
 function loadContractsFromDeployments() {
-  const d = JSON.parse(readFileSync(DEPLOYMENTS_PATH, "utf8"));
+  let d = JSON.parse(readFileSync(DEPLOYMENTS_PATH, "utf8"));
+  // DL-3: tolerate the canonical repo-root 295.json shape (contracts.* +
+  // market{} + previousMarkets[]). If the bundled copy is ever missing and we
+  // fall back to PARENT_REPO, the indexer-shape lookups below (d.factory?.evm
+  // etc.) would all miss and the watchlist would come up empty. Normalize it.
+  if (!d.factory && d.contracts) {
+    const c = d.contracts;
+    d = {
+      ...d,
+      factory: { evm: c.factory },
+      periphery: { evm: c.periphery },
+      lens: { evm: c.lens },
+      standard_deployer: { evm: c.standardMarketDeployer },
+      rewards_deployer: { evm: c.rewardsMarketDeployer },
+      sy_saucer_v2_lp: { evm: c.saucerSwapLPYieldSource },
+      markets: d.market?.address ? [{ evm: d.market.address, suffix: d.market.suffix }] : [],
+      abandoned: {
+        ...(d.abandoned ?? {}),
+        old_markets: [
+          ...((d.abandoned && d.abandoned.old_markets) ?? []),
+          ...((d.previousMarkets ?? []).map((m) => m.address).filter(Boolean)),
+        ],
+      },
+    };
+  }
   const list = [];
   const push = (evm, name, market = false) => {
     if (!evm || evm === "(reused)" || typeof evm !== "string" || !evm.startsWith("0x")) return;

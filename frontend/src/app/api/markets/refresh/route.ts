@@ -140,6 +140,7 @@ async function refreshMarketsCache(req: NextRequest) {
     last_ln_implied_rate: string | null;
     lp_total_supply: string | null;
     initialized: boolean;
+    is_archived: boolean;
     last_synced: string;
   }> = [];
 
@@ -164,6 +165,7 @@ async function refreshMarketsCache(req: NextRequest) {
       last_ln_implied_rate: lastLnVal.toString(),
       lp_total_supply: m.lpSupply !== null ? m.lpSupply.toString() : null,
       initialized: lastLnVal !== 0n,
+      is_archived: false,
       last_synced: new Date().toISOString(),
     });
   }
@@ -175,6 +177,16 @@ async function refreshMarketsCache(req: NextRequest) {
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+    // DL-1: archive any cached market from a PRIOR factory so the UI never
+    // shows a superseded market as active alongside the canonical one. Gated
+    // on rows.length>0 (the enclosing if) so an RPC blip that returns zero
+    // current markets can't mass-archive the live set.
+    await supa
+      .from("markets_cache")
+      .update({ is_archived: true })
+      .eq("chain_id", hederaMainnet.id)
+      .neq("factory_address", ADDRESSES.factory.toLowerCase())
+      .eq("is_archived", false);
   }
 
   return NextResponse.json({

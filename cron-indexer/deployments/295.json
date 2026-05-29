@@ -4,9 +4,9 @@
   "deployedAt": "2026-05-27T20:00:00.000Z",
   "rebuild_note": "Clean-slate redeploy 2026-05-27. Old factory/router/zap/megazap/unzap/gateway/lens archived. New stack: consolidated FissionPeriphery (2-tx Buy/Sell) + new SY adapter (max_auto_assoc=-1, NPM pre-approved) + new FissionRewardsMarket (operator pattern).",
   "factory": {
-    "id": "0.0.10495346",
-    "evm": "0x799549f698bbbac90b9e1c37ef3946a1a1d3397c",
-    "deployedAt": "2026-05-27"
+    "id": "0.0.10500835",
+    "evm": "0xc6e077bfd0b2dfc2bf5694219242ef11aa46086d",
+    "deployedAt": "2026-05-29"
   },
   "periphery": {
     "id": "0.0.10495793",
@@ -39,22 +39,22 @@
     "reason": "X-2 fix needed admin sweepHbar; v1 immutable. Superseded by 0x...a0289a."
   },
   "standard_deployer": {
-    "id": "0.0.10495325",
-    "evm": "0xdbdf8da50240f21dfc1ed6c44e3a5806afdcc9bf"
+    "id": "0.0.10500818",
+    "evm": "0x8d56747f585cb9f95a2c9c20c2cdb11b46806679"
   },
   "rewards_deployer": {
-    "id": "0.0.10495326",
-    "evm": "0x63a75eaab07feebc48226a6eaf3cbb057614e537"
+    "id": "0.0.10500834",
+    "evm": "0x4454adc33a5ff969a286c9fd7aae27a44ae68b48"
   },
   "markets": [
     {
-      "evm": "0x781382351c9ed32df3110b8d805d3c8c3dbfe046",
-      "suffix": "USDC-WHBAR-2026-08-25-fix8",
+      "evm": "0xfecfc0bb57dd668ff37f2a232b208584e5feae53",
+      "suffix": "USDC-WHBAR-2026-08-25-amm",
       "expiry": 1787657819,
       "sy": "0x0000000000000000000000000000000000a0289a",
-      "anchor": "1.01898e18",
+      "anchor": "1.018855e18",
       "scalarRoot": "5e18",
-      "notes": "Correct 8% APY anchor (anchor = exp(ln(1.08) * timeToExpiry/yearSec)). Live since 2026-05-28."
+      "notes": "AMM fee redirect (49.5% PT / 49.5% YT / 1% deployer). Fresh factory 0xc6e077. Live since 2026-05-29."
     }
   ],
   "markets_archived": [
@@ -73,8 +73,9 @@
   ],
   "abandoned": {
     "factories": ["0x0000000000000000000000000000000000a00b4e"],
+    "old_factories": ["0x799549f698bbbac90b9e1c37ef3946a1a1d3397c"],
     "routers": ["0x00000000000000000000000000000000009fd993", "0x00000000000000000000000000000000009fad96"],
-    "old_markets": ["0x00000000000000000000000000000000009fefd2", "0x000000000000000000000000000000000060a73f", "0xa9040c794bbf74d7c7d9d095aa68a64746e7a390"],
+    "old_markets": ["0x781382351c9ed32df3110b8d805d3c8c3dbfe046", "0x00000000000000000000000000000000009fefd2", "0x000000000000000000000000000000000060a73f", "0xa9040c794bbf74d7c7d9d095aa68a64746e7a390"],
     "old_sy_v2_lp": ["0x00000000000000000000000000000000009fb089", "0x92317572d76e2be052c421ffe268a453d75327d6", "0x6c8e2817321e4cc31e5b80a01a337a6b04295d62"],
     "fission_zap_v1": "0x00000000000000000000000000000000009fb6c4",
     "fission_unzap_v1": "0x0000000000000000000000000000000000a01a63",

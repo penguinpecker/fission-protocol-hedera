@@ -31,8 +31,8 @@ const NAV = [
     heading: "Network",
     links: [
       // Post-rebuild 2026-05-27 — pointers updated to current addresses.
-      { href: "https://hashscan.io/mainnet/contract/0x781382351c9Ed32df3110B8d805D3C8C3dBFe046", label: "Market", external: true },
-      { href: "https://hashscan.io/mainnet/contract/0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c", label: "Factory", external: true },
+      { href: "https://hashscan.io/mainnet/contract/0xfEcfC0Bb57dD668fF37F2A232b208584E5FeAE53", label: "Market", external: true },
+      { href: "https://hashscan.io/mainnet/contract/0xc6e077bfd0b2dfc2bf5694219242ef11aa46086d", label: "Factory", external: true },
       { href: "https://hashscan.io/mainnet/contract/0x0000000000000000000000000000000000a02731", label: "Periphery (v3)", external: true },
       { href: "https://hashscan.io/mainnet/contract/0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969", label: "Lens", external: true },
       { href: "https://hashscan.io/mainnet/contract/0x0000000000000000000000000000000000a0289a", label: "SY adapter", external: true },

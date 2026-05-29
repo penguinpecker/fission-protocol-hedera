@@ -99,6 +99,7 @@ export async function buySyForLp(
   market: `0x${string}`,
   syIn: bigint,
   ptShareBps: number,
+  ptOutFromSwap: bigint,
   minLpOut: bigint
 ): Promise<{ txHash: string }> {
   if (!adapter.address) throw new Error("Wallet not connected");
@@ -107,7 +108,7 @@ export async function buySyForLp(
     address: ADDRESSES.periphery,
     abi: fissionPeripheryAbi,
     functionName: "buySyForLp",
-    args: [market, syIn, ptShareBps, minLpOut, adapter.address, NO_DEADLINE],
+    args: [market, syIn, ptShareBps, ptOutFromSwap, minLpOut, adapter.address, NO_DEADLINE],
   });
 }
 
