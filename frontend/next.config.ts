@@ -1,11 +1,11 @@
 import type { NextConfig } from "next";
 
-// LP-2: Content-Security-Policy.
+// LP-2: Content-Security-Policy — ENFORCED.
 //
-// Shipped REPORT-ONLY first (Content-Security-Policy-Report-Only) so we can
-// observe violations in the browser console / report endpoint without breaking
-// wallet connect or any third-party fetch. Once the report log is clean, flip
-// the header name to `Content-Security-Policy` to enforce.
+// Verified clean (zero violations / zero blocked requests) via browser console
+// across home / markets / market-detail / profile + the full wallet-connect modal
+// flow (HashPack connect → WC relay + verify iframe) on 2026-05-30, then flipped
+// from report-only to enforce.
 //
 // connect-src must cover every origin the app talks to at runtime:
 //   - 'self'                          : our own API routes
@@ -18,7 +18,7 @@ import type { NextConfig } from "next";
 //
 // frame-ancestors 'none' is the CSP-level equivalent of X-Frame-Options DENY
 // (and supersedes it in modern browsers) — blocks clickjacking via iframes.
-const CSP_REPORT_ONLY = [
+const CSP = [
   "default-src 'self'",
   // Next.js injects inline bootstrap scripts; 'unsafe-inline' is required until
   // a nonce-based setup is wired. 'unsafe-eval' kept for dev/source-map tooling.
@@ -54,9 +54,8 @@ const config: NextConfig = {
         headers: [
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "X-Content-Type-Options", value: "nosniff" },
-          // LP-2: report-only first. Flip the key to "Content-Security-Policy"
-          // to enforce once the violation report is clean.
-          { key: "Content-Security-Policy-Report-Only", value: CSP_REPORT_ONLY },
+          // LP-2: ENFORCED (verified clean via browser console before flipping).
+          { key: "Content-Security-Policy", value: CSP },
         ],
       },
     ];
