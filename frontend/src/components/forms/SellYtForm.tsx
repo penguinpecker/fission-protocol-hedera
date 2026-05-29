@@ -18,7 +18,7 @@ import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ytToSyRate } from "@/components/MarketPositionCard";
-import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
+import { useSyValueUsd } from "@/hooks/useSyValueUsd";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
@@ -54,7 +54,11 @@ export function SellYtForm({ market, detail, user }: Props) {
   const adapter = useWalletAdapter();
   const hedera = useHederaWallet();
   const { usdPerShare } = useSyValueUsd(detail.sy);
-  const hbarUsd = useHbarUsd();
+  // SELL-MINHBAR-COINGECKO-01: pool-sourced HBAR/USD (USDC/WHBAR slot0) — the
+  // SAME rate the unzap's inner swap executes at. Used to floor minHbarOut so
+  // the floor is consistent with execution (never CoinGecko, which can diverge).
+  // SellYt has no HBAR-denominated display, so no CoinGecko HBAR/USD is needed.
+  const poolHbarUsd = usePoolHbarUsd();
 
   const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
   const [usdStr, setUsdStr] = useState("");
@@ -245,15 +249,17 @@ export function SellYtForm({ market, detail, user }: Props) {
   const syEstimate = lensSyOut ?? linearEstimate;
   const minSyOut = (syEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
-  // F3/F4: the Tx3 unzap (SY → HBAR) needs a trustworthy price to set
-  // minHbarOut. A 1n floor is sandwich-exploitable (the inner USDC→WHBAR leg
-  // uses amountOutMinimum:0). F4: `usdPerShare`/`hbarUsd` now carry a
-  // CoinGecko-INDEPENDENT fallback derived from the SaucerSwap V2 USDC/WHBAR
-  // pool slot0 (see useSyValueUsd), so CoinGecko being blocked no longer trips
-  // this — the sell PROCEEDS with a real on-chain-derived floor. We only reach
-  // here (and hard-block) when BOTH CoinGecko AND the on-chain pool read fail.
+  // F3/F4 + SELL-MINHBAR-COINGECKO-01: the Tx3 unzap (SY → HBAR) needs a
+  // trustworthy minHbarOut floor — a 1n floor is sandwich-exploitable (the inner
+  // USDC→WHBAR leg uses amountOutMinimum:0). The floor is now sourced from
+  // `poolHbarUsd` (the SaucerSwap V2 USDC/WHBAR slot0 — the rate the unzap
+  // actually swaps at), NOT CoinGecko's `hbarUsd`, so the floor is consistent
+  // with execution. Both `usdPerShare` and `poolHbarUsd` are CoinGecko-
+  // independent on-chain reads, so a blocked/429ing CoinGecko no longer trips
+  // this — we only hard-block when the on-chain pool read itself fails. Blocking
+  // here prevents wiping the YT and then being unable to price the Tx3 floor.
   const priceFeedUnavailable =
-    parsedYt > 0n && (usdPerShare === undefined || hbarUsd === undefined);
+    parsedYt > 0n && (usdPerShare === undefined || poolHbarUsd === undefined);
 
   /* ─────────────────────────── primary handler (3-step YT → HBAR chain) */
 
@@ -276,32 +282,56 @@ export function SellYtForm({ market, detail, user }: Props) {
     if (chainInFlight.current) return;
     if (!user || parsedYt === 0n || expired) return;
     if (insufficient || sizeLimit.exceeded) return;
-    // F3/F4: refuse to start a sell we can't price — the Tx3 unzap would
-    // otherwise fall back to a 1n minHbarOut, which is sandwich-exploitable.
-    // With the F4 on-chain (SaucerSwap pool) fallback wired into usdPerShare/
-    // hbarUsd, this only fires when BOTH CoinGecko AND the pool read are down.
-    if (usdPerShare === undefined || hbarUsd === undefined) {
+    // F3/F4 + SELL-MINHBAR-COINGECKO-01: refuse to start a sell we can't floor.
+    // The Tx3 unzap floor is sourced from `poolHbarUsd` (the SaucerSwap pool
+    // rate the swap executes at), so gate on it being present — not CoinGecko.
+    // This only fires when the on-chain pool read is down.
+    if (usdPerShare === undefined || poolHbarUsd === undefined) {
       setWriteError("Price feed unavailable — can't safely set a minimum HBAR floor for the SY→HBAR conversion. Try again once pricing is back.");
       return;
     }
     chainInFlight.current = true;
     setWriteError(null);
     try {
-      // SELL-NO-SYSHARE-ASSOC: Step 1 (sellYtForSy) delivers SY-share to the
-      // user via safeTransfer. On a HIP-904 limited-association wallet
-      // (max_auto=0) that has never held SY-share, that transfer reverts
-      // TOKEN_NOT_ASSOCIATED at consensus (invisible to eth_call). The Buy
-      // forms pre-associate [syShare,…]; this path did not. Run the same
-      // precheck first. No-op in EVM mode and for HIP-904-unlimited wallets
-      // (getMissingAssociations short-circuits on max_auto === -1).
-      if (adapter.mode === "hedera" && adapter.accountId) {
+      // SELL-NO-SYSHARE-ASSOC / REALUSE-01: Step 1 (sellYtForSy) delivers
+      // SY-share to the user via safeTransfer. On a HIP-904 limited-association
+      // wallet (max_auto=0) that has never held SY-share, that transfer reverts
+      // TOKEN_NOT_ASSOCIATED (184) at consensus (invisible to eth_call) — AFTER
+      // the YT was already wiped. The Buy forms pre-associate [syShare,…]; this
+      // path did not. The Step-3 unzap delivers native HBAR (no association
+      // needed), so SY-share is the only delivered token to precheck. Precheck
+      // in BOTH modes:
+      //   • Hedera mode: auto-associate the missing token(s) (one prompt).
+      //   • EVM mode: MetaMask CANNOT submit a Hedera TokenAssociate tx, so
+      //     resolve the EVM address → 0.0.id via mirror, check associations, and
+      //     BLOCK rather than let Step 1 wipe the YT and its delivery revert.
+      // No-op for HIP-904-unlimited wallets / unresolved accounts.
+      {
         const { getMissingAssociations, associateTokens, evmAddressToTokenId } =
           await import("@/lib/hedera-wallet/associations");
         const ids = [detail.syShare].map(evmAddressToTokenId);
-        const missing = await getMissingAssociations(adapter.accountId, ids);
-        if (missing.length > 0) {
-          await associateTokens(hedera.getConnector(), adapter.accountId, missing);
-          await syAllowanceRead.refetch();
+
+        if (adapter.mode === "hedera" && adapter.accountId) {
+          const missing = await getMissingAssociations(adapter.accountId, ids);
+          if (missing.length > 0) {
+            await associateTokens(hedera.getConnector(), adapter.accountId, missing);
+            await syAllowanceRead.refetch();
+          }
+        } else if (adapter.mode === "evm" && adapter.address) {
+          const accountId = await evmAddressToAccountId(adapter.address);
+          if (accountId) {
+            const missing = await getMissingAssociations(accountId, ids);
+            if (missing.length > 0) {
+              const msg =
+                `Your account hasn't associated the SY-share token (${missing.join(", ")}). ` +
+                "MetaMask can't submit a Hedera token-association, so this sell can't " +
+                "deliver to you. Enable automatic token associations in your wallet, or " +
+                "associate the token first (e.g. in HashPack), then retry.";
+              setWriteError(msg);
+              setFlowState({ kind: "error", message: msg });
+              return;
+            }
+          }
         }
       }
 
@@ -377,11 +407,14 @@ export function SellYtForm({ market, detail, user }: Props) {
       }
 
       // Step 3: Periphery.unzapSyToHbar — full SY delta → HBAR delivered to user.
-      // SELL-03 + F3: derive minHbarOut from the REALIZED syReceived delta (not a
-      // pre-trade estimate) using the live price, floored by the slippage chip.
-      // We already gated on a present price feed at the top of onPrimary, so this
-      // is never the 1n fallback.
-      const hbarForDelta = (Number(syReceived) * usdPerShare) / Math.max(1e-9, hbarUsd);
+      // SELL-03 + F3 + SELL-MINHBAR-COINGECKO-01: derive minHbarOut from the
+      // REALIZED syReceived delta (not a pre-trade estimate) using the POOL-sourced
+      // HBAR/USD — the SAME rate the unzap's inner USDC→WHBAR swap executes at
+      // (amountOutMinimum:0). Pricing off CoinGecko would let a divergence revert
+      // this Tx AFTER the YT was already wiped; `poolHbarUsd` keeps the floor
+      // consistent with execution. We gated on it being present above, so this is
+      // never the 1n fallback.
+      const hbarForDelta = (Number(syReceived) * usdPerShare) / Math.max(1e-9, poolHbarUsd);
       const minHbarOut =
         (BigInt(Math.floor(hbarForDelta * 1e8)) * BigInt(10_000 - slippageBps)) / 10_000n;
       if (minHbarOut <= 0n) {
@@ -406,7 +439,7 @@ export function SellYtForm({ market, detail, user }: Props) {
     } finally {
       chainInFlight.current = false;
     }
-  }, [adapter, detail.sy, detail.syShare, expired, hbarUsd, hedera, insufficient, isOperator, market, minSyOut, onChainSyShare, parsedYt, sizeLimit.exceeded, slippageBps, syAllowance, syAllowanceRead, syEstimate, usdPerShare, user]);
+  }, [adapter, detail.sy, detail.syShare, expired, poolHbarUsd, hedera, insufficient, isOperator, market, minSyOut, onChainSyShare, parsedYt, sizeLimit.exceeded, slippageBps, syAllowance, syAllowanceRead, syEstimate, usdPerShare, user]);
 
   const isPending =
     adapter.isWritePending ||
@@ -652,6 +685,120 @@ export function SellYtForm({ market, detail, user }: Props) {
 function shortAddr(addr: string): string {
   if (addr.length <= 12) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+/* ───────────────────────────── EVM → Hedera account-id resolver ───────────
+ * REALUSE-01: in EVM (MetaMask) mode the adapter exposes only the 0x EVM
+ * address — there is no `0.0.X` accountId. To check HTS associations on the
+ * mirror node we resolve the EVM address to its canonical Hedera id via
+ * `GET /accounts/{evmAddress}` (works for both ECDSA-aliased and long-zero
+ * accounts). Returns undefined if the account isn't found / mirror is down. */
+const MIRROR_BASE_FORM = "https://mainnet-public.mirrornode.hedera.com/api/v1";
+async function evmAddressToAccountId(
+  evmAddress: `0x${string}`,
+): Promise<string | undefined> {
+  try {
+    const r = await fetch(`${MIRROR_BASE_FORM}/accounts/${evmAddress}`);
+    if (!r.ok) return undefined;
+    const data = (await r.json()) as { account?: string };
+    return typeof data.account === "string" ? data.account : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/* ───────────────────────────── pool-derived HBAR/USD floor source ─────────
+ * SELL-MINHBAR-COINGECKO-01: the unzap's inner USDC→WHBAR swap executes at the
+ * SaucerSwap V2 POOL price (amountOutMinimum:0). Pricing minHbarOut off
+ * CoinGecko's hbarUsd lets a CoinGecko-underprices-pool divergence revert the
+ * unzap AFTER the YT was already wiped. So the floor must come from the SAME
+ * source the swap uses: the pool's slot0. This local hook reads the USDC/WHBAR
+ * V2 pool slot0 directly — identical math/constants to useSyValueUsd's on-chain
+ * fallback — so the floor is consistent with execution. (A parallel agent
+ * exposes the same value as `poolHbarUsd` on the price hook; this self-contained
+ * copy is equivalent and avoids coupling to a not-yet-landed export.) */
+const POOL_FLOOR_FACTORY = "0x00000000000000000000000000000000003c3951" as const;
+const POOL_FLOOR_USDC = "0x000000000000000000000000000000000006f89a" as const;
+const POOL_FLOOR_WHBAR = "0x0000000000000000000000000000000000163b5a" as const;
+const POOL_FLOOR_FEE = 1500; // 0.15% USDC/WHBAR V2 tier (verified live).
+const POOL_FLOOR_Q96 = 2n ** 96n;
+
+const poolFloorFactoryAbi = [
+  {
+    type: "function",
+    name: "getPool",
+    stateMutability: "view",
+    inputs: [
+      { name: "tokenA", type: "address" },
+      { name: "tokenB", type: "address" },
+      { name: "fee", type: "uint24" },
+    ],
+    outputs: [{ type: "address" }],
+  },
+] as const;
+const poolFloorSlot0Abi = [
+  {
+    type: "function",
+    name: "slot0",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      { name: "sqrtPriceX96", type: "uint160" },
+      { name: "tick", type: "int24" },
+      { name: "observationIndex", type: "uint16" },
+      { name: "observationCardinality", type: "uint16" },
+      { name: "observationCardinalityNext", type: "uint16" },
+      { name: "feeProtocol", type: "uint8" },
+      { name: "unlocked", type: "bool" },
+    ],
+  },
+] as const;
+
+function poolHbarUsdFromSqrtP(sqrtPriceX96: bigint): number | undefined {
+  if (sqrtPriceX96 <= 0n) return undefined;
+  const sp = Number(sqrtPriceX96) / Number(POOL_FLOOR_Q96);
+  if (!Number.isFinite(sp) || sp <= 0) return undefined;
+  const rawPrice = sp * sp; // WHBAR_raw per USDC_raw (token0=USDC, token1=WHBAR)
+  const whbarPerUsdc = (rawPrice * 1e6) / 1e8; // human WHBAR per 1 USDC
+  if (!Number.isFinite(whbarPerUsdc) || whbarPerUsdc <= 0) return undefined;
+  const hbarUsd = 1 / whbarPerUsdc; // USD per HBAR (USDC pegged $1)
+  if (hbarUsd < 1e-3 || hbarUsd > 10) return undefined; // sanity gate
+  return hbarUsd;
+}
+
+/** Pool-sourced HBAR/USD (USDC/WHBAR V2 slot0) — the SAME rate the unzap swaps at. */
+function usePoolHbarUsd(): number | undefined {
+  const factoryRead = useReadContracts({
+    contracts: [
+      {
+        abi: poolFloorFactoryAbi,
+        address: POOL_FLOOR_FACTORY,
+        functionName: "getPool",
+        args: [POOL_FLOOR_USDC, POOL_FLOOR_WHBAR, POOL_FLOOR_FEE],
+      } as const,
+    ],
+    allowFailure: true,
+  });
+  const pool =
+    factoryRead.data?.[0]?.status === "success"
+      ? (factoryRead.data[0].result as `0x${string}`)
+      : undefined;
+  const poolValid = !!pool && /^0x0*[1-9a-f]/i.test(pool);
+  const slotRead = useReadContracts({
+    contracts: poolValid
+      ? [{ abi: poolFloorSlot0Abi, address: pool, functionName: "slot0" } as const]
+      : [],
+    query: { enabled: poolValid },
+    allowFailure: true,
+  });
+  const sqrtP =
+    slotRead.data?.[0]?.status === "success"
+      ? (slotRead.data[0].result as readonly [bigint, ...unknown[]])[0]
+      : undefined;
+  return useMemo(
+    () => (sqrtP !== undefined ? poolHbarUsdFromSqrtP(sqrtP) : undefined),
+    [sqrtP],
+  );
 }
 
 // F6: HashScan rejects a raw Hedera tx-id (`0.0.X@S.NS`) in the URL (400s).

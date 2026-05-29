@@ -374,9 +374,13 @@ function PositionRow({ row, user }: { row: PortfolioRow; user: `0x${string}` | u
       // consensus on the SY-share leg (invisible to the eth_call gas estimate).
       // Reuse the SELL-01 helper to pre-associate it. No-op in EVM mode / when
       // already associated.
-      await ensureRewardAssociations(adapter.mode, adapter.accountId, hedera.getConnector(), [
-        row.syShare,
-      ]);
+      await ensureRewardAssociations(
+        adapter.mode,
+        adapter.accountId,
+        hedera.getConnector(),
+        [row.syShare],
+        adapter.address,
+      );
       const { txHash: h } = await adapter.write({
         kind: "redeemAfterExpiry",
         market: row.market,
@@ -407,11 +411,13 @@ function PositionRow({ row, user }: { row: PortfolioRow; user: `0x${string}` | u
       // SELL-01: associate USDC + WHBAR (claimRewards) and the SY-share
       // (claimAmmRewards) before claiming, or a limited-association wallet
       // reverts TOKEN_NOT_ASSOCIATED at consensus.
-      await ensureRewardAssociations(adapter.mode, adapter.accountId, hedera.getConnector(), [
-        HEDERA_TOKENS.USDC,
-        HEDERA_TOKENS.WHBAR,
-        row.syShare,
-      ]);
+      await ensureRewardAssociations(
+        adapter.mode,
+        adapter.accountId,
+        hedera.getConnector(),
+        [HEDERA_TOKENS.USDC, HEDERA_TOKENS.WHBAR, row.syShare],
+        adapter.address,
+      );
       const a = await adapter.write({ kind: "claimAmmRewards", market: row.market, receiver: user });
       ammClaimed = true;
       setTxHash(a.txHash);
@@ -648,6 +654,7 @@ function PendingClaimsCard({
         adapter.accountId,
         hedera.getConnector(),
         rewardTokens,
+        adapter.address,
       );
       const a = await adapter.write({ kind: "claimAmmRewards", market: ADDRESSES.market, receiver: user });
       ammClaimed = true;
@@ -923,27 +930,37 @@ function hashscanTxUrl(txHash: string): string {
 }
 
 /**
- * SELL-01: associate the reward tokens a claim will deliver BEFORE claiming.
+ * SELL-01 / REALUSE-01: associate the reward tokens a claim/redeem will deliver
+ * BEFORE submitting it.
  *
- * `claimRewards` safe-transfers USDC (+ WHBAR) to the user and `claimAmmRewards`
- * delivers the SY-share token. On a limited-association wallet (HIP-904
- * `max_automatic_token_associations: 0`) a transfer of an un-associated token
- * reverts with TOKEN_NOT_ASSOCIATED at consensus — invisible to the eth_call
- * gas estimate, so the claim silently fails in the wallet. None of the buy
- * flows pre-associate USDC, so a wallet that only ever bought PT/YT/LP can hit
- * this. We batch the missing ones into a single associate prompt (mirrors the
- * buy forms' `stepAssociate`).
+ * `claimRewards` safe-transfers USDC (+ WHBAR) to the user, `claimAmmRewards`
+ * delivers the SY-share token, and `redeemAfterExpiry` delivers the SY-share.
+ * On a limited-association wallet (HIP-904 `max_automatic_token_associations:
+ * 0`) a transfer of an un-associated token reverts with TOKEN_NOT_ASSOCIATED at
+ * consensus — invisible to the eth_call gas estimate, so the action silently
+ * fails in the wallet. None of the buy flows pre-associate USDC, so a wallet
+ * that only ever bought PT/YT/LP can hit this.
  *
- * EVM mode is a no-op: EVM-aliased accounts get HIP-904 unlimited associations,
- * so the receiver side is already covered.
+ *   - Hedera-native mode: we can submit a TokenAssociateTransaction, so we
+ *     batch the missing ones into a single associate prompt (mirrors the buy
+ *     forms' `stepAssociate`) and proceed.
+ *   - EVM mode (MetaMask via Hashio): an ECDSA account imported into MetaMask
+ *     with `max_automatic_token_associations: 0` CAN buy but cannot receive a
+ *     delivery for an un-associated token, and MetaMask CANNOT submit a Hedera
+ *     associate tx. So we still CHECK (resolve evm_address → 0.0.id via Mirror,
+ *     GET /accounts/{id}/tokens) and, if anything is missing, BLOCK with an
+ *     actionable error instead of letting the delivery revert. The check
+ *     short-circuits for HIP-904-unlimited accounts (max_auto === -1), which is
+ *     the common case for EVM-aliased wallets.
  */
 async function ensureRewardAssociations(
   adapterMode: "evm" | "hedera" | null,
   accountId: string | null,
   connector: unknown,
   tokens: `0x${string}`[],
+  evmAddress?: `0x${string}` | null,
 ): Promise<void> {
-  if (adapterMode !== "hedera" || !accountId) return;
+  if (adapterMode === null) return;
   const { getMissingAssociations, associateTokens, evmAddressToTokenId } =
     await import("@/lib/hedera-wallet/associations");
   // Some tokens (e.g. an un-resolved SY-share) may not be long-zero; skip
@@ -959,9 +976,27 @@ async function ensureRewardAssociations(
     })
     .filter((t): t is string => t !== null);
   if (ids.length === 0) return;
-  const missing = await getMissingAssociations(accountId, ids);
+
+  if (adapterMode === "hedera") {
+    if (!accountId) return;
+    const missing = await getMissingAssociations(accountId, ids);
+    if (missing.length === 0) return;
+    await associateTokens(connector, accountId, missing);
+    return;
+  }
+
+  // EVM mode. Mirror Node resolves an ECDSA evm_address directly in both the
+  // /accounts/{id} and /accounts/{id}/tokens paths, so we pass the evm address
+  // straight through. MetaMask can't submit an associate tx, so any missing
+  // association is a hard block — surface an actionable message.
+  if (!evmAddress) return;
+  const missing = await getMissingAssociations(evmAddress, ids);
   if (missing.length === 0) return;
-  await associateTokens(connector, accountId, missing);
+  throw new Error(
+    `Your account hasn't associated ${missing.length === 1 ? "this token" : "these tokens"}: ${missing.join(", ")}. ` +
+      `MetaMask can't associate Hedera tokens — enable unlimited auto-association on your account, ` +
+      `or associate ${missing.length === 1 ? "it" : "them"} first (e.g. in HashPack), then retry.`,
+  );
 }
 
 function formatAgo(ms: number): string {

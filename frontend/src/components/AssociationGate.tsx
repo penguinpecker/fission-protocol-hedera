@@ -8,15 +8,21 @@
  * cryptic "execution failed" error.
  *
  * Behaviour:
- *   - In EVM mode (wagmi / MetaMask via Hashio), we skip the check —
- *     EVM-aliased accounts get HIP-904 unlimited associations by
- *     default, so the receiver-side flow is already covered.
  *   - In Hedera-native mode, we query Mirror Node for missing
  *     associations among `requiredTokens`. If any are missing, we
  *     render a single "Associate token(s)" button that batches them
  *     all into ONE `TokenAssociateTransaction` (one wallet prompt).
  *     On success the gate transparently un-mounts and renders
  *     `children`.
+ *   - In EVM mode (wagmi / MetaMask via Hashio), most accounts get
+ *     HIP-904 unlimited associations, but an ECDSA account imported
+ *     into MetaMask with `max_automatic_token_associations: 0` can buy
+ *     yet cannot RECEIVE an un-associated token — and MetaMask cannot
+ *     submit a Hedera associate tx. So we still CHECK (resolving the
+ *     account's evm_address via Mirror — which the /accounts and
+ *     /accounts/{id}/tokens endpoints both accept) and, when something
+ *     is missing, BLOCK with an actionable message instead of silently
+ *     letting the delivery revert TOKEN_NOT_ASSOCIATED at consensus.
  *
  * Why batch and not per-token: HashPack signs `setTokenIds([...])` in
  * one prompt and Hedera charges $0.05/token-association regardless of
@@ -67,6 +73,9 @@ export function AssociationGate({
 
   const accountId = adapter.accountId;
   const mode = adapter.mode;
+  // EVM mode resolves the account via its evm_address (Mirror accepts it in the
+  // /accounts and /accounts/{id}/tokens paths). Hedera mode uses the 0.0.X id.
+  const lookupId = mode === "hedera" ? accountId : adapter.address;
 
   // Convert long-zero EVM addresses to "0.0.X" once per change.
   const tokenIds = requiredTokens.map((a) => {
@@ -85,7 +94,7 @@ export function AssociationGate({
   };
 
   const runCheck = useCallback(async () => {
-    if (mode !== "hedera" || !accountId) {
+    if ((mode !== "hedera" && mode !== "evm") || !lookupId) {
       setMissing([]);
       setIsChecking(false);
       return;
@@ -97,8 +106,8 @@ export function AssociationGate({
     }
     setIsChecking(true);
     try {
-      const miss = await getMissingAssociations(accountId, validTokenIds);
-      diag("AssociationGate", { step: "check_done", accountId, required: validTokenIds, missing: miss });
+      const miss = await getMissingAssociations(lookupId, validTokenIds);
+      diag("AssociationGate", { step: "check_done", lookupId, mode, required: validTokenIds, missing: miss });
       setMissing(miss);
     } catch (e) {
       diag("AssociationGate", { step: "check_error", error: e instanceof Error ? e.message : String(e) });
@@ -111,7 +120,7 @@ export function AssociationGate({
     // We intentionally serialize tokenIds via .join to keep the dep array
     // stable across array-identity changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, accountId, validTokenIds.join("|")]);
+  }, [mode, lookupId, validTokenIds.join("|")]);
 
   useEffect(() => {
     runCheck();
@@ -138,12 +147,12 @@ export function AssociationGate({
     }
   };
 
-  // EVM mode or no tokens needed → pass through immediately. We also
-  // pass through on first-render before the async check resolves, but
-  // hide the children behind a skeleton-style placeholder so the user
-  // doesn't click "Mint" and immediately get the association banner
-  // afterwards.
-  if (mode !== "hedera" || validTokenIds.length === 0) {
+  // Not connected (no mode / no resolvable account) or no tokens needed →
+  // pass through immediately. We also pass through on first-render before the
+  // async check resolves, but hide the children behind a skeleton-style
+  // placeholder so the user doesn't click "Mint" and immediately get the
+  // association banner afterwards.
+  if ((mode !== "hedera" && mode !== "evm") || !lookupId || validTokenIds.length === 0) {
     return <>{children}</>;
   }
 
@@ -157,6 +166,42 @@ export function AssociationGate({
 
   if (!missing || missing.length === 0) {
     return <>{children}</>;
+  }
+
+  // EVM mode (MetaMask via Hashio): we found a missing association but MetaMask
+  // CANNOT submit a Hedera TokenAssociateTransaction. Rather than letting the
+  // delivery revert TOKEN_NOT_ASSOCIATED at consensus, block here with an
+  // actionable message. (Common path is HIP-904 unlimited → no block at all.)
+  if (mode === "evm") {
+    return (
+      <div className="rounded-2xl border border-warning/30 bg-warning/[0.06] p-4">
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-[2px] text-warning">
+          One-time token setup
+        </div>
+        <p className="mb-3 text-[13px] leading-relaxed text-text">
+          Your account hasn&apos;t associated {missing.length === 1 ? "this token" : "these tokens"} yet
+          {reason ? ` ${reason}` : ""}. MetaMask can&apos;t associate Hedera tokens — enable unlimited
+          auto-association on your account, or associate {missing.length === 1 ? "it" : "them"} first
+          (e.g. in HashPack), then reload.
+        </p>
+
+        <ul className="space-y-1.5 rounded-lg border border-warning/20 bg-white/[0.02] p-3">
+          {missing.map((tid) => (
+            <li key={tid} className="flex items-center justify-between font-mono text-[11px]">
+              <span className="text-textSec">{labelFor(tid)}</span>
+              <a
+                href={`https://hashscan.io/mainnet/token/${tid}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-textDim underline-offset-2 hover:underline hover:text-textSec"
+              >
+                {tid}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
   }
 
   return (

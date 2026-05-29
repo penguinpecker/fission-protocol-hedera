@@ -19,7 +19,7 @@ import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import { MarketSubPageShell } from "@/components/MarketSubPageShell";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { formatCompact } from "@/hooks/useMarkets";
-import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
+import { useSyValueUsd, useHbarUsd, usePoolHbarUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import {
@@ -110,7 +110,12 @@ function SellSyForm({ market, detail, user }: FormProps) {
   void market;
   const adapter = useWalletAdapter();
   const { usdPerShare } = useSyValueUsd(detail.sy);
+  // CoinGecko-preferred rate — DISPLAY only (expected-output hint + guard).
   const hbarUsd = useHbarUsd();
+  // R5 (SELL-MINHBAR-COINGECKO-01): the POOL rate the inner USDC→WHBAR swap
+  // actually executes at. The minHbarOut FLOOR is derived from this, not
+  // CoinGecko, so a CoinGecko-vs-pool divergence can't revert the unzap.
+  const poolHbarUsd = usePoolHbarUsd();
 
   const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
   const [usdStr, setUsdStr] = useState("");
@@ -196,19 +201,32 @@ function SellSyForm({ market, detail, user }: FormProps) {
   const insufficient = parsedSy > syBalance;
   const needsApprove = syAllowance < parsedSy;
 
-  // Expected HBAR output ≈ SY-in × $/share × 1/hbarUsd. The unzap returns
-  // marginally less because of the SaucerSwap V2 swap fee on the USDC half.
+  // Expected HBAR output ≈ SY-in × $/share × 1/hbarUsd. DISPLAY only — uses the
+  // CoinGecko-preferred rate. The unzap returns marginally less because of the
+  // SaucerSwap V2 swap fee on the USDC half.
   const expectedHbarOut: number = useMemo(() => {
     if (parsedSy === 0n || usdPerShare === undefined || hbarUsd === undefined) return 0;
     const usdValue = Number(parsedSy) * usdPerShare;
     return usdValue / Math.max(1e-9, hbarUsd);
   }, [parsedSy, usdPerShare, hbarUsd]);
 
+  // R5 (SELL-MINHBAR-COINGECKO-01): the minHbarOut FLOOR is priced off the POOL
+  // rate (`poolHbarUsd`) — the SAME slot0 price the inner USDC→WHBAR swap
+  // executes at — NOT CoinGecko. Flooring off CoinGecko while the swap runs at
+  // the pool price means a CoinGecko-vs-pool divergence prices the floor off a
+  // different rate than the trade and can revert the unzap. CoinGecko's
+  // `hbarUsd` stays a fallback ONLY when the pool read is unavailable, so the
+  // round-4 BLOCK is preserved: if BOTH are down (or usdPerShare is undefined)
+  // `priceFeedUnavailable` still fires and `run()` refuses — never a 1n floor.
+  const floorHbarUsd = poolHbarUsd ?? hbarUsd;
   const minHbarOutTinybar: bigint = useMemo(() => {
-    if (expectedHbarOut <= 0) return 1n;
-    const tinybars = BigInt(Math.floor(expectedHbarOut * 1e8));
+    if (parsedSy === 0n || usdPerShare === undefined || floorHbarUsd === undefined) return 1n;
+    const usdValue = Number(parsedSy) * usdPerShare;
+    const hbarFloor = usdValue / Math.max(1e-9, floorHbarUsd);
+    if (hbarFloor <= 0) return 1n;
+    const tinybars = BigInt(Math.floor(hbarFloor * 1e8));
     return (tinybars * BigInt(10_000 - slippageBps)) / 10_000n;
-  }, [expectedHbarOut, slippageBps]);
+  }, [parsedSy, usdPerShare, floorHbarUsd, slippageBps]);
 
   // F2 (ROUND-4): the unzap (SY → HBAR) needs a trustworthy price to set
   // minHbarOut. A 1n floor is NOT acceptable — the inner USDC→WHBAR leg uses

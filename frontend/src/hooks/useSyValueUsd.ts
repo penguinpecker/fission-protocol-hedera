@@ -570,6 +570,27 @@ export function useHbarUsd(): number | undefined {
   return hbarUsd ?? onChainHbarUsd;
 }
 
+/**
+ * R5 (SELL-MINHBAR-COINGECKO-01): the POOL-derived HBAR/USD rate — the rate the
+ * SaucerSwap USDC→WHBAR swap inside an unzap actually executes at, read straight
+ * from the V2 USDC/WHBAR pool `slot0` sqrtPriceX96 (reuses `useOnChainHbarUsd` /
+ * `deriveHbarUsdFromSqrtP`).
+ *
+ * Use this — NOT `useHbarUsd()` — when computing a `minHbarOut` floor for an
+ * unzap leg whose inner swap uses `amountOutMinimum: 0`. CoinGecko's spot price
+ * can drift below the pool's execution price; flooring off CoinGecko then lets a
+ * CoinGecko-underprices-pool divergence revert the unzap AFTER the position was
+ * already removed. Flooring off the SAME source the swap uses removes that
+ * divergence. CoinGecko (`useHbarUsd`) stays the preferred source for DISPLAY.
+ *
+ * Returns `undefined` while the pool reads are pending or if the pool read fails
+ * — callers must still BLOCK (never ship a 1n floor) when both this and
+ * CoinGecko are unavailable.
+ */
+export function usePoolHbarUsd(): number | undefined {
+  return useOnChainHbarUsd();
+}
+
 // ─────────────────────────────── on-chain HBAR/USD fallback ───────────────────────────────
 
 /**

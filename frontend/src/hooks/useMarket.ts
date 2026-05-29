@@ -1,10 +1,97 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useReadContracts } from "wagmi";
 import { erc20Abi, lensAbi, marketAbi, syAbi } from "@/lib/abis";
 import { ADDRESSES, USDC_DECIMALS, WHBAR_DECIMALS } from "@/lib/addresses";
 import { useHbarUsd, useSyValueUsd } from "@/hooks/useSyValueUsd";
+
+const MIRROR_BASE = "https://mainnet-public.mirrornode.hedera.com/api/v1";
+
+/**
+ * REALUSE-02: detect an Ed25519 "long-zero" EVM address. ECDSA accounts get a
+ * real keccak-derived evm_address (resolved from Mirror in provider.tsx), but a
+ * true Ed25519 account has NO alias, so the app keeps its deterministic
+ * long-zero form (`0x` + accountNum, left-padded with zeros). The HTS facade
+ * `balanceOf` precompile REVERTS with INVALID_ACCOUNT_ID for such an address,
+ * so every on-chain balance read silently resolves to 0 and the profile/position
+ * card render an all-zero state. We detect the long-zero shape (the account num
+ * fits well under 8 bytes, so the top 12 bytes are all zero) and source balances
+ * from Mirror Node instead, which works for Ed25519.
+ */
+function isLongZeroAddress(addr: `0x${string}`): boolean {
+  const hex = addr.toLowerCase().replace(/^0x/, "");
+  if (hex.length !== 40) return false;
+  // Top 12 bytes (24 hex chars) must be zero; the low 8 bytes hold the account
+  // num. A keccak-derived ECDSA alias is overwhelmingly unlikely to be all-zero
+  // there. Guard against the literal zero address (not a real account).
+  return hex.slice(0, 24) === "0".repeat(24) && hex.slice(24) !== "0".repeat(16);
+}
+
+/** Convert a long-zero EVM address (`0x000…NUM`) to a Hedera id (`0.0.NUM`). */
+function longZeroToHederaId(addr: `0x${string}`): string {
+  return `0.0.${BigInt(addr).toString()}`;
+}
+
+interface MirrorTokensResponse {
+  tokens?: Array<{ token_id: string; balance: number }>;
+  links?: { next?: string | null };
+}
+
+/**
+ * REALUSE-02: fetch HTS balances for an Ed25519 (long-zero) account from Mirror
+ * Node, since the facade `balanceOf` reverts for those keys. Returns a map of
+ * `0.0.X` token id → raw balance, or null while loading / on a true ECDSA
+ * account (where on-chain reads are used instead).
+ */
+function useEd25519Balances(
+  user: `0x${string}` | undefined,
+  enabled: boolean,
+): { balances: Record<string, bigint> | null; isLoading: boolean } {
+  const [balances, setBalances] = useState<Record<string, bigint> | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!enabled || !user) {
+      setBalances(null);
+      setIsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setIsLoading(true);
+    const accountId = longZeroToHederaId(user);
+    (async () => {
+      const out: Record<string, bigint> = {};
+      try {
+        // Page through the account's token relationships. The protocol tokens
+        // (PT/YT/LP/SY-share) live here regardless of key type.
+        let next: string | null = `${MIRROR_BASE}/accounts/${accountId}/tokens?limit=100`;
+        let guard = 0;
+        while (next && guard < 10) {
+          guard += 1;
+          const r: Response = await fetch(next);
+          if (!r.ok) break;
+          const data = (await r.json()) as MirrorTokensResponse;
+          for (const t of data.tokens ?? []) {
+            out[t.token_id] = BigInt(t.balance ?? 0);
+          }
+          const link = data.links?.next;
+          next = link ? `${MIRROR_BASE.replace(/\/api\/v1$/, "")}${link}` : null;
+        }
+        if (!cancelled) setBalances(out);
+      } catch {
+        if (!cancelled) setBalances({});
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, user]);
+
+  return { balances, isLoading };
+}
 
 /// Post-HTS-migration: PT/YT/LP/SY-shares are HTS-native fungibles. The market and SY
 /// contracts expose `pt() / yt() / lp() / shareToken()` getters returning the HTS
@@ -155,6 +242,15 @@ export function useUserPosition(
   //       AMM-fee split, denominated in SY-share units.
   // All reads use the F1-resolved `user` (real ECDSA evm alias from Mirror) so
   // the HTS facade balanceOf calls don't revert with INVALID_ACCOUNT_ID.
+  // REALUSE-02: a true Ed25519 account uses its long-zero address (no real evm
+  // alias exists), and the HTS facade `balanceOf` REVERTS for that — every
+  // balance below would silently resolve to 0n. Detect it and source the
+  // PT/YT/LP/SY balances from Mirror Node instead (works for Ed25519). The
+  // contract reads still fire (reward previews allowFailure to 0n), but the
+  // four token balances get overridden from mirror in the memo below.
+  const isEd25519 = !!user && isLongZeroAddress(user);
+  const { balances: mirrorBalances, isLoading: mirrorLoading } = useEd25519Balances(user, isEd25519);
+
   const lens = ADDRESSES.lens;
   const reads = market && detail && user
     ? [
@@ -185,6 +281,31 @@ export function useUserPosition(
   // Memoize for stable object identity across renders — consumers list
   // `position` in useEffect deps and would otherwise refire infinitely.
   const data = useMemo(() => {
+    // REALUSE-02: for an Ed25519 account, the on-chain facade reads above are
+    // useless (they revert → 0n). Hold rendering until the mirror-sourced
+    // balances land, then map token-id → PT/YT/LP/SY. The reward fields stay
+    // 0n (their contract reads also revert for Ed25519) — acceptable; the
+    // balances are what gate Redeem/Sell on the profile + position card.
+    if (isEd25519) {
+      if (!detail || !mirrorBalances) return undefined;
+      const bal = (tokenAddr: `0x${string}`): bigint => {
+        try {
+          return mirrorBalances[longZeroToHederaId(tokenAddr)] ?? 0n;
+        } catch {
+          return 0n;
+        }
+      };
+      return {
+        sy: bal(detail.syShare),
+        pt: bal(detail.pt),
+        yt: bal(detail.yt),
+        lp: bal(detail.lp),
+        claimableYield: 0n,
+        unclaimedRewardsRaw: { usdc: 0n, whbar: 0n, pendingPtAmm: 0n, pendingYtAmm: 0n },
+        unclaimedRewardsUsd: 0,
+      };
+    }
+
     if (!result.data) return undefined;
     const r = result.data;
     const pluck = <T,>(entry: { status: "success"; result: T } | { status: "failure"; error: Error } | undefined): T | undefined =>
@@ -222,8 +343,13 @@ export function useUserPosition(
       unclaimedRewardsRaw,
       unclaimedRewardsUsd,
     };
-  }, [result.data, hbarUsd, usdPerShare]);
+  }, [result.data, hbarUsd, usdPerShare, isEd25519, mirrorBalances, detail]);
 
-  if (!data) return { data: undefined, isLoading: result.isLoading };
+  if (!data) {
+    return {
+      data: undefined,
+      isLoading: isEd25519 ? mirrorLoading || mirrorBalances === null : result.isLoading,
+    };
+  }
   return { data, isLoading: false };
 }

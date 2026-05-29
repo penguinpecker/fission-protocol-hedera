@@ -22,7 +22,7 @@ import { useReadContract, useReadContracts, useWaitForTransactionReceipt } from 
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate } from "@/components/MarketPositionCard";
-import { useHbarUsd, useSyValueUsd } from "@/hooks/useSyValueUsd";
+import { useHbarUsd, usePoolHbarUsd, useSyValueUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, HEDERA_TOKENS, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
 import { erc20Abi } from "@/lib/abis";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
@@ -1111,7 +1111,13 @@ interface RemoveProps {
 function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
   const hedera = useHederaWallet();
   const { usdPerShare } = useSyValueUsd(detail.sy);
+  // CoinGecko-preferred rate — DISPLAY only (price-feed guard + USD hints).
   const hbarUsd = useHbarUsd();
+  // R5 (SELL-MINHBAR-COINGECKO-01): the POOL rate the inner USDC→WHBAR swap of
+  // the unzap actually executes at. The minHbarOut FLOOR is derived from this,
+  // not CoinGecko, so a CoinGecko-underprices-pool divergence can't revert Tx2
+  // after Tx1 already removed the LP. (Display keeps using `hbarUsd`.)
+  const poolHbarUsd = usePoolHbarUsd();
   const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
   const [usdStr, setUsdStr] = useState("");
   const [rawStr, setRawStr] = useState("");
@@ -1434,13 +1440,25 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
       // down OR the floor would round to ≤1n, REFUSE the unzap. Tx1 already
       // delivered SY to the user's wallet, so they keep their funds and can
       // retry the conversion (or sell the SY on /sy) once pricing is back.
-      if (priceFeedUnavailable || usdPerShare === undefined || hbarUsd === undefined) {
+      //
+      // R5 (SELL-MINHBAR-COINGECKO-01): the USD→HBAR divisor of the floor is the
+      // POOL rate (`poolHbarUsd`) — the SAME slot0 price the inner USDC→WHBAR
+      // swap executes at — NOT CoinGecko. Flooring off CoinGecko while the swap
+      // executes at the pool price means a CoinGecko-vs-pool divergence prices
+      // the floor off a different rate than the trade: the floor can land ABOVE
+      // the swap's real output and revert Tx2 AFTER Tx1 already removed the LP.
+      // Flooring off the pool removes that divergence. We keep CoinGecko's
+      // `hbarUsd` as a fallback rate ONLY if the pool read is unavailable, and we
+      // PRESERVE the round-4 BLOCK: if BOTH pool and CoinGecko are down (or
+      // usdPerShare is undefined) we refuse — never a 1n floor.
+      const floorHbarUsd = poolHbarUsd ?? hbarUsd;
+      if (priceFeedUnavailable || usdPerShare === undefined || floorHbarUsd === undefined) {
         setWriteError(
           "Price feed unavailable — your LP was withdrawn to SY in your wallet, but we can't safely price the SY→HBAR conversion. Convert it on the SY page once pricing is back.",
         );
         return false;
       }
-      const realHbarForDelta = (Number(syReceived) * usdPerShare) / Math.max(1e-9, hbarUsd);
+      const realHbarForDelta = (Number(syReceived) * usdPerShare) / Math.max(1e-9, floorHbarUsd);
       const minHbarOutReal =
         (BigInt(Math.floor(realHbarForDelta * 1e8)) * BigInt(10_000 - slippageBps)) / 10_000n;
       if (minHbarOutReal <= 1n) {
