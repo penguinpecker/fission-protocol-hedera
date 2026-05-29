@@ -51,7 +51,11 @@ export async function GET() {
     .select("address, display_name, avatar_url, twitter_handle, created_at, updated_at")
     .eq("address", s.address)
     .maybeSingle();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    // WEB2-04: never leak raw DB error text to the client.
+    console.error("profile GET db_error", error.message);
+    return NextResponse.json({ error: "db_error" }, { status: 500 });
+  }
   return NextResponse.json({ profile: data });
 }
 
@@ -79,7 +83,10 @@ export async function PATCH(req: NextRequest) {
     )
     .select("address, display_name, avatar_url, twitter_handle, created_at, updated_at")
     .single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("profile PATCH db_error", error.message);
+    return NextResponse.json({ error: "db_error" }, { status: 500 });
+  }
   return NextResponse.json({ profile: data });
 }
 
@@ -89,6 +96,9 @@ export async function DELETE() {
 
   const supa = createServiceRoleClient();
   const { error } = await supa.from("users").delete().eq("address", s.address);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("profile DELETE db_error", error.message);
+    return NextResponse.json({ error: "db_error" }, { status: 500 });
+  }
   return NextResponse.json({ ok: true });
 }

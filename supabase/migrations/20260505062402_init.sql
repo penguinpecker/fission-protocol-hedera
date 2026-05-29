@@ -4,12 +4,29 @@
 --
 --  Identity model: SIWE (Sign-In With Ethereum).
 --    - The user's EVM address IS the user id (stored lowercased everywhere).
---    - Supabase Auth JWT carries the address as `sub`. RLS uses `auth.jwt()`
---      to scope row access. No passwords.
 --    - One-shot nonces in `auth_nonces` enforce single-use challenges.
 --
---  Security defaults (top-tier practice):
---    - RLS enabled on EVERY table.
+--  ⚠️ RLS STATUS — READ THIS (corrected 2026-05-29, WEB2-RLS-01):
+--    The policies below were WRITTEN assuming a Supabase-Auth JWT carrying the
+--    address in `sub`, scoped via `public.jwt_address()` (which reads
+--    `request.jwt.claims`). That assumption is NOT how auth actually works.
+--    Authentication is a CUSTOM HS256 cookie minted in app code
+--    (frontend/src/lib/auth/session.ts) — it is NOT a Supabase JWT and is never
+--    presented to PostgREST. Every request that touches user data goes through
+--    the SERVICE-ROLE client (frontend/src/lib/supabase/server.ts), which
+--    BYPASSES RLS entirely.
+--      ⇒ `public.jwt_address()` always returns '' in production.
+--      ⇒ Every `... = public.jwt_address()` policy below is therefore INERT —
+--        it neither grants nor (since service-role bypasses RLS) restricts.
+--    THE REAL SECURITY BOUNDARY is per-route, in application code: each
+--    /api/* handler calls getSession() and filters its query by the session's
+--    own address (`.eq('address', s.address)`). The policies are kept as
+--    defense-in-depth ONLY for the (currently unused) anon/authenticated path;
+--    do not rely on them while the service-role routes are the access path.
+--
+--  Security defaults:
+--    - RLS enabled on EVERY table (but see the RLS STATUS note above — inert
+--      against the service-role access path the app actually uses).
 --    - All tables default-deny; access only via explicit policies.
 --    - `auth_nonces` is service-role-only — never reachable from the anon /
 --      authenticated client.
@@ -41,9 +58,12 @@ as $$
     and addr ~ '^0x[a-f0-9]{40}$';
 $$;
 
--- Pull the wallet address claim out of the JWT. The SIWE-issued JWT puts the
--- lowercased address in `sub`. Returns NULL when called by anon (no JWT) or
--- when the token has no sub.
+-- ⚠️ INERT in production (WEB2-RLS-01): this expects a Supabase-Auth JWT in
+-- `request.jwt.claims`, but the app authenticates with a custom HS256 cookie
+-- that is never sent to PostgREST, and all user-data access runs through the
+-- service-role client (which bypasses RLS). In practice this returns '' for
+-- every request. Retained only so the RLS policies remain syntactically valid
+-- should an anon/authenticated JWT path ever be wired up. See the header note.
 create or replace function public.jwt_address()
 returns text
 language sql
@@ -66,7 +86,12 @@ begin
 end;
 $$;
 
--- Trigger: lowercase any 0x address column on insert/update.
+-- DEAD CODE (WEB2-LOWERCASE-03): this trigger function was never attached to
+-- any table and its body is buggy (it selects one column value into the whole
+-- NEW record and never lowercases or writes back). Address lowercasing is
+-- handled in app code + enforced by the is_evm_address CHECK constraints.
+-- It is DROPPED by migration 20260529000000_drop_dead_lower_address_trigger.sql.
+-- Left here unchanged only to preserve this migration's historical bytes.
 create or replace function public.lower_address_columns()
 returns trigger
 language plpgsql

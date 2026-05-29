@@ -44,6 +44,23 @@ export async function GET(req: Request) {
     .eq("chain_id", hederaMainnet.id);
   if (!includeArchived) q = q.eq("is_archived", false);
   const { data, error } = await q.order("expiry", { ascending: true });
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ markets: data ?? [] });
+  if (error) {
+    // WEB2-04: opaque code out, detail to server logs only.
+    console.error("markets GET db_error", error.message);
+    return NextResponse.json({ error: "db_error" }, { status: 500 });
+  }
+
+  // LP-3: numeric(78,0) columns whose magnitude can exceed Number.MAX_SAFE_INTEGER
+  // (2^53) must serialize as strings, or JSON.stringify rounds them. supabase-js
+  // already returns numeric as text, but coerce defensively so the contract is
+  // explicit and stable regardless of driver behavior.
+  const markets = ((data ?? []) as unknown as Array<Record<string, unknown>>).map((m) => ({
+    ...m,
+    scalar_root_e18: m.scalar_root_e18 == null ? null : String(m.scalar_root_e18),
+    total_pt: m.total_pt == null ? null : String(m.total_pt),
+    total_sy_shares: m.total_sy_shares == null ? null : String(m.total_sy_shares),
+    last_ln_implied_rate: m.last_ln_implied_rate == null ? null : String(m.last_ln_implied_rate),
+    lp_total_supply: m.lp_total_supply == null ? null : String(m.lp_total_supply),
+  }));
+  return NextResponse.json({ markets });
 }

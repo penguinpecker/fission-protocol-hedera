@@ -1,5 +1,13 @@
 /**
- * /api/activity — decoded contract-call feed for a single user.
+ * /api/activity — decoded contract-call feed for the CURRENT signed-in user.
+ *
+ * Access control (WEB2-IDOR-02 fix, 2026-05-29): this route uses the
+ * service-role Supabase client, which bypasses RLS. It is therefore NOT a
+ * public feed — it requires a valid session cookie and binds the query to the
+ * session's own address. The client-supplied `address` query param is IGNORED
+ * (it used to let any caller read any address's activity_log rows). The only
+ * legitimate caller is the profile page, which always renders the logged-in
+ * user's own activity (frontend/src/app/profile/page.tsx).
  *
  * Pipeline:
  *   1. Pull the last ~10 calls from Hedera Mirror Node's `/contracts/results`
@@ -41,6 +49,7 @@ import {
 } from "@/lib/activity-abi-registry";
 import { decodeSelector } from "@/lib/selector-decoder";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { getSession } from "@/lib/auth/session";
 
 // ─────────────────────────────── types ───────────────────────────────
 
@@ -123,20 +132,22 @@ interface ActivityLogRow {
 }
 
 export async function GET(req: NextRequest) {
+  // WEB2-IDOR-02 fix: bind to the session's OWN address. Service role bypasses
+  // RLS, so without this any caller could read any address's activity_log rows
+  // via ?address=. The client-supplied `address` param is intentionally ignored.
+  const s = await getSession();
+  if (!s) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+  const address = s.address; // lowercased EVM hex from the validated cookie
+
   const url = new URL(req.url);
-  const address = url.searchParams.get("address");
   const limitParam = url.searchParams.get("limit");
   const limit = Math.max(1, Math.min(50, Number(limitParam) || 10));
-
-  if (!address || !/^(0x[0-9a-fA-F]{40}|0\.0\.\d+)$/.test(address)) {
-    return NextResponse.json({ error: "invalid_address" }, { status: 400 });
-  }
 
   // Mirror Node stores `from` as the account's long-zero alias for Hedera-
   // native accounts (0x000...<accountNum>), not the ECDSA-derived EVM alias.
   // So a user with both forms (HashPack ECDSA via wallet-connect) gets indexed
-  // under the long-zero. Resolve both forms and query OR so the user's
-  // history appears regardless of which address the frontend passes.
+  // under the long-zero. Resolve both forms for the session address and query
+  // OR so the user's history appears regardless of which form was indexed.
   const candidates = await resolveAddressForms(address);
 
   // Read from the persisted index (kept warm by the cron-indexer Railway

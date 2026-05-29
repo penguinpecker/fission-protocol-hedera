@@ -18,7 +18,7 @@ import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ytToSyRate } from "@/components/MarketPositionCard";
-import { useSyValueUsd } from "@/hooks/useSyValueUsd";
+import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
@@ -42,6 +42,7 @@ interface Props {
 
 type FlowKind =
   | { kind: "idle" }
+  | { kind: "granting" } // step 0: market.setOperator(periphery, true) — one-time
   | { kind: "selling" } // step 1: market.swapExactYtForSy → user holds SY
   | { kind: "approving" } // step 2: approve SY → unzap (once per wallet)
   | { kind: "unzapping" } // step 3: unzap.unzapSy → user holds HBAR
@@ -51,6 +52,7 @@ type FlowKind =
 export function SellYtForm({ market, detail, user }: Props) {
   const adapter = useWalletAdapter();
   const { usdPerShare } = useSyValueUsd(detail.sy);
+  const hbarUsd = useHbarUsd();
 
   const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
   const [usdStr, setUsdStr] = useState("");
@@ -96,6 +98,40 @@ export function SellYtForm({ market, detail, user }: Props) {
             functionName: "allowance",
             args: [user, ADDRESSES.periphery],
           } as const,
+          // W2-04: operator grant on the market — the sell routes through the
+          // operator-gated swapExactYtForSyFor; without it the Periphery reverts.
+          {
+            abi: [
+              {
+                type: "function",
+                name: "isOperator",
+                stateMutability: "view",
+                inputs: [
+                  { name: "owner", type: "address" },
+                  { name: "operator", type: "address" },
+                ],
+                outputs: [{ type: "bool" }],
+              },
+            ] as const,
+            address: market,
+            functionName: "isOperator",
+            args: [user, ADDRESSES.periphery],
+          } as const,
+          // SY-share balance — used to compute the post-Tx1 delta to unzap (W2-06).
+          {
+            abi: [
+              {
+                type: "function",
+                name: "balanceOf",
+                stateMutability: "view",
+                inputs: [{ name: "owner", type: "address" }],
+                outputs: [{ type: "uint256" }],
+              },
+            ] as const,
+            address: detail.syShare,
+            functionName: "balanceOf",
+            args: [user],
+          } as const,
         ]
       : [],
     query: { enabled: !!user },
@@ -104,6 +140,14 @@ export function SellYtForm({ market, detail, user }: Props) {
   const syAllowance =
     syAllowanceRead.data?.[0]?.status === "success"
       ? (syAllowanceRead.data[0].result as bigint)
+      : 0n;
+  const isOperator =
+    syAllowanceRead.data?.[1]?.status === "success"
+      ? (syAllowanceRead.data[1].result as boolean)
+      : false;
+  const onChainSyShare =
+    syAllowanceRead.data?.[2]?.status === "success"
+      ? (syAllowanceRead.data[2].result as bigint)
       : 0n;
 
   /* ─────────────────────────── YT balance via contract-tracked view */
@@ -199,6 +243,20 @@ export function SellYtForm({ market, detail, user }: Props) {
   const syEstimate = lensSyOut ?? linearEstimate;
   const minSyOut = (syEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
+  // W2-06: expected HBAR from unzapping the SY proceeds → minHbarOut floor for
+  // Tx2 (mirrors the /sy page's slippage-derived floor instead of 1n).
+  const expectedHbarOut: number = useMemo(() => {
+    if (syEstimate === 0n || usdPerShare === undefined || hbarUsd === undefined) return 0;
+    const usdValue = Number(syEstimate) * usdPerShare;
+    return usdValue / Math.max(1e-9, hbarUsd);
+  }, [syEstimate, usdPerShare, hbarUsd]);
+  const minHbarOutTinybar: bigint = useMemo(() => {
+    if (expectedHbarOut <= 0) return 1n;
+    const tinybars = BigInt(Math.floor(expectedHbarOut * 1e8));
+    const floored = (tinybars * BigInt(10_000 - slippageBps)) / 10_000n;
+    return floored > 0n ? floored : 1n;
+  }, [expectedHbarOut, slippageBps]);
+
   /* ─────────────────────────── primary handler (3-step YT → HBAR chain) */
 
   // YT → HBAR requires THREE user signatures (vs PT/LP's one) because YT is
@@ -212,10 +270,9 @@ export function SellYtForm({ market, detail, user }: Props) {
   //   2. IERC20(SY).approve(unzap, MAX)  (once-ever)    → set permission
   //   3. unzap.unzapSy(sy, minSyOut, 1, receiver=user)  → HBAR in wallet
   //
-  // After step 1 ships, the user has `≥minSyOut` SY but we don't read
-  // the exact delta — we pull `minSyOut` (guaranteed lower bound) so any
-  // surplus stays in their wallet. Future improvement: an unzap-aware
-  // lens preview that quotes HBAR-out directly.
+  // W2-06: after step 1 ships, the user holds the realized SY (≥minSyOut). We
+  // read the post-sell SY-share delta and unzap THAT (not just minSyOut, which
+  // left surplus stranded), with a slippage-derived minHbarOut floor.
   const chainInFlight = useRef(false);
   const onPrimary = useCallback(async () => {
     if (chainInFlight.current) return;
@@ -225,9 +282,34 @@ export function SellYtForm({ market, detail, user }: Props) {
     setWriteError(null);
     try {
       // Post-rebuild (2026-05-27): 2-tx Periphery flow.
-      // PREREQ: user must have called market.setOperator(periphery, true) once.
-      // (a one-time setup the dApp surfaces separately; this form does NOT include it).
       //
+      // Step 0 (W2-04): market.setOperator(periphery, true) — one-time per
+      //         wallet. sellYtForSy calls market.swapExactYtForSyFor(user, …)
+      //         which reverts (NotAuthorized) until the Periphery is operator.
+      //         There was previously no grant UX, so any user who hadn't run it
+      //         manually couldn't sell. Grant it inline.
+      if (!isOperator) {
+        setFlowState({ kind: "granting" });
+        const gResp = await adapter.write({
+          kind: "marketSetOperator",
+          market,
+          operator: ADDRESSES.periphery,
+          approved: true,
+        });
+        setLastTxHash(gResp.txHash);
+        await new Promise((r) => setTimeout(r, adapter.mode === "evm" ? 3500 : 1500));
+        await syAllowanceRead.refetch();
+      }
+
+      // Snapshot SY-share balance pre-sell so we can unzap the exact delta.
+      let preSell: bigint = onChainSyShare;
+      try {
+        const r = await syAllowanceRead.refetch();
+        if (r.data?.[2]?.status === "success") preSell = r.data[2].result as bigint;
+      } catch {
+        /* fall back to cached */
+      }
+
       // Step 1: Periphery.sellYtForSy — Periphery calls market.swapExactYtForSyFor(user, …)
       //         using the user's operator approval; wipes user's YT; sends SY to `user`.
       setFlowState({ kind: "selling" });
@@ -238,8 +320,26 @@ export function SellYtForm({ market, detail, user }: Props) {
       });
       setLastTxHash(sellResp.txHash);
 
+      // Read realized SY-share delta (Hashio mirror lag-aware). Falls back to
+      // the lens estimate if we never see movement.
+      await new Promise((r) => setTimeout(r, adapter.mode === "evm" ? 3500 : 1500));
+      let syReceived: bigint = syEstimate;
+      for (let i = 0; i < 5; i++) {
+        try {
+          const r = await syAllowanceRead.refetch();
+          const fresh = r.data?.[2]?.status === "success" ? (r.data[2].result as bigint) : preSell;
+          if (fresh > preSell) {
+            syReceived = fresh - preSell;
+            break;
+          }
+        } catch {
+          /* retry */
+        }
+        await new Promise((res) => setTimeout(res, 1000));
+      }
+
       // Step 2: approve SY → Periphery if allowance below the amount we'll pull.
-      if (syAllowance < minSyOut) {
+      if (syAllowance < syReceived) {
         setFlowState({ kind: "approving" });
         const aResp = await adapter.write({
           kind: "approveErc20",
@@ -252,12 +352,13 @@ export function SellYtForm({ market, detail, user }: Props) {
         await syAllowanceRead.refetch();
       }
 
-      // Step 3: Periphery.unzapSyToHbar — SY → HBAR delivered to user.
+      // Step 3: Periphery.unzapSyToHbar — full SY delta → HBAR delivered to user,
+      // floored by minHbarOut from the slippage chip.
       setFlowState({ kind: "unzapping" });
       const uResp = await adapter.write({
         kind: "writePeriphery",
         functionName: "unzapSyToHbar",
-        args: [detail.sy, minSyOut, 1n, 0n],
+        args: [detail.sy, syReceived, minHbarOutTinybar, 0n],
       });
       setLastTxHash(uResp.txHash);
       setFlowState({ kind: "done", finalTxHash: uResp.txHash });
@@ -268,10 +369,11 @@ export function SellYtForm({ market, detail, user }: Props) {
     } finally {
       chainInFlight.current = false;
     }
-  }, [adapter, detail.sy, detail.syShare, expired, insufficient, market, minSyOut, parsedYt, sizeLimit.exceeded, syAllowance, syAllowanceRead, user]);
+  }, [adapter, detail.sy, detail.syShare, expired, insufficient, isOperator, market, minHbarOutTinybar, minSyOut, onChainSyShare, parsedYt, sizeLimit.exceeded, syAllowance, syAllowanceRead, syEstimate, user]);
 
   const isPending =
     adapter.isWritePending ||
+    flowState.kind === "granting" ||
     flowState.kind === "selling" ||
     flowState.kind === "approving" ||
     flowState.kind === "unzapping";
@@ -331,12 +433,18 @@ export function SellYtForm({ market, detail, user }: Props) {
     if (insufficient) return "Insufficient YT";
     if (sizeLimit.exceeded) return "Trade too large for pool";
     if (flowState.kind === "error") return "Retry Sell YT → HBAR";
+    if (flowState.kind === "granting") return "Enabling selling…";
     if (flowState.kind === "selling") return "1/3 · Selling YT for SY…";
     if (flowState.kind === "approving") return "2/3 · Approving SY for unzap…";
     if (flowState.kind === "unzapping") return "3/3 · Unwrapping SY → HBAR…";
     if (flowState.kind === "done") return "✓ Done — HBAR in wallet";
     if (isConfirmingFinal) return "Waiting for confirmation…";
-    return syAllowance < minSyOut ? "Sell YT for HBAR (3 prompts)" : "Sell YT for HBAR (2 prompts)";
+    // Prompt count includes the one-time operator grant + SY approval when not
+    // yet set, plus the sell + unzap (the existing "(N prompts)" copy pattern).
+    {
+      const prompts = 2 + (isOperator ? 0 : 1) + (syAllowance < minSyOut ? 1 : 0);
+      return `Sell YT for HBAR (${prompts} prompts)`;
+    }
   };
 
   const buttonDisabled =

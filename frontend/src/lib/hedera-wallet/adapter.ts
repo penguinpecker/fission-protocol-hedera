@@ -123,6 +123,15 @@ export type WriteOp =
       ytIn: bigint;
       receiver: `0x${string}`;
     }
+  /**
+   * Claim accrued AMM-fee share (PT-holder + YT-holder buckets, paid in
+   * SY-share) from a FissionRewardsMarket. Used by the profile Claim buttons.
+   */
+  | { kind: "claimAmmRewards"; market: `0x${string}`; receiver: `0x${string}` }
+  /**
+   * Claim accrued SY yield rewards (reward tokens) from a FissionRewardsMarket.
+   */
+  | { kind: "claimRewards"; market: `0x${string}`; receiver: `0x${string}` }
   | {
       kind: "addLiquidity";
       router: `0x${string}`;
@@ -445,6 +454,24 @@ async function writeEvm(
           args: [op.ptIn, op.ytIn, op.receiver],
         }),
       };
+    case "claimAmmRewards":
+      return {
+        txHash: await writeContractAsync({
+          abi: marketWriteAbi,
+          address: op.market,
+          functionName: "claimAmmRewards",
+          args: [op.receiver],
+        }),
+      };
+    case "claimRewards":
+      return {
+        txHash: await writeContractAsync({
+          abi: marketWriteAbi,
+          address: op.market,
+          functionName: "claimRewards",
+          args: [op.receiver],
+        }),
+      };
     case "addLiquidity":
       // Post-rebuild: route directly to the market. The new Periphery doesn't
       // expose a addLiquidityProportional helper; the market's own addLiquidity
@@ -738,6 +765,22 @@ async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHa
           .addAddress(op.receiver),
         0,
         2_000_000,
+      );
+    case "claimAmmRewards":
+      return exec(
+        op.market,
+        "claimAmmRewards",
+        new ContractFunctionParameters().addAddress(op.receiver.replace(/^0x/, "")),
+        0,
+        2_500_000,
+      );
+    case "claimRewards":
+      return exec(
+        op.market,
+        "claimRewards",
+        new ContractFunctionParameters().addAddress(op.receiver.replace(/^0x/, "")),
+        0,
+        2_500_000,
       );
     case "addLiquidity":
       // Post-rebuild 2026-05-27: market.addLiquidity directly — Periphery v3

@@ -13,6 +13,7 @@ import { hederaMainnet } from "@/lib/chains";
 import { ADDRESSES, isDeployed } from "@/lib/addresses";
 import { factoryAbi, marketAbi, erc20Abi } from "@/lib/abis";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { timingSafeEqualStr } from "@/lib/auth/timing-safe";
 
 // Rewards-bearing SY adapters. The current live one + every retired one so
 // historical market records resolve correctly. Update when adding new ones.
@@ -44,7 +45,8 @@ async function refreshMarketsCache(req: NextRequest) {
   if (!expected) {
     return NextResponse.json({ error: "cron_secret_unset" }, { status: 500 });
   }
-  if (auth !== `Bearer ${expected}`) {
+  // WEB2-CRON-04: constant-time compare to avoid leaking the secret via timing.
+  if (!timingSafeEqualStr(auth ?? "", `Bearer ${expected}`)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

@@ -426,6 +426,19 @@ export const marketWriteAbi = [
     inputs: [{ name: "receiver", type: "address" }],
     outputs: [{ type: "uint256" }],
   },
+  // FissionRewardsMarket.claimRewards(receiver) — claims accrued SY-yield
+  // reward tokens (USDC/WHBAR underlying). Distinct from claimAmmRewards
+  // (swap-fee share paid in SY-share).
+  {
+    type: "function",
+    name: "claimRewards",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "receiver", type: "address" }],
+    outputs: [
+      { name: "amount0", type: "uint256" },
+      { name: "amount1", type: "uint256" },
+    ],
+  },
   {
     type: "function",
     name: "redeemAfterExpiry",

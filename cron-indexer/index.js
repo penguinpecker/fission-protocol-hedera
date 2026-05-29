@@ -94,19 +94,45 @@ function loadContractsFromDeployments() {
   // not the contract itself, as the grouping key.
   for (const m of d.markets ?? []) push(m.evm, `Market_${m.suffix ?? m.id}`, true);
 
-  // Abandoned-but-still-on-chain. Users with positions there can still
-  // redeem/withdraw, so we keep indexing them. Marked with `archived:true`
-  // (just a label — does not affect indexing semantics).
-  for (const evm of d.abandoned?.old_factories ?? []) push(evm, "Factory_archived");
-  for (const evm of d.abandoned?.old_markets ?? []) push(evm, "Market_archived", true);
+  // IDX-04: align to the real 295.json shape. The canonical file keys the
+  // abandoned stack as `abandoned.{factories,old_factories,old_periphery,
+  // old_lens,routers,old_markets,old_sy_v2_lp,fission_zap_v1,
+  // fission_unzap_v1,fission_megazap_v1,fission_gateway_v2,
+  // fission_gateway_v2_1}` plus a top-level `markets_archived[]` (objects
+  // with `.evm`). The previous loader read `d.abandoned_router_v1.evm` /
+  // `d.abandoned_zap_v1.evm` (which don't exist) and ignored `routers`,
+  // `factories`, the gateway/unzap/megazap entries, and `markets_archived`,
+  // so legacy router/factory/zap/unzap/megazap/gateway history never indexed.
+  const ab = d.abandoned ?? {};
+
+  // Archived markets keep `market: true` so historical rows carry the market
+  // address. Both the top-level markets_archived[] and abandoned.old_markets
+  // are covered (dedup at the end collapses overlaps, e.g. 0xfecf…).
+  for (const m of d.markets_archived ?? []) {
+    const evm = typeof m === "string" ? m : m?.evm;
+    push(evm, "Market_archived", true);
+  }
+  for (const evm of ab.old_markets ?? []) push(evm, "Market_archived", true);
+
+  // Abandoned-but-still-on-chain core/periphery. Users with positions there
+  // can still redeem/withdraw, so we keep indexing them.
+  for (const evm of ab.factories ?? []) push(evm, "Factory_archived");
+  for (const evm of ab.old_factories ?? []) push(evm, "Factory_archived");
   // Superseded peripheries/lenses still hold historical user Buy/Sell calls
   // (keyed by the market arg). Keep indexing them so legacy activity rows land.
-  for (const evm of d.abandoned?.old_periphery ?? []) push(evm, "FissionPeriphery_archived");
-  for (const evm of d.abandoned?.old_lens ?? []) push(evm, "Lens_archived");
-  push(d.abandoned_router_v1?.evm, "ActionRouter_v1_archived");
-  push(d.abandoned_zap_v1?.evm, "FissionZap_v1_archived");
-  for (const evm of d.abandoned?.old_sy_v2_lp ?? []) push(evm, "SY_v1_archived");
-  for (const evm of d.abandoned?.old_deployers ?? []) push(evm, "Deployer_archived");
+  for (const evm of ab.old_periphery ?? []) push(evm, "FissionPeriphery_archived");
+  for (const evm of ab.old_lens ?? []) push(evm, "Lens_archived");
+  // Legacy routers (ActionRouter v2/v3) — `routers[]` in the file.
+  for (const evm of ab.routers ?? []) push(evm, "ActionRouter_archived");
+  // Legacy SY adapters.
+  for (const evm of ab.old_sy_v2_lp ?? []) push(evm, "SY_v1_archived");
+  for (const evm of ab.old_deployers ?? []) push(evm, "Deployer_archived");
+  // Legacy single-address periphery entry points (string-valued keys).
+  push(ab.fission_zap_v1, "FissionZap_v1_archived");
+  push(ab.fission_unzap_v1, "FissionUnzap_v1_archived");
+  push(ab.fission_megazap_v1, "FissionMegaZap_v1_archived");
+  push(ab.fission_gateway_v2, "FissionGateway_v2_archived");
+  push(ab.fission_gateway_v2_1, "FissionGateway_v2_1_archived");
 
   // Dedup by evm.
   const seen = new Set();
@@ -119,52 +145,72 @@ function loadContractsFromDeployments() {
 
 const CONTRACTS = loadContractsFromDeployments();
 
-// Selector → canonical event_type (constrained by activity_log enum).
-// Each top-level user-facing call maps to the protocol-level event that
-// best describes what the user just did.
+// Selector → canonical event_type (constrained by activity_log enum:
+// split, merge, swap_pt_for_sy, swap_sy_for_pt, add_liquidity,
+// remove_liquidity, claim_yield, claim_rewards, redeem_after_expiry,
+// deposit, redeem). Each top-level user-facing call maps to the
+// protocol-level event that best describes what the user just did.
+//
+// 2026-05-29 (IDX-01): regenerated from contracts/out/*.json by computing
+// keccak(canonical signature)[0:4] for every state-changing function. The
+// live market is FissionRewardsMarket (AMM-fee redirect) + SY_SaucerSwapV2LP.
+// Added the live market's headline functions that were previously unmapped
+// (claimAmmRewards/harvestRewards/claimRewards/merge(uint256)/swapExactYtForSy
+// and the current SY redeemLiquidity). Removed the two stale ActionRouter
+// selectors (0xd1e04b89 / 0x82b1d54d) whose claimed signatures match no
+// deployed function — the real ActionRouter depositAndSplit is 0xd9591339 and
+// redeemAfterExpiryAndUnwrap is 0x58fe26ff (now mapped correctly). Every
+// selector below is verified against the compiled ABIs.
 const SELECTOR_TO_EVENT = {
-  // ActionRouter v2/v3 — IFissionMarketCommon arg encoded as address
+  // ActionRouter v2/v3 (abandoned routers) — market arg encoded as address
   "0xbf35db06": "swap_sy_for_pt",     // swapExactSyForPt(address,uint256,uint256,address,uint256)
   "0x690b343f": "swap_pt_for_sy",     // swapExactPtForSy(address,uint256,uint256,address,uint256)
   "0xc158091f": "swap_pt_for_sy",     // buyYT(address,uint256,uint256,address,uint256) — composite, fires swap_pt_for_sy
   "0x15ee88c3": "add_liquidity",      // addLiquidityProportional(address,uint256,uint256,uint256,address,uint256)
   "0xcff15d64": "remove_liquidity",   // removeLiquidityProportional(address,uint256,uint256,uint256,address,uint256)
-  "0xd1e04b89": "split",              // depositAndSplit(address,uint256,address,address,uint256)
-  "0x82b1d54d": "redeem_after_expiry",// redeemAfterExpiryAndUnwrap(address,uint256,uint256,address,uint256)
-  // Market (direct)
+  "0xd9591339": "split",              // depositAndSplit(address,address,uint256,uint256,address,uint256)
+  "0x58fe26ff": "redeem_after_expiry",// redeemAfterExpiryAndUnwrap(address,uint256,address,uint256,address,uint256)
+  // Market (direct) — live FissionRewardsMarket + FissionMarket + legacy
   "0xdbceb005": "split",              // split(uint256)
   "0x59d20b37": "split",              // splitTo(uint256,address,address)
-  "0x1d64ab72": "merge",              // merge(uint256,uint256,address)
-  "0x4c2e00d2": "merge",              // merge(uint256,address)
-  "0x7fd2778e": "redeem_after_expiry",// redeemAfterExpiry(uint256,address)
+  "0x24a47aeb": "merge",              // merge(uint256) — live market
+  "0x1d64ab72": "merge",              // merge(uint256,uint256,address) — legacy market
+  "0x4c2e00d2": "merge",              // merge(uint256,address) — legacy market
+  "0x7fd2778e": "redeem_after_expiry",// redeemAfterExpiry(uint256,address) — legacy market
   "0xffec999b": "redeem_after_expiry",// redeemAfterExpiry(uint256,uint256,address)
   "0xb576468e": "add_liquidity",      // addLiquidity(uint256,uint256,uint256,address)
   "0xe39b0eb5": "remove_liquidity",   // removeLiquidity(uint256,uint256,uint256,address)
   "0x73a888f6": "swap_sy_for_pt",     // swapExactSyForPt(uint256,uint256,address)
   "0x8488ba33": "swap_pt_for_sy",     // swapExactPtForSy(uint256,uint256,address)
-  // SY adapter
+  "0x2a48af1e": "swap_pt_for_sy",     // swapExactYtForSy(uint256,uint256,address) — direct sell-YT, YT→SY exit
+  "0xd1216aea": "claim_rewards",      // claimAmmRewards(address) — live market AMM-fee reward claim
+  "0x2be11ae2": "claim_rewards",      // harvestRewards() — live market harvest of underlying SY rewards
+  "0x999927df": "claim_yield",        // claimYield(address) — FissionMarket yield claim
+  // SY adapter (live SaucerSwapLPYieldSource / SY_SaucerSwapV2LP + legacy)
   "0x0c887b94": "deposit",            // depositLiquidity(uint256,uint256,uint256,uint256,address,uint128)
-  "0x675e3a96": "redeem",             // redeemLiquidity(uint128,uint256,uint256,address)
-  "0x4641257d": "claim_rewards",      // harvest()
-  "0x4e71d92d": "claim_yield",        // claim()
-  // FissionZap — HBAR → SY entry point
+  "0x5bced886": "redeem",             // redeemLiquidity(uint256,uint256,uint256,address) — live SY
+  "0x675e3a96": "redeem",             // redeemLiquidity(uint128,uint256,uint256,address) — legacy SY
+  "0xef5cfb8c": "claim_rewards",      // claimRewards(address) — live SY adapter (and market) reward claim
+  "0x4641257d": "claim_rewards",      // harvest() — SY adapter harvest
+  "0x4e71d92d": "claim_yield",        // claim() — legacy SY yield claim
+  // FissionZap — HBAR → SY entry point (abandoned v1)
   "0xe056955f": "deposit",            // zapHbarToSy(address,uint256,uint256,uint256,uint128,address)
-  // MegaZap — HBAR → PT/YT/LP one-shots (selectors verified on-chain 2026-05-25)
+  // MegaZap — HBAR → PT/YT/LP one-shots (abandoned v1)
   "0x2704fe5e": "swap_sy_for_pt",     // zapHbarToPt(address,address,uint256,address,uint256)
   "0x56cb65ef": "swap_pt_for_sy",     // zapHbarToYt — buyYT-equivalent, fires swap_pt_for_sy
   "0x38307f7b": "add_liquidity",      // zapHbarToLp(address,address,uint16,uint256,address,uint256)
-  // FissionUnzap — PT/SY/LP → HBAR one-shots
+  // FissionUnzap — PT/SY/LP → HBAR one-shots (abandoned v1)
   "0x151bf8f1": "swap_pt_for_sy",     // sellPtForHbar(address,uint256,uint256,address,uint256)
   "0x05b74d3d": "redeem",             // unzapSy(address,uint256,uint256,address)
   "0x485eb750": "remove_liquidity",   // sellLpForHbar(address,uint256,uint256,address,uint256)
-  // FissionPeriphery (2026-05-27 clean-slate redeploy) — 2-tx Buy/Sell flow.
+  // FissionPeriphery (live UUPS proxy + archived peripheries) — 2-tx Buy/Sell.
   "0x5cd4b2ba": "deposit",            // zapHbarToSy(address,address,uint256)
   "0x3ab0458a": "swap_sy_for_pt",     // buySyForPt(address,uint256,uint256,address,uint256)
   "0xa6be33fe": "swap_pt_for_sy",     // buySyForYt — composite, fires swap_pt_for_sy
-  "0xcbf84c49": "add_liquidity",      // buySyForLp v1 (6-arg) — old Periphery 0x8ce95cef..., kept for archived activity
-  "0x171109ef": "add_liquidity",      // buySyForLp v2 (7-arg, ptOutFromSwap) — Periphery v2 0x...a025c1
+  "0xcbf84c49": "add_liquidity",      // buySyForLp v1 (6-arg) — old periphery 0x8ce95cef..., kept for archived activity
+  "0x171109ef": "add_liquidity",      // buySyForLp v2 (7-arg, ptOutFromSwap) — live periphery
   "0x33b1da21": "swap_pt_for_sy",     // sellPtForSy(address,uint256,uint256,address,uint256)
-  "0x01829011": "swap_pt_for_sy",     // sellYtForSy(address,uint256,uint256,address,uint256) — uses operator path
+  "0x01829011": "swap_pt_for_sy",     // sellYtForSy(address,uint256,uint256,address,uint256) — operator path
   "0xde01e48e": "remove_liquidity",   // sellLpForSy(address,uint256,uint256,address,uint256)
   "0x047a7060": "redeem",             // unzapSyToHbar(address,uint256,uint256,uint256)
 };
@@ -172,15 +218,18 @@ const SELECTOR_TO_EVENT = {
 // Selectors whose first argument is the *market* address (decoded into
 // activity_log.market_address so the UI can filter rows by market).
 const MARKET_ARG0_SELECTORS = new Set([
-  "0xbf35db06","0x690b343f","0xc158091f","0x15ee88c3","0xcff15d64","0xd1e04b89","0x82b1d54d",
+  "0xbf35db06","0x690b343f","0xc158091f","0x15ee88c3","0xcff15d64","0xd9591339","0x58fe26ff",
   "0x2704fe5e","0x56cb65ef","0x38307f7b","0x151bf8f1","0x485eb750",
+  // IDX-06: live periphery zapHbarToSy(address market,address,uint256) — arg0 is
+  // the (registered) market, so the deposit row keeps its market_address.
+  "0x5cd4b2ba",
   "0x3ab0458a","0xa6be33fe","0xcbf84c49","0x171109ef","0x33b1da21","0x01829011","0xde01e48e",
 ]);
 
 // Selectors whose first argument is a *SY adapter* address (not a market).
 // We leave market_address NULL for these — the action isn't market-scoped.
 const SY_ARG0_SELECTORS = new Set([
-  "0xe056955f","0x05b74d3d","0x5cd4b2ba","0x047a7060",
+  "0xe056955f","0x05b74d3d","0x047a7060",
 ]);
 
 function decodeSelector(callData) {
@@ -249,16 +298,23 @@ async function supaSelect(path) {
 
 async function supaInsert(rows) {
   if (!rows.length) return { inserted: 0 };
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/activity_log`, {
-    method: "POST",
-    headers: {
-      apikey: SERVICE_KEY,
-      Authorization: `Bearer ${SERVICE_KEY}`,
-      "Content-Type": "application/json",
-      Prefer: "return=minimal",
+  // IDX-05: upsert with the activity_log composite unique key as the conflict
+  // target and ignore-duplicates resolution, so a row that races in between
+  // knownKeys() and this insert (or a same-batch repeat) no longer 409s and
+  // aborts the whole batch — it's silently skipped, matching ensureUsers().
+  const r = await fetch(
+    `${SUPABASE_URL}/rest/v1/activity_log?on_conflict=chain_id,tx_hash,event_type,address`,
+    {
+      method: "POST",
+      headers: {
+        apikey: SERVICE_KEY,
+        Authorization: `Bearer ${SERVICE_KEY}`,
+        "Content-Type": "application/json",
+        Prefer: "resolution=ignore-duplicates,return=minimal",
+      },
+      body: JSON.stringify(rows),
     },
-    body: JSON.stringify(rows),
-  });
+  );
   if (!r.ok) throw new Error(`insert ${r.status} ${await r.text()}`);
   return { inserted: rows.length };
 }
@@ -316,10 +372,39 @@ async function pollContract(c) {
       skipped++;
       return null;
     }
+
+    // IDX-03: failed/reverted calls. The mirror /contracts/{id}/results LIST
+    // endpoint omits `result`/`status` but DOES carry `error_message`
+    // (null on success, an error selector/string on revert). Previously
+    // `result: res.result` stored `undefined`, which the frontend coerced to
+    // "SUCCESS" — so reverted txs showed as successful actions. Skip any row
+    // with a non-null error_message so only successful actions are indexed.
+    if (res.error_message != null) {
+      skipped++;
+      return null;
+    }
+
     // Resolve from → ECDSA EVM alias (Mirror returns long-zero alias for
     // Hedera-native accounts, which the frontend can't query by).
     const fromRaw = (res.from ?? "").toLowerCase();
     const address = fromRaw ? await resolveEvmAlias(fromRaw) : "";
+
+    // IDX-02: activity_log.address has a CHECK (^0x[a-f0-9]{40}$) and a NOT
+    // NULL constraint. A missing/blank `from` (or an unresolvable alias)
+    // yields "" or a malformed value, which would abort the WHOLE batch
+    // insert with a 23514/23502. Quarantine the bad row here instead.
+    if (!/^0x[a-f0-9]{40}$/.test(address)) {
+      console.warn(JSON.stringify({
+        t: new Date().toISOString(),
+        msg: "skip_bad_address",
+        contract: c.name,
+        tx_hash: res.hash,
+        from_raw: fromRaw,
+        resolved: address,
+      }));
+      skipped++;
+      return null;
+    }
 
     // Decode market_address. Direct market call → c.evm. Router-mediated →
     // first arg of the call data when it's an address. Otherwise NULL.
@@ -346,8 +431,11 @@ async function pollContract(c) {
         to: res.to,
         amount_tinybars: res.amount,
         gas_used: res.gas_used,
-        result: res.result,
-        error_message: res.error_message ?? null,
+        // Only successful calls reach here (error_message gated above), so
+        // record the verified status explicitly rather than relying on the
+        // frontend's undefined→SUCCESS coercion.
+        result: "SUCCESS",
+        error_message: null,
         function_parameters: res.function_parameters,
         timestamp_consensus: res.timestamp,
       },
@@ -373,7 +461,19 @@ async function pollContract(c) {
   // Strip _ts_raw before insert (column doesn't exist).
   candidates.forEach((row) => delete row._ts_raw);
   const seen = await knownKeys(candidates);
-  const fresh = candidates.filter((row) => !seen.has(`${row.tx_hash}|${row.event_type}|${row.address}`));
+  // IDX-05: dedup within this batch on the composite unique key
+  // (chain_id,tx_hash,event_type,address). A single tx can legitimately
+  // surface the same (tx,event,addr) key more than once across the polled
+  // results (e.g. a composite call counted under two watched contracts), and
+  // a batch containing such a repeat would 409 entirely on insert.
+  const batchSeen = new Set();
+  const fresh = candidates.filter((row) => {
+    const key = `${row.chain_id}|${row.tx_hash}|${row.event_type}|${row.address}`;
+    if (seen.has(`${row.tx_hash}|${row.event_type}|${row.address}`)) return false;
+    if (batchSeen.has(key)) return false;
+    batchSeen.add(key);
+    return true;
+  });
   if (!fresh.length) return { fetched: results.length, inserted: 0, skipped };
   await ensureUsers(new Set(fresh.map((r) => r.address).filter(Boolean)));
   await supaInsert(fresh);

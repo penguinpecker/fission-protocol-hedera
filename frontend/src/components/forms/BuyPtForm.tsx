@@ -379,12 +379,20 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     async (syIn: bigint): Promise<boolean> => {
       if (!user) return false;
       setStatus({ kind: "buying", stepIdx: 4 });
-      const minSyOutBudget = (syIn * BigInt(10_000 - slippageBps)) / 10_000n;
+      // W2-01: buySyForPt(market, syIn, minPtOut, receiver, deadline) treats the
+      // 3rd arg as the EXACT ptOut to mint (the contract sets ptOut = minPtOut
+      // and refunds unused SY). Passing the SY budget here minted SY-many PT
+      // (~2% over-ask → revert / shortfall). Derive the PT floor from the PT
+      // estimate for THIS syIn (the actual SY acquired may differ from the
+      // pre-zap estimate), then apply the slippage chip.
+      const ptEstNum = ptRate > 0 ? Number(syIn) / Math.max(1e-9, ptRate) : 0;
+      const ptEstForSyIn = ptEstNum > 0 ? BigInt(Math.floor(ptEstNum)) : 0n;
+      const minPtForSwap = (ptEstForSyIn * BigInt(10_000 - slippageBps)) / 10_000n;
       try {
         const { txHash } = await adapter.write({
           kind: "writePeriphery",
           functionName: "buySyForPt",
-          args: [market, syIn, minSyOutBudget, user, 0n],
+          args: [market, syIn, minPtForSwap > 0n ? minPtForSwap : 1n, user, 0n],
         });
         setLastTxHash(txHash);
         setStatus({ kind: "done", finalTxHash: txHash });
@@ -396,7 +404,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         return false;
       }
     },
-    [adapter, market, slippageBps, setStatus, user],
+    [adapter, market, ptRate, slippageBps, setStatus, user],
   );
 
   /* ─────────────────────────── chain orchestrators */

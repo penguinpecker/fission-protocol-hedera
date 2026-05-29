@@ -50,35 +50,65 @@ export async function POST(req: NextRequest) {
   }
   const mode: Mode = ((body as CommonBody)?.mode ?? "eip191") as Mode;
 
-  // Origin gate stays the same in both flows.
-  const originHost = (() => {
-    const origin = req.headers.get("origin");
-    if (origin) {
-      try {
-        return new URL(origin).host;
-      } catch {
-        /* fall through */
-      }
+  // Origin gate. WEB2-02 fix: in production we fail CLOSED on a missing or
+  // untrusted Origin header. Previously a request with NO Origin fell back to
+  // the (attacker-uncontrolled-but-also-unbound) Host header, so an attacker
+  // who simply omitted the Origin header bypassed the gate. Now: prod requires
+  // a present, parseable, allowlisted Origin; dev keeps the Host fallback for
+  // local tooling that doesn't send Origin.
+  const isProd = process.env.NODE_ENV === "production";
+  const origin = req.headers.get("origin");
+  let originHost: string | null = null;
+  if (origin) {
+    try {
+      originHost = new URL(origin).host;
+    } catch {
+      originHost = null;
     }
-    return req.headers.get("host") ?? "localhost";
-  })();
-  if (process.env.NODE_ENV === "production") {
-    const PROD_HOSTS = new Set(["fissionp.com", "www.fissionp.com"]);
-    const isPreview =
-      originHost.endsWith(".vercel.app") && originHost.startsWith("frontend-");
-    const isLocal = /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(originHost);
-    if (!PROD_HOSTS.has(originHost) && !isPreview && !isLocal) {
-      return NextResponse.json(
-        { error: "untrusted_origin", host: originHost },
-        { status: 401 },
-      );
+  }
+  if (isProd) {
+    // Fail closed: no Origin (or unparseable) → untrusted.
+    if (!originHost || !isTrustedProdHost(originHost)) {
+      return NextResponse.json({ error: "untrusted_origin" }, { status: 401 });
     }
+  } else if (!originHost) {
+    // Dev only: tolerate missing Origin by falling back to Host.
+    originHost = req.headers.get("host") ?? "localhost";
   }
 
+  // From here originHost is a trusted host (prod) or best-effort (dev).
+  const effectiveHost = originHost ?? (req.headers.get("host") ?? "localhost");
+
   if (mode === "hedera") {
-    return verifyHedera(body as HederaBody, req);
+    return verifyHedera(body as HederaBody, req, effectiveHost);
   }
-  return verifyEip191(body as Eip191Body, originHost, req);
+  return verifyEip191(body as Eip191Body, effectiveHost, req);
+}
+
+/**
+ * Server-side host allowlist for production logins.
+ *
+ * LP-1 fix: include the canonical Vercel production alias
+ * (fission-protocol.vercel.app) alongside the custom domains so logins work on
+ * that alias too (previously only www.fissionp.com / fissionp.com were trusted,
+ * and the alias returned untrusted_origin).
+ *
+ * Preview-host logic is preserved: `frontend-*.vercel.app` deploy previews and
+ * localhost remain trusted.
+ */
+const PROD_HOSTS = new Set([
+  "fissionp.com",
+  "www.fissionp.com",
+  "fission-protocol.vercel.app", // LP-1: canonical Vercel production alias
+]);
+
+function isTrustedProdHost(host: string): boolean {
+  if (PROD_HOSTS.has(host)) return true;
+  // Deploy previews: frontend-<hash>-<scope>.vercel.app
+  if (host.endsWith(".vercel.app") && host.startsWith("frontend-")) return true;
+  // Local tooling pointed at a prod build.
+  if (/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) return true;
+  return false;
 }
 
 /* ───────────────────────────────────────────────── EIP-191 / SIWE path */
@@ -100,16 +130,13 @@ async function verifyEip191(body: Eip191Body, originHost: string, req: NextReque
   try {
     verified = await siwe.verify({ signature, domain: originHost, nonce: siwe.nonce });
   } catch (e) {
-    return NextResponse.json(
-      { error: "siwe_verify_threw", expected: originHost, gotInMessage: siwe.domain, detail: String(e) },
-      { status: 401 },
-    );
+    // WEB2-04: log diagnostics server-side, return an opaque code to the client.
+    console.error("siwe_verify_threw", { expected: originHost, gotInMessage: siwe.domain, detail: String(e) });
+    return NextResponse.json({ error: "siwe_verify_threw" }, { status: 401 });
   }
   if (!verified.success) {
-    return NextResponse.json(
-      { error: "siwe_verify_failed", expected: originHost, gotInMessage: siwe.domain },
-      { status: 401 },
-    );
+    console.error("siwe_verify_failed", { expected: originHost, gotInMessage: siwe.domain });
+    return NextResponse.json({ error: "siwe_verify_failed" }, { status: 401 });
   }
   if (siwe.chainId !== EXPECTED_CHAIN_ID) {
     return NextResponse.json({ error: "wrong_chain" }, { status: 400 });
@@ -121,6 +148,29 @@ async function verifyEip191(body: Eip191Body, originHost: string, req: NextReque
 
 /* ─────────────────────────────────────────────── Hedera-native sig path */
 
+/**
+ * WEB2-01: verify the signed Hedera message commits to OUR host.
+ *
+ * The client builds the first line as
+ *   `<host> wants you to sign in with your Hedera account:`
+ * (see useSiweAuth.ts). We require that exact prefix with the server-trusted
+ * host, so a message signed for some other domain can't be replayed here.
+ */
+function messageBindsHost(message: string, host: string): boolean {
+  const firstLine = message.split("\n", 1)[0] ?? "";
+  return firstLine === `${host} wants you to sign in with your Hedera account:`;
+}
+
+/**
+ * WEB2-AUTH-03: verify the signed Hedera message commits to the expected chain.
+ * Mirrors the EIP-191 path's `siwe.chainId !== EXPECTED_CHAIN_ID` check.
+ * The client emits a literal `Chain ID: <n>` line.
+ */
+function messageBindsChainId(message: string, chainId: number): boolean {
+  const m = message.match(/^Chain ID:\s*(\d+)\s*$/m);
+  return m !== null && Number(m[1]) === chainId;
+}
+
 /** Construct the canonical long-zero EVM address from a Hedera account ID. */
 function longZeroFromAccountId(accountId: string): string {
   const parts = accountId.split(".");
@@ -130,13 +180,26 @@ function longZeroFromAccountId(accountId: string): string {
   return "0x" + num.toString(16).padStart(40, "0");
 }
 
-async function verifyHedera(body: HederaBody, req: NextRequest) {
+async function verifyHedera(body: HederaBody, req: NextRequest, originHost: string) {
   const { accountId, message, signatureMap } = body;
   if (typeof accountId !== "string" || typeof message !== "string" || typeof signatureMap !== "string") {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
   if (!/^0\.0\.\d+$/.test(accountId)) {
     return NextResponse.json({ error: "bad_account_id" }, { status: 400 });
+  }
+
+  // WEB2-01 + WEB2-AUTH-03 fix: the Hedera path previously validated only the
+  // Nonce line, so a signed message harvested for one domain/chain was replayable
+  // against this server. Mirror the EIP-191/SIWE binding: require the signed
+  // message to carry BOTH the server-allowlisted host AND the expected Chain ID.
+  // The client constructs the message; we refuse to honor a signature unless the
+  // signed text commits to our host + chain.
+  if (!messageBindsHost(message, originHost)) {
+    return NextResponse.json({ error: "domain_mismatch" }, { status: 401 });
+  }
+  if (!messageBindsChainId(message, EXPECTED_CHAIN_ID)) {
+    return NextResponse.json({ error: "wrong_chain" }, { status: 400 });
   }
 
   // 1. Fetch the account's current public key from Mirror Node — authoritative
@@ -152,10 +215,9 @@ async function verifyHedera(body: HederaBody, req: NextRequest) {
     if (!j.key?.key) throw new Error("no key in mirror response");
     publicKeyString = j.key.key;
   } catch (e) {
-    return NextResponse.json(
-      { error: "mirror_lookup_failed", detail: String(e) },
-      { status: 502 },
-    );
+    // WEB2-04: opaque code out, detail to server logs only.
+    console.error("mirror_lookup_failed", String(e));
+    return NextResponse.json({ error: "mirror_lookup_failed" }, { status: 502 });
   }
 
   // 2. Verify the signature using the library helper. This re-applies the
@@ -172,10 +234,9 @@ async function verifyHedera(body: HederaBody, req: NextRequest) {
     const publicKey = sdk.PublicKey.fromString(publicKeyString);
     ok = (hwc as { verifyMessageSignature: (m: string, s: string, k: typeof publicKey) => boolean }).verifyMessageSignature(message, signatureMap, publicKey);
   } catch (e) {
-    return NextResponse.json(
-      { error: "hedera_verify_threw", detail: String(e) },
-      { status: 401 },
-    );
+    // WEB2-04: opaque code out, detail to server logs only.
+    console.error("hedera_verify_threw", String(e));
+    return NextResponse.json({ error: "hedera_verify_threw" }, { status: 401 });
   }
   if (!ok) {
     return NextResponse.json({ error: "hedera_verify_failed" }, { status: 401 });

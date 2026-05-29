@@ -17,6 +17,7 @@
     }
   ],
   "crons": [
-    { "path": "/api/markets/refresh", "schedule": "0 0 * * *" }
+    { "path": "/api/markets/refresh", "schedule": "0 0 * * *" },
+    { "path": "/api/auth/cleanup", "schedule": "30 3 * * *" }
   ]
 }

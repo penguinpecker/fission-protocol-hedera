@@ -17,10 +17,22 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { randomBytes } from "node:crypto";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { rateLimit, clientIp } from "@/lib/rate-limit";
 
 const NONCE_TTL_MS = 5 * 60 * 1000;
 
 export async function POST(req: NextRequest) {
+  // WEB2-07: best-effort per-IP cap (no new infra). 30 nonce mints / minute is
+  // far above any honest login flow but caps a hot instance from being a free
+  // CSPRNG/insert amplifier. See lib/rate-limit.ts for limitations.
+  const rl = rateLimit(`nonce:${clientIp(req)}`, 30, 60_000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: "rate_limited" },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
+    );
+  }
+
   let body: unknown;
   try {
     body = await req.json();

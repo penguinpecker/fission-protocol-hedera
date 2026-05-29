@@ -1,0 +1,23 @@
+-- Drop the dead, buggy lower_address_columns() trigger function (WEB2-LOWERCASE-03).
+--
+-- Why:
+--   `public.lower_address_columns()` was defined in 20260505062402_init.sql as a
+--   generic "lowercase the named address columns on insert/update" trigger
+--   function. It was NEVER attached to any table (grep the migrations: zero
+--   `create trigger ... lower_address_columns` statements), so it has never run.
+--
+--   It is also buggy: the body does
+--       execute format('select ($1).%I', tg_argv[i]) into new using new;
+--   which selects a single COLUMN value into the whole NEW record, and never
+--   lowercases anything or writes the value back. Even if it had been attached,
+--   it would have corrupted NEW rather than lowercasing the address columns.
+--
+--   Address lowercasing is already enforced correctly at the application layer
+--   (every route lowercases before insert) and by the is_evm_address CHECK
+--   constraints (which require ^0x[a-f0-9]{40}$, rejecting any upper-case hex).
+--   So the function is pure dead weight.
+--
+-- Safety: no table data is touched. We only drop a function that is attached to
+-- nothing. `if exists` makes this idempotent / safe to re-run.
+
+drop function if exists public.lower_address_columns();

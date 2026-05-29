@@ -62,6 +62,25 @@ const marketIsOperatorAbi = [
     inputs: [],
     outputs: [{ type: "address" }],
   },
+  {
+    type: "function",
+    name: "sy",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address" }],
+  },
+] as const;
+
+// SY adapter → HTS share token. The standing SY allowance the Periphery
+// actually uses lives on the SHARE token, not the adapter (W2-08).
+const syShareTokenAbi = [
+  {
+    type: "function",
+    name: "shareToken",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address" }],
+  },
 ] as const;
 
 interface Props {
@@ -77,34 +96,52 @@ export function ApprovalsCard({ user }: Props) {
   const peripheryDeployed = isDeployed(ADDRESSES.periphery);
   const marketDeployed = isDeployed(ADDRESSES.market);
 
-  // Read PT + LP addresses from market (we don't have these in addresses.ts —
-  // they're per-market HTS tokens). Then read allowances.
+  // Read PT + LP + SY-adapter addresses from market (we don't have these in
+  // addresses.ts — they're per-market HTS tokens). Then resolve the SY share
+  // token from the adapter, then read allowances.
   const tokens = useReadContracts({
     contracts: marketDeployed
       ? [
           { abi: marketIsOperatorAbi, address: ADDRESSES.market, functionName: "pt" } as const,
           { abi: marketIsOperatorAbi, address: ADDRESSES.market, functionName: "lp" } as const,
+          { abi: marketIsOperatorAbi, address: ADDRESSES.market, functionName: "sy" } as const,
         ]
       : [],
     query: { enabled: marketDeployed },
   });
   const ptAddr = tokens.data?.[0]?.status === "success" ? (tokens.data[0].result as `0x${string}`) : undefined;
   const lpAddr = tokens.data?.[1]?.status === "success" ? (tokens.data[1].result as `0x${string}`) : undefined;
+  const syAdapterAddr = tokens.data?.[2]?.status === "success" ? (tokens.data[2].result as `0x${string}`) : undefined;
+
+  // W2-08: resolve the HTS share token from the adapter. The SY allowance the
+  // Periphery actually holds (int64.max, set during sells) lives on this token,
+  // not the adapter (a03f9d) which has no allowance() → always read 0.
+  const shareTokenRead = useReadContracts({
+    contracts: syAdapterAddr
+      ? [{ abi: syShareTokenAbi, address: syAdapterAddr, functionName: "shareToken" } as const]
+      : [],
+    query: { enabled: !!syAdapterAddr },
+    allowFailure: true,
+  });
+  const syShareAddr =
+    shareTokenRead.data?.[0]?.status === "success"
+      ? (shareTokenRead.data[0].result as `0x${string}`)
+      : undefined;
 
   // Read approvals.
   const reads = useReadContracts({
-    contracts: user && peripheryDeployed && ptAddr && lpAddr
+    contracts: user && peripheryDeployed && ptAddr && lpAddr && syShareAddr
       ? [
           {
             abi: marketIsOperatorAbi, address: ADDRESSES.market,
             functionName: "isOperator", args: [user, ADDRESSES.periphery],
           } as const,
-          { abi: erc20AllowanceAbi, address: ADDRESSES.syAdapter, functionName: "allowance", args: [user, ADDRESSES.periphery] } as const,
+          { abi: erc20AllowanceAbi, address: syShareAddr, functionName: "allowance", args: [user, ADDRESSES.periphery] } as const,
           { abi: erc20AllowanceAbi, address: ptAddr, functionName: "allowance", args: [user, ADDRESSES.periphery] } as const,
           { abi: erc20AllowanceAbi, address: lpAddr, functionName: "allowance", args: [user, ADDRESSES.periphery] } as const,
         ]
       : [],
-    query: { enabled: !!user && peripheryDeployed && !!ptAddr && !!lpAddr },
+    query: { enabled: !!user && peripheryDeployed && !!ptAddr && !!lpAddr && !!syShareAddr },
     allowFailure: true,
   });
 
@@ -175,12 +212,12 @@ export function ApprovalsCard({ user }: Props) {
       active: isOp,
       revoke: onRevokeOperator,
     },
-    {
+    ...(syShareAddr ? [{
       label: "SY share spend allowance",
       value: syAllow > 0n ? "Active" : "0",
       active: syAllow > 0n,
-      revoke: () => onRevokeAllowance(ADDRESSES.syAdapter, "SY share"),
-    },
+      revoke: () => onRevokeAllowance(syShareAddr, "SY share"),
+    }] : []),
     ...(ptAddr ? [{
       label: "PT spend allowance",
       value: ptAllow > 0n ? "Active" : "0",

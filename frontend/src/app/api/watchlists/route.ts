@@ -27,7 +27,11 @@ export async function GET() {
     .select("chain_id, market_address, added_at")
     .eq("address", s.address)
     .order("added_at", { ascending: false });
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    // WEB2-04: opaque code out, detail to server logs only.
+    console.error("watchlists GET db_error", error.message);
+    return NextResponse.json({ error: "db_error" }, { status: 500 });
+  }
   return NextResponse.json({ watchlist: data ?? [] });
 }
 
@@ -58,7 +62,10 @@ export async function POST(req: NextRequest) {
     },
     { onConflict: "address,chain_id,market_address" },
   );
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("watchlists POST db_error", error.message);
+    return NextResponse.json({ error: "db_error" }, { status: 500 });
+  }
   return NextResponse.json({ ok: true });
 }
 
@@ -85,6 +92,9 @@ export async function DELETE(req: NextRequest) {
     .eq("address", s.address)
     .eq("chain_id", chainId)
     .eq("market_address", marketAddress.toLowerCase());
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("watchlists DELETE db_error", error.message);
+    return NextResponse.json({ error: "db_error" }, { status: 500 });
+  }
   return NextResponse.json({ ok: true });
 }

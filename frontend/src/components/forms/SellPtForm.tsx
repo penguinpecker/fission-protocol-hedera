@@ -17,8 +17,9 @@ import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate } from "@/components/MarketPositionCard";
-import { useSyValueUsd } from "@/hooks/useSyValueUsd";
+import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
+import { lensAbi } from "@/lib/abis";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
@@ -40,15 +41,18 @@ interface Props {
 
 type FlowKind =
   | { kind: "idle" }
-  | { kind: "approving" }
+  | { kind: "granting" } // tx0: market.setOperator(periphery, true) — one-time
+  | { kind: "approving" } // approve PT → Periphery
+  | { kind: "approvingSy" } // approve SY-share → Periphery (for tx2 unzap)
   | { kind: "selling" } // tx1: PT → SY
   | { kind: "unzapping" } // tx2: SY → HBAR
   | { kind: "done"; finalTxHash: string }
-  | { kind: "error"; message: string; failedAt: "approve" | "sell" | "unzap" };
+  | { kind: "error"; message: string; failedAt: "grant" | "approve" | "approveSy" | "sell" | "unzap" };
 
 export function SellPtForm({ market, detail, user }: Props) {
   const adapter = useWalletAdapter();
   const { usdPerShare } = useSyValueUsd(detail.sy);
+  const hbarUsd = useHbarUsd();
 
   const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
   const [usdStr, setUsdStr] = useState("");
@@ -76,40 +80,56 @@ export function SellPtForm({ market, detail, user }: Props) {
   /* ─────────────────────────── PT balance + allowance reads */
 
   const spender: `0x${string}` = ADDRESSES.periphery;
+  const erc20AllowanceAbi = [
+    {
+      type: "function",
+      name: "allowance",
+      stateMutability: "view",
+      inputs: [
+        { name: "owner", type: "address" },
+        { name: "spender", type: "address" },
+      ],
+      outputs: [{ type: "uint256" }],
+    },
+  ] as const;
+  const erc20BalanceAbi = [
+    {
+      type: "function",
+      name: "balanceOf",
+      stateMutability: "view",
+      inputs: [{ name: "owner", type: "address" }],
+      outputs: [{ type: "uint256" }],
+    },
+  ] as const;
   const ptRead = useReadContracts({
     contracts: user
       ? [
+          { abi: erc20BalanceAbi, address: detail.pt, functionName: "balanceOf", args: [user] } as const,
+          { abi: erc20AllowanceAbi, address: detail.pt, functionName: "allowance", args: [user, spender] } as const,
+          // W2-04: operator grant on the market — the sell routes through the
+          // operator-gated swapExactPtForSyFor; without it the Periphery reverts.
           {
             abi: [
               {
                 type: "function",
-                name: "balanceOf",
-                stateMutability: "view",
-                inputs: [{ name: "owner", type: "address" }],
-                outputs: [{ type: "uint256" }],
-              },
-            ] as const,
-            address: detail.pt,
-            functionName: "balanceOf",
-            args: [user],
-          } as const,
-          {
-            abi: [
-              {
-                type: "function",
-                name: "allowance",
+                name: "isOperator",
                 stateMutability: "view",
                 inputs: [
                   { name: "owner", type: "address" },
-                  { name: "spender", type: "address" },
+                  { name: "operator", type: "address" },
                 ],
-                outputs: [{ type: "uint256" }],
+                outputs: [{ type: "bool" }],
               },
             ] as const,
-            address: detail.pt,
-            functionName: "allowance",
+            address: market,
+            functionName: "isOperator",
             args: [user, spender],
           } as const,
+          // W2-05: SY-share allowance to the Periphery — Tx2 (unzapSyToHbar)
+          // pulls the SY-share token via transferFrom; without this it reverts.
+          { abi: erc20AllowanceAbi, address: detail.syShare, functionName: "allowance", args: [user, spender] } as const,
+          // SY-share balance — used to compute the post-Tx1 delta to unzap.
+          { abi: erc20BalanceAbi, address: detail.syShare, functionName: "balanceOf", args: [user] } as const,
         ]
       : [],
     query: { enabled: !!user },
@@ -119,6 +139,12 @@ export function SellPtForm({ market, detail, user }: Props) {
     ptRead.data?.[0]?.status === "success" ? (ptRead.data[0].result as bigint) : 0n;
   const allowance =
     ptRead.data?.[1]?.status === "success" ? (ptRead.data[1].result as bigint) : 0n;
+  const isOperator =
+    ptRead.data?.[2]?.status === "success" ? (ptRead.data[2].result as boolean) : false;
+  const syShareAllowance =
+    ptRead.data?.[3]?.status === "success" ? (ptRead.data[3].result as bigint) : 0n;
+  const onChainSyShare =
+    ptRead.data?.[4]?.status === "success" ? (ptRead.data[4].result as bigint) : 0n;
   // Ed25519 long-zero EVM addresses cause HTS-facade balanceOf to revert. Detect
   // that case so the "insufficient balance" gate doesn't dead-lock the form for
   // an Ed25519 user who actually holds PT. When the read failed, we skip the
@@ -153,17 +179,104 @@ export function SellPtForm({ market, detail, user }: Props) {
 
   /* ─────────────────────────── SY estimate + slippage floor */
 
-  // Estimated SY-out using the same linear approximation the other forms use
-  // (real AMM has curvature; the on-chain `swapExactPtForSy` re-computes the
-  // exact figure and reverts if it falls below `minSyOut`).
-  const syEstimateNum =
-    parsedPt > 0n && ptRate > 0 ? Number(parsedPt) * ptRate : 0;
-  const syEstimate = syEstimateNum > 0 ? BigInt(Math.floor(syEstimateNum)) : 0n;
+  // W2-07: use lens.previewSwapExactPtForSy(market, ptIn) for the exact AMM
+  // output, falling back to the linear approximation only if the lens isn't
+  // deployed in this env. The linear model drifts; the lens matches the curve.
+  const lensReady = isDeployed(ADDRESSES.lens) && parsedPt > 0n;
+  const lensRead = useReadContracts({
+    contracts: lensReady
+      ? [
+          {
+            abi: lensAbi,
+            address: ADDRESSES.lens,
+            functionName: "previewSwapExactPtForSy",
+            args: [market, parsedPt],
+          } as const,
+        ]
+      : [],
+    query: { enabled: lensReady },
+    allowFailure: true,
+  });
+  const lensSyOut =
+    lensRead.data?.[0]?.status === "success"
+      ? (lensRead.data[0].result as bigint)
+      : undefined;
+  const linearEstimate =
+    parsedPt > 0n && ptRate > 0 ? BigInt(Math.floor(Number(parsedPt) * ptRate)) : 0n;
+  const syEstimate = lensSyOut ?? linearEstimate;
+  // W2-07: minSyOut from the preview × (1 − slippage), no longer a decorative 1n.
   const minSyOut = (syEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
+  // W2-06-style: expected HBAR from unzapping the SY proceeds, for the Tx2
+  // minHbarOut floor (mirrors the /sy page pattern).
+  const expectedHbarOut: number = useMemo(() => {
+    if (syEstimate === 0n || usdPerShare === undefined || hbarUsd === undefined) return 0;
+    const usdValue = Number(syEstimate) * usdPerShare;
+    return usdValue / Math.max(1e-9, hbarUsd);
+  }, [syEstimate, usdPerShare, hbarUsd]);
+
   const needsApprove = parsedPt > 0n && allowance < parsedPt;
+  const needsGrant = parsedPt > 0n && !isOperator;
+  const needsSyApprove = parsedPt > 0n && syShareAllowance < syEstimate;
 
   /* ─────────────────────────── flow runners */
+
+  // Snapshot the user's SY-share balance before Tx1 so Tx2 can unzap exactly
+  // the delta the sell delivered (rather than an estimate or a stale figure).
+  const readSyShareBalance = useCallback(async (): Promise<bigint> => {
+    try {
+      const r = await ptRead.refetch();
+      if (r.data?.[4]?.status === "success") return r.data[4].result as bigint;
+    } catch {
+      /* fall through */
+    }
+    return onChainSyShare;
+  }, [ptRead, onChainSyShare]);
+
+  // Poll the SY-share balance after Tx1 (Hashio mirror lags 1-2s) and return
+  // the realized delta (post - pre); falls back to the lens estimate.
+  const readPostSellSyDelta = useCallback(
+    async (preSell: bigint, fallback: bigint): Promise<bigint> => {
+      for (let i = 0; i < 5; i++) {
+        try {
+          const r = await ptRead.refetch();
+          const fresh = r.data?.[4]?.status === "success" ? (r.data[4].result as bigint) : preSell;
+          if (fresh > preSell) return fresh - preSell;
+        } catch {
+          /* retry */
+        }
+        await new Promise((res) => setTimeout(res, 1000));
+      }
+      return fallback;
+    },
+    [ptRead],
+  );
+
+  // W2-04: one-time operator grant on the market. The Periphery's sellPtForSy
+  // calls market.swapExactPtForSyFor(user, …) and reverts (NotAuthorized) until
+  // the user has set the Periphery as operator. Reuses the existing
+  // marketSetOperator op with approved:true.
+  const runGrant = useCallback(async (): Promise<boolean> => {
+    if (!user) return false;
+    setFlowState({ kind: "granting" });
+    try {
+      const { txHash } = await adapter.write({
+        kind: "marketSetOperator",
+        market,
+        operator: spender,
+        approved: true,
+      });
+      setLastTxHash(txHash);
+      await new Promise((r) => setTimeout(r, adapter.mode === "evm" ? 3500 : 1500));
+      await ptRead.refetch();
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setWriteError(msg);
+      setFlowState({ kind: "error", message: msg, failedAt: "grant" });
+      return false;
+    }
+  }, [adapter, market, ptRead, spender, user]);
 
   const runApprove = useCallback(async (): Promise<boolean> => {
     if (!user) return false;
@@ -193,41 +306,71 @@ export function SellPtForm({ market, detail, user }: Props) {
     }
   }, [adapter, detail.pt, ptRead, spender, user]);
 
+  // W2-05: approve SY-share → Periphery so Tx2 (unzapSyToHbar) can transferFrom.
+  const runApproveSy = useCallback(async (): Promise<boolean> => {
+    if (!user) return false;
+    setFlowState({ kind: "approvingSy" });
+    try {
+      const { txHash } = await adapter.write({
+        kind: "approveErc20",
+        token: detail.syShare,
+        spender,
+        amount: MAX_HTS_APPROVE,
+      });
+      setLastTxHash(txHash);
+      await new Promise((r) => setTimeout(r, adapter.mode === "evm" ? 3500 : 1500));
+      await ptRead.refetch();
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setWriteError(msg);
+      setFlowState({ kind: "error", message: msg, failedAt: "approveSy" });
+      return false;
+    }
+  }, [adapter, detail.syShare, ptRead, spender, user]);
+
   const runSell = useCallback(async (): Promise<bigint | null> => {
-    // Tx 1: PT → SY via Periphery.sellPtForSy. Returns SY shares the user just received.
+    // Tx 1: PT → SY via Periphery.sellPtForSy. Returns the SY-share amount the
+    // sell actually delivered to the user (chain-observed delta).
     if (!user) return null;
+    const preSell = await readSyShareBalance();
     setFlowState({ kind: "selling" });
     try {
       const { txHash } = await adapter.write({
         kind: "writePeriphery",
         functionName: "sellPtForSy",
-        args: [market, parsedPt, 1n, user, 0n],
+        // W2-07: minSyOut from the lens preview, not 1n.
+        args: [market, parsedPt, minSyOut, user, 0n],
       });
       setLastTxHash(txHash);
-      // Wait briefly for receipt + return the computed SY out (lens-aligned for now).
+      // Wait briefly for receipt, then read the realized SY-share delta.
       await new Promise((r) => setTimeout(r, adapter.mode === "evm" ? 3500 : 1500));
-      // syEstimate is the off-chain prediction; the on-chain amount is what
-      // actually landed in user's wallet. For tx2 amount we use syEstimate since
-      // the Periphery is the only writer in this window — close enough.
-      return syEstimate;
+      const delta = await readPostSellSyDelta(preSell, syEstimate);
+      return delta;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setWriteError(msg);
       setFlowState({ kind: "error", message: msg, failedAt: "sell" });
       return null;
     }
-  }, [adapter, market, parsedPt, user, syEstimate]);
+  }, [adapter, market, parsedPt, user, minSyOut, syEstimate, readSyShareBalance, readPostSellSyDelta]);
 
   const runUnzap = useCallback(async (sySharesToUnzap: bigint): Promise<boolean> => {
     // Tx 2: SY → HBAR via Periphery.unzapSyToHbar.
-    // User must have approved SY-share → Periphery (one-time setup).
-    if (!user) return false;
+    // User must have approved SY-share → Periphery (one-time setup, runApproveSy).
+    if (!user || sySharesToUnzap === 0n) return false;
     setFlowState({ kind: "unzapping" });
+    // minHbarOut from the slippage chip (mirrors the /sy page): unzap the full
+    // SY delta and floor the HBAR output rather than passing 1n.
+    const minHbarOut =
+      expectedHbarOut > 0
+        ? (BigInt(Math.floor(expectedHbarOut * 1e8)) * BigInt(10_000 - slippageBps)) / 10_000n
+        : 1n;
     try {
       const { txHash } = await adapter.write({
         kind: "writePeriphery",
         functionName: "unzapSyToHbar",
-        args: [detail.sy, sySharesToUnzap, 1n, 0n],
+        args: [detail.sy, sySharesToUnzap, minHbarOut > 0n ? minHbarOut : 1n, 0n],
       });
       setLastTxHash(txHash);
       setFlowState({ kind: "done", finalTxHash: txHash });
@@ -238,7 +381,18 @@ export function SellPtForm({ market, detail, user }: Props) {
       setFlowState({ kind: "error", message: msg, failedAt: "unzap" });
       return false;
     }
-  }, [adapter, detail.sy, user]);
+  }, [adapter, detail.sy, user, expectedHbarOut, slippageBps]);
+
+  // Run the remaining steps after the operator grant + PT approve are settled.
+  const runSellAndUnzap = useCallback(async (): Promise<void> => {
+    if (needsSyApprove) {
+      const ok = await runApproveSy();
+      if (!ok) return;
+    }
+    const syOut = await runSell();
+    if (syOut === null) return;
+    await runUnzap(syOut);
+  }, [needsSyApprove, runApproveSy, runSell, runUnzap]);
 
   const onPrimary = useCallback(async () => {
     if (!user || parsedPt === 0n || !peripheryDeployed || expired) return;
@@ -246,8 +400,21 @@ export function SellPtForm({ market, detail, user }: Props) {
     setWriteError(null);
 
     if (flowState.kind === "error") {
-      if (flowState.failedAt === "approve") {
+      // Resume from the failed step, walking the rest of the chain.
+      if (flowState.failedAt === "grant") {
+        const ok = await runGrant();
+        if (!ok) return;
+        if (needsApprove) {
+          const okA = await runApprove();
+          if (!okA) return;
+        }
+        await runSellAndUnzap();
+      } else if (flowState.failedAt === "approve") {
         const ok = await runApprove();
+        if (!ok) return;
+        await runSellAndUnzap();
+      } else if (flowState.failedAt === "approveSy") {
+        const ok = await runApproveSy();
         if (!ok) return;
         const syOut = await runSell();
         if (syOut === null) return;
@@ -257,24 +424,32 @@ export function SellPtForm({ market, detail, user }: Props) {
         if (syOut === null) return;
         await runUnzap(syOut);
       } else {
-        // failed at unzap — operator still has the SY from tx1. Retry tx2 with syEstimate.
-        await runUnzap(syEstimate);
+        // failed at unzap — Tx1 already delivered SY to the user. Re-read the
+        // current SY-share balance and unzap that (it's all theirs to exit).
+        const bal = await readSyShareBalance();
+        await runUnzap(bal > 0n ? bal : syEstimate);
       }
       return;
     }
 
+    // W2-04: grant operator first if the market doesn't yet authorize the
+    // Periphery (one-time per wallet).
+    if (needsGrant) {
+      const ok = await runGrant();
+      if (!ok) return;
+    }
     if (needsApprove) {
       const ok = await runApprove();
       if (!ok) return;
     }
-    const syOut = await runSell();
-    if (syOut === null) return;
-    await runUnzap(syOut);
-  }, [user, parsedPt, peripheryDeployed, expired, insufficient, sizeLimit.exceeded, flowState, needsApprove, runApprove, runSell, runUnzap, syEstimate]);
+    await runSellAndUnzap();
+  }, [user, parsedPt, peripheryDeployed, expired, insufficient, sizeLimit.exceeded, flowState, needsGrant, needsApprove, runGrant, runApprove, runApproveSy, runSell, runUnzap, runSellAndUnzap, readSyShareBalance, syEstimate]);
 
   const isPending =
     adapter.isWritePending ||
+    flowState.kind === "granting" ||
     flowState.kind === "approving" ||
+    flowState.kind === "approvingSy" ||
     flowState.kind === "selling" ||
     flowState.kind === "unzapping";
 
@@ -339,13 +514,22 @@ export function SellPtForm({ market, detail, user }: Props) {
     if (insufficient) return "Insufficient PT";
     if (sizeLimit.exceeded) return "Trade too large for pool";
     if (flowState.kind === "error") {
-      return flowState.failedAt === "approve" ? "Retry approval" : "Retry sell";
+      switch (flowState.failedAt) {
+        case "grant": return "Retry enable selling";
+        case "approve": return "Retry approval";
+        case "approveSy": return "Retry SY approval";
+        case "unzap": return "Retry convert to HBAR";
+        default: return "Retry sell";
+      }
     }
+    if (flowState.kind === "granting") return "Enabling selling…";
     if (flowState.kind === "approving") return "Approving PT…";
+    if (flowState.kind === "approvingSy") return "Approving SY for Periphery…";
     if (flowState.kind === "selling") return "Step 1/2 · Selling PT → SY…";
     if (flowState.kind === "unzapping") return "Step 2/2 · Converting SY → HBAR…";
     if (flowState.kind === "done") return "✓ Done";
     if (isConfirmingFinal) return "Waiting for confirmation…";
+    if (needsGrant) return "Enable selling + Sell PT for HBAR";
     if (needsApprove) return "Approve PT for Periphery";
     return "Sell PT for HBAR";
   };
@@ -470,7 +654,13 @@ export function SellPtForm({ market, detail, user }: Props) {
           <div className="mt-2 rounded-lg border border-error/30 bg-error/10 px-3 py-2 font-mono text-[10px] leading-relaxed text-error">
             {flowState.kind === "error" && (
               <div className="mb-1 font-semibold uppercase tracking-[1.5px]">
-                {flowState.failedAt === "approve" ? "Approval failed" : "Swap failed"}
+                {flowState.failedAt === "grant"
+                  ? "Enable selling failed"
+                  : flowState.failedAt === "approve" || flowState.failedAt === "approveSy"
+                    ? "Approval failed"
+                    : flowState.failedAt === "unzap"
+                      ? "Convert to HBAR failed"
+                      : "Swap failed"}
               </div>
             )}
             {writeError.slice(0, 240)}

@@ -982,6 +982,7 @@ interface RemoveProps {
 
 function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
   const { usdPerShare } = useSyValueUsd(detail.sy);
+  const hbarUsd = useHbarUsd();
   const [inputMode, setInputMode] = useState<"usd" | "raw">("usd");
   const [usdStr, setUsdStr] = useState("");
   const [rawStr, setRawStr] = useState("");
@@ -1025,26 +1026,36 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
   // LP allowance always goes to the FissionUnzap (HBAR-out is the only
   // path this form offers now).
   const lpSpender: `0x${string}` = ADDRESSES.periphery;
+  const erc20AllowanceAbi = [
+    {
+      type: "function",
+      name: "allowance",
+      stateMutability: "view",
+      inputs: [
+        { name: "owner", type: "address" },
+        { name: "spender", type: "address" },
+      ],
+      outputs: [{ type: "uint256" }],
+    },
+  ] as const;
+  const erc20BalanceAbi = [
+    {
+      type: "function",
+      name: "balanceOf",
+      stateMutability: "view",
+      inputs: [{ name: "owner", type: "address" }],
+      outputs: [{ type: "uint256" }],
+    },
+  ] as const;
   const allowanceRead = useReadContracts({
     contracts: user
       ? [
-          {
-            abi: [
-              {
-                type: "function",
-                name: "allowance",
-                stateMutability: "view",
-                inputs: [
-                  { name: "owner", type: "address" },
-                  { name: "spender", type: "address" },
-                ],
-                outputs: [{ type: "uint256" }],
-              },
-            ] as const,
-            address: detail.lp,
-            functionName: "allowance",
-            args: [user, lpSpender],
-          } as const,
+          { abi: erc20AllowanceAbi, address: detail.lp, functionName: "allowance", args: [user, lpSpender] } as const,
+          // W2-02: SY-share allowance to the Periphery — Tx2 (unzapSyToHbar)
+          // pulls the SY-share token via transferFrom; without it Tx2 reverts.
+          { abi: erc20AllowanceAbi, address: detail.syShare, functionName: "allowance", args: [user, lpSpender] } as const,
+          // SY-share balance — used to compute the post-Tx1 delta to unzap.
+          { abi: erc20BalanceAbi, address: detail.syShare, functionName: "balanceOf", args: [user] } as const,
         ]
       : [],
     query: { enabled: !!user },
@@ -1054,6 +1065,16 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
     allowanceRead.data?.[0]?.status === "success"
       ? (allowanceRead.data[0].result as bigint)
       : 0n;
+  const sySharePeripheryAllowance =
+    allowanceRead.data?.[1]?.status === "success"
+      ? (allowanceRead.data[1].result as bigint)
+      : 0n;
+  const onChainSyShare =
+    allowanceRead.data?.[2]?.status === "success"
+      ? (allowanceRead.data[2].result as bigint)
+      : 0n;
+
+  const expired = Date.now() / 1000 >= Number(detail.expiry);
 
   const parsedLp = useMemo<bigint>(() => {
     if (inputMode === "usd" && usdPerLp !== undefined) {
@@ -1075,6 +1096,25 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
       : 0n;
   const minSyOut = (expectedSy * BigInt(10_000 - slippageBps)) / 10_000n;
   const minPtOut = (expectedPt * BigInt(10_000 - slippageBps)) / 10_000n;
+
+  // Total SY the user ends up holding after Tx1: pre-expiry the Periphery sells
+  // the PT side to SY too (≈ expectedSy + expectedPt × ptRate); post-expiry the
+  // market auto-redeems PT 1:1 to SY (≈ expectedSy + expectedPt). Used for the
+  // SY-share approval predicate + the unzap minHbarOut floor.
+  const expectedSyAfterTx1: bigint = expired
+    ? expectedSy + expectedPt
+    : expectedSy + BigInt(Math.floor(Number(expectedPt) * ptRate));
+  const needsSyApprove = parsedLp > 0n && sySharePeripheryAllowance < expectedSyAfterTx1;
+
+  // W2-06-style minHbarOut for Tx2: expected HBAR from unzapping the SY proceeds.
+  const expectedHbarOut: number =
+    expectedSyAfterTx1 > 0n && usdPerShare !== undefined && hbarUsd !== undefined
+      ? (Number(expectedSyAfterTx1) * usdPerShare) / Math.max(1e-9, hbarUsd)
+      : 0;
+  const minHbarOutTinybar: bigint =
+    expectedHbarOut > 0
+      ? (BigInt(Math.floor(expectedHbarOut * 1e8)) * BigInt(10_000 - slippageBps)) / 10_000n
+      : 1n;
 
   const wrap = async <T,>(fn: () => Promise<T>) => {
     setWriteError(null);
@@ -1107,31 +1147,99 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
     }
   };
 
+  // W2-02: approve SY-share → Periphery so Tx2 (unzapSyToHbar) can transferFrom
+  // the SY the LP-removal delivered to the user. Previously absent → Tx2 reverted.
+  const onApproveSy = async (): Promise<boolean> => {
+    try {
+      const { txHash: hash } = await wrap(() =>
+        adapter.write({
+          kind: "approveErc20",
+          token: detail.syShare,
+          spender: lpSpender,
+          amount: MAX_HTS_APPROVE,
+        }),
+      );
+      setTxHash(hash as `0x${string}`);
+      await allowanceRead.refetch();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Read the user's current SY-share balance (lag-aware refetch).
+  const readSyShareBalance = async (): Promise<bigint> => {
+    try {
+      const r = await allowanceRead.refetch();
+      if (r.data?.[2]?.status === "success") return r.data[2].result as bigint;
+    } catch {
+      /* fall through */
+    }
+    return onChainSyShare;
+  };
+
   const onRemove = async (): Promise<boolean> => {
     if (!user || parsedLp === 0n || !routerDeployed || insufficientLp) return false;
     try {
-      // Post-rebuild 2-tx: sellLpForSy → unzapSyToHbar.
-      // Tx 1: LP → SY
-      const { txHash: hash1 } = await wrap(() =>
-        adapter.write({
-          kind: "writePeriphery",
-          functionName: "sellLpForSy",
-          args: [market, parsedLp, 1n, user, 0n],
-        }),
-      );
-      setTxHash(hash1 as `0x${string}`);
+      // Snapshot SY-share balance pre-Tx1 so Tx2 unzaps the exact delta (W2-02).
+      const preSell = await readSyShareBalance();
+
+      // Tx 1: LP → SY-share, delivered to the user.
+      if (expired) {
+        // W3-03: post-expiry the market auto-redeems the LP's PT share to SY and
+        // forces ptOut = 0, so any minPtOut > 0 reverts. The Periphery's
+        // sellLpForSy hardcodes minPtOut = 1 (reverts post-expiry), so route
+        // directly to market.removeLiquidity with minPtOut = 0. SY-share lands
+        // in the user's wallet; the unzap leg below converts it to HBAR.
+        const { txHash: hash1 } = await wrap(() =>
+          adapter.write({
+            kind: "removeLiquidity",
+            router: market,
+            market,
+            lpIn: parsedLp,
+            minSyOut,
+            minPtOut: 0n,
+            receiver: user,
+            deadline: 0n,
+          }),
+        );
+        setTxHash(hash1 as `0x${string}`);
+      } else {
+        const { txHash: hash1 } = await wrap(() =>
+          adapter.write({
+            kind: "writePeriphery",
+            functionName: "sellLpForSy",
+            args: [market, parsedLp, minSyOut, user, 0n],
+          }),
+        );
+        setTxHash(hash1 as `0x${string}`);
+      }
       // Brief wait for mirror to catch up so the next read sees post-Tx-1 state.
       await new Promise((r) => setTimeout(r, adapter.mode === "evm" ? 3500 : 1500));
 
-      // Tx 2: SY → HBAR. We pull a generous bound; Periphery enforces minHbarOut.
-      // Frontend computed `parsedLp * lpExchangeRate ≈ syExpected`; we use the
-      // exact balance delta isn't read here, so the Periphery reverts cleanly
-      // if there's a mismatch.
+      // Read the realized SY-share delta (Hashio mirror lag-aware). Falls back
+      // to the linear estimate if we never see movement.
+      let syReceived: bigint = expectedSyAfterTx1;
+      for (let i = 0; i < 5; i++) {
+        try {
+          const r = await allowanceRead.refetch();
+          const fresh = r.data?.[2]?.status === "success" ? (r.data[2].result as bigint) : preSell;
+          if (fresh > preSell) {
+            syReceived = fresh - preSell;
+            break;
+          }
+        } catch {
+          /* retry */
+        }
+        await new Promise((res) => setTimeout(res, 1000));
+      }
+
+      // Tx 2: SY → HBAR. Unzap the actual delta with a slippage-derived floor.
       const { txHash: hash2 } = await wrap(() =>
         adapter.write({
           kind: "writePeriphery",
           functionName: "unzapSyToHbar",
-          args: [detail.sy, parsedLp, 1n, 0n],
+          args: [detail.sy, syReceived, minHbarOutTinybar, 0n],
         }),
       );
       setTxHash(hash2 as `0x${string}`);
@@ -1142,15 +1250,21 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
   };
 
   // Chained remove flow: single click walks through every signature
-  // (approve LP → removeLiquidity). Same re-entry guard as AddLp to block
-  // duplicate removes from a double-click.
+  // (approve LP → approve SY → removeLiquidity → unzap). Same re-entry guard
+  // as AddLp to block duplicate removes from a double-click.
   const onPrimary = async () => {
     if (chainInFlight.current) return;
     chainInFlight.current = true;
     try {
-      const doApprove = needsLpApprove;
-      if (doApprove) {
+      // Post-expiry routes directly to market.removeLiquidity, which burns LP
+      // from msg.sender (no LP→Periphery allowance needed). Pre-expiry routes
+      // through Periphery.sellLpForSy, which pulls LP via transferFrom.
+      if (!expired && needsLpApprove) {
         const ok = await onApprove();
+        if (!ok) return;
+      }
+      if (needsSyApprove) {
+        const ok = await onApproveSy();
         if (!ok) return;
       }
       const removeOk = await onRemove();
@@ -1301,7 +1415,7 @@ function RemoveLp({ market, detail, user, lpBalance, adapter }: RemoveProps) {
                   ? "Sign in HashPack…"
                   : isConfirmingFinal
                     ? "Waiting for confirmation…"
-                    : needsLpApprove
+                    : !expired && needsLpApprove
                       ? "Approve LP for Router"
                       : "Remove liquidity"}
         </button>

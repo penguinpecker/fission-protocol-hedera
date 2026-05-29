@@ -15,6 +15,7 @@ import { useWatchlist } from "@/hooks/useWatchlist";
 import { impliedApyPct, daysUntil, formatCompact } from "@/hooks/useMarkets";
 import { ptToSyRate, ytToSyRate, type UserPosition } from "@/components/MarketPositionCard";
 import { getMarketDisplay } from "@/lib/markets-metadata";
+import { ADDRESSES, isDeployed } from "@/lib/addresses";
 
 /**
  * Terminal-style portfolio page. Sections:
@@ -141,7 +142,7 @@ function ProfileBody() {
       <div className="mb-12 grid gap-8 sm:mb-16 lg:grid-cols-[1fr_320px]">
         {/* left — tabs + positions table */}
         <div className="min-w-0">
-          <PositionsSection rows={allRows} />
+          <PositionsSection rows={allRows} user={address} />
         </div>
 
         {/* right — sidebars */}
@@ -150,6 +151,7 @@ function ProfileBody() {
             unclaimedYieldUsd={totals.unclaimedYieldUsd}
             unclaimedUsdc={totals.unclaimedUsdc}
             unclaimedWhbar={totals.unclaimedWhbar}
+            user={address}
           />
           <ApprovalsCard user={address} />
           <RecentActivityCard userEvm={address} />
@@ -280,7 +282,7 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub: string 
 
 /* ─────────────────────────────────────────────────────── positions table */
 
-function PositionsSection({ rows }: { rows: PortfolioRow[] }) {
+function PositionsSection({ rows, user }: { rows: PortfolioRow[]; user: `0x${string}` | undefined }) {
   const [tab, setTab] = useState<"All" | "SY" | "PT" | "YT" | "LP" | "History">("All");
   const filtered =
     tab === "All"
@@ -336,7 +338,7 @@ function PositionsSection({ rows }: { rows: PortfolioRow[] }) {
               </td>
             </tr>
           ) : (
-            filtered.map((r, i) => <PositionRow key={`${r.market}-${r.kind}-${i}`} row={r} />)
+            filtered.map((r, i) => <PositionRow key={`${r.market}-${r.kind}-${i}`} row={r} user={user} />)
           )}
         </tbody>
         </table>
@@ -345,16 +347,63 @@ function PositionsSection({ rows }: { rows: PortfolioRow[] }) {
   );
 }
 
-function PositionRow({ row }: { row: PortfolioRow }) {
-  // Per-kind action set per the spec. All actions deep-link to the strategy
-  // sub-pages so they reuse existing forms — REDEEM is disabled pre-maturity.
+function PositionRow({ row, user }: { row: PortfolioRow; user: `0x${string}` | undefined }) {
+  // W2-03: Claim/Redeem now fire real on-chain txs via the adapter instead of
+  // dead-linking to a page with no claim/redeem action. Sell/Add/Remove stay
+  // navigation links to the existing strategy forms (those forms do the work).
+  const adapter = useWalletAdapter();
   const base = `/markets/${row.market}`;
+  const [txState, setTxState] = useState<"idle" | "pending" | "done" | "error">("idle");
+  const [txHash, setTxHash] = useState<string | undefined>(undefined);
+  const [txErr, setTxErr] = useState<string | null>(null);
+
+  // PT Redeem (post-expiry only): burn PT 1:1 for SY via redeemAfterExpiry.
+  const onRedeem = useCallback(async () => {
+    if (!user || !row.expired || row.amountRaw === 0n) return;
+    setTxErr(null);
+    setTxState("pending");
+    try {
+      const { txHash: h } = await adapter.write({
+        kind: "redeemAfterExpiry",
+        market: row.market,
+        ptIn: row.amountRaw,
+        ytIn: 0n, // contract requires ytIn == 0 (YT cannot be burned this way)
+        receiver: user,
+      });
+      setTxHash(h);
+      setTxState("done");
+    } catch (e) {
+      setTxErr(e instanceof Error ? e.message : String(e));
+      setTxState("error");
+    }
+  }, [adapter, row.market, row.amountRaw, row.expired, user]);
+
+  // YT Claim: claim accrued AMM-fee share (SY-share) + SY-yield rewards. Both
+  // are owed to YT holders on the rewards market; fire them back-to-back.
+  const onClaim = useCallback(async () => {
+    if (!user) return;
+    setTxErr(null);
+    setTxState("pending");
+    try {
+      const a = await adapter.write({ kind: "claimAmmRewards", market: row.market, receiver: user });
+      setTxHash(a.txHash);
+      const b = await adapter.write({ kind: "claimRewards", market: row.market, receiver: user });
+      setTxHash(b.txHash);
+      setTxState("done");
+    } catch (e) {
+      setTxErr(e instanceof Error ? e.message : String(e));
+      setTxState("error");
+    }
+  }, [adapter, row.market, user]);
+
   interface RowAction {
     label: string;
-    href: string;
+    href?: string;
+    onClick?: () => void | Promise<void>;
     pri?: boolean;
     disabled?: boolean;
   }
+  const busy = txState === "pending";
   const actions: RowAction[] =
     row.kind === "SY"
       ? [
@@ -364,12 +413,12 @@ function PositionRow({ row }: { row: PortfolioRow }) {
       : row.kind === "PT"
         ? [
             { label: "Sell", href: `${base}/pt` },
-            { label: "Redeem", href: base, pri: true, disabled: !row.expired },
+            { label: "Redeem", onClick: onRedeem, pri: true, disabled: !row.expired || busy || !user },
           ]
         : row.kind === "YT"
           ? [
               { label: "Sell", href: `${base}/yt` },
-              { label: "Claim", href: base, pri: true },
+              { label: "Claim", onClick: onClaim, pri: true, disabled: busy || !user },
             ]
           : [
               { label: "Add", href: `${base}/lp` },
@@ -378,6 +427,13 @@ function PositionRow({ row }: { row: PortfolioRow }) {
 
   const unrealisedColor =
     row.unrealisedSy > 0 ? "text-white" : row.unrealisedSy < 0 ? "text-error" : "text-textSec";
+
+  const btnClass = (pri?: boolean) =>
+    `border px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.14em] transition ${
+      pri
+        ? "border-white bg-white text-black hover:bg-white/85"
+        : "border-borderHover bg-white/[0.04] text-textSec hover:bg-white/[0.06] hover:text-white"
+    }`;
 
   return (
     <tr className="border-b border-border last:border-b-0">
@@ -399,28 +455,46 @@ function PositionRow({ row }: { row: PortfolioRow }) {
       </PosNum>
       <PosNum dim={row.maturity.never}>{row.maturity.never ? "never" : `${row.maturity.days}d`}</PosNum>
       <PosTd>
-        <div className="flex justify-end gap-1.5">
-          {actions.map((a) =>
-            a.disabled ? (
-              <span
-                key={a.label}
-                className="cursor-not-allowed border border-border bg-white/[0.02] px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.14em] text-textDim/60"
-              >
-                {a.label}
-              </span>
-            ) : (
-              <Link
-                key={a.label}
-                href={a.href}
-                className={`border px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.14em] transition ${
-                  a.pri
-                    ? "border-white bg-white text-black hover:bg-white/85"
-                    : "border-borderHover bg-white/[0.04] text-textSec hover:bg-white/[0.06] hover:text-white"
-                }`}
-              >
-                {a.label}
-              </Link>
-            ),
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex justify-end gap-1.5">
+            {actions.map((a) =>
+              a.disabled ? (
+                <span
+                  key={a.label}
+                  className="cursor-not-allowed border border-border bg-white/[0.02] px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.14em] text-textDim/60"
+                >
+                  {busy && a.pri ? "…" : a.label}
+                </span>
+              ) : a.onClick ? (
+                <button
+                  key={a.label}
+                  type="button"
+                  onClick={() => void a.onClick!()}
+                  className={btnClass(a.pri)}
+                >
+                  {busy && a.pri ? "…" : a.label}
+                </button>
+              ) : (
+                <Link key={a.label} href={a.href!} className={btnClass(a.pri)}>
+                  {a.label}
+                </Link>
+              ),
+            )}
+          </div>
+          {txState === "done" && txHash && (
+            <a
+              href={`https://hashscan.io/mainnet/transaction/${txHash}`}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-[10px] text-success underline underline-offset-2 hover:text-white"
+            >
+              ✓ submitted ↗
+            </a>
+          )}
+          {txState === "error" && txErr && (
+            <span className="max-w-[220px] truncate font-mono text-[10px] text-error" title={txErr}>
+              {txErr.slice(0, 60)}
+            </span>
           )}
         </div>
       </PosTd>
@@ -478,11 +552,14 @@ function PendingClaimsCard({
   unclaimedYieldUsd,
   unclaimedUsdc,
   unclaimedWhbar,
+  user,
 }: {
   unclaimedYieldUsd: number | undefined;
   unclaimedUsdc: number | undefined;
   unclaimedWhbar: number | undefined;
+  user: `0x${string}` | undefined;
 }) {
+  const adapter = useWalletAdapter();
   // Yield is paid in SY shares; at claim time those decompose into the SY's
   // underlying V3 LP balance (USDC + WHBAR). We show the equivalent each
   // would yield right now, derived from the V3 NFT amounts / total supply.
@@ -492,6 +569,30 @@ function PendingClaimsCard({
     if (n < 0.0001) return n.toExponential(2);
     return n.toFixed(decimals);
   };
+
+  // W2-03: "Claim All" was href="#" (inert). Wire it to claim the user's
+  // accrued AMM-fee share + SY-yield rewards from the live market.
+  const [txState, setTxState] = useState<"idle" | "pending" | "done" | "error">("idle");
+  const [txHash, setTxHash] = useState<string | undefined>(undefined);
+  const [txErr, setTxErr] = useState<string | null>(null);
+  const canClaim = !!user && isDeployed(ADDRESSES.market);
+
+  const onClaimAll = useCallback(async () => {
+    if (!user || !isDeployed(ADDRESSES.market)) return;
+    setTxErr(null);
+    setTxState("pending");
+    try {
+      const a = await adapter.write({ kind: "claimAmmRewards", market: ADDRESSES.market, receiver: user });
+      setTxHash(a.txHash);
+      const b = await adapter.write({ kind: "claimRewards", market: ADDRESSES.market, receiver: user });
+      setTxHash(b.txHash);
+      setTxState("done");
+    } catch (e) {
+      setTxErr(e instanceof Error ? e.message : String(e));
+      setTxState("error");
+    }
+  }, [adapter, user]);
+
   return (
     <div className="flex flex-col gap-px border border-border bg-border">
       <div className="bg-white/[0.015] p-5">
@@ -504,12 +605,29 @@ function PendingClaimsCard({
           k="Total ≈"
           v={unclaimedYieldUsd !== undefined ? (formatUsd(unclaimedYieldUsd) ?? "$0.00") : "$0.00"}
         />
-        <Link
-          href="#"
-          className="mt-3 inline-flex w-full justify-center border border-white bg-white px-4 py-2.5 font-mono text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85"
+        <button
+          type="button"
+          onClick={() => void onClaimAll()}
+          disabled={!canClaim || txState === "pending"}
+          className="mt-3 inline-flex w-full justify-center border border-white bg-white px-4 py-2.5 font-mono text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Claim All
-        </Link>
+          {txState === "pending" ? "Claiming…" : "Claim All"}
+        </button>
+        {txState === "done" && txHash && (
+          <a
+            href={`https://hashscan.io/mainnet/transaction/${txHash}`}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 block font-mono text-[10px] text-success underline underline-offset-2 hover:text-white"
+          >
+            ✓ claim submitted ↗
+          </a>
+        )}
+        {txState === "error" && txErr && (
+          <span className="mt-2 block font-mono text-[10px] text-error" title={txErr}>
+            {txErr.slice(0, 80)}
+          </span>
+        )}
       </div>
     </div>
   );

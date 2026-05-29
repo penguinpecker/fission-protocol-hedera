@@ -1,6 +1,18 @@
 // Server-side session: a JWT signed with OUR OWN secret, stored as an
 // httpOnly cookie. Independent of Supabase Auth.
 //
+// ⚠️ SECURITY BOUNDARY (WEB2-RLS-01): this cookie is a CUSTOM HS256 token, NOT
+// a Supabase-Auth JWT. It is never presented to PostgREST, and every route that
+// reads/writes user data uses the service-role Supabase client (which bypasses
+// RLS). The database RLS policies that key on public.jwt_address() are therefore
+// INERT in production — jwt_address() always returns '' because there's no
+// Supabase JWT in request.jwt.claims. The REAL per-user boundary is enforced
+// HERE + in each route: getSession() validates this cookie, and every per-user
+// query filters by `s.address` (.eq('address', s.address)). Audited 2026-05-29:
+// /api/profile, /api/watchlists, /api/activity all bind to the session address;
+// /api/markets + /api/markets/refresh are public/cron (no per-user rows).
+// Do NOT assume RLS is protecting anything on the service-role path.
+//
 // Hardened design (2026-05-28+):
 //   - HS256 with a 32-byte random secret loaded from SESSION_SECRET env.
 //   - JWT carries `sub` = lowercased EVM address, `siwe_at` = sign-in ts,
