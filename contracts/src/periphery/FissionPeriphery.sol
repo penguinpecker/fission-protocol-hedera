@@ -172,6 +172,15 @@ contract FissionPeriphery is Initializable, ReentrancyGuardTransient, UUPSUpgrad
     ///         standard market gives a clear revert instead of a raw selector miss.
     mapping(address => bool) public isRewardsMarket;
 
+    /// @notice YT-LEVERAGE (2026-05-31): working-capital SY the Periphery fronts so
+    ///         a leveraged Buy-YT can deploy the user's FULL budget into YT (Pendle
+    ///         parity) instead of refunding ~98% as SY. Keyed by SY share token.
+    ///         Funded/recovered ONLY via fundSyReserve/withdrawSyReserve (owner).
+    ///         Every SY-sweep path treats `balance - syReserve[token]` as the only
+    ///         user-owned SY, so the reserve can never be swept to a user, and
+    ///         `buySyForYt` asserts the reserve is whole at the end of each call.
+    mapping(address => uint256) public syReserve;
+
     // ───────────────────── errors ─────────────────────
 
     error AmountZero();
@@ -196,6 +205,11 @@ contract FissionPeriphery is Initializable, ReentrancyGuardTransient, UUPSUpgrad
     error NotUpgradeAuthority();
     /// @dev MDS-3: operator sell path invoked on a standard (non-rewards) market.
     error OperatorSellUnsupported(address market);
+    /// @dev YT-LEVERAGE: the SY needed to mint the requested ytOut exceeds the
+    ///      user's budget + the funded working-capital reserve.
+    error InsufficientReserve(uint256 needed, uint256 available);
+    /// @dev YT-LEVERAGE: reserve-conservation invariant tripped (would-deplete).
+    error ReserveViolated(uint256 balance, uint256 reserve);
 
     // ───────────────────── events ─────────────────────
 
@@ -207,6 +221,8 @@ contract FissionPeriphery is Initializable, ReentrancyGuardTransient, UUPSUpgrad
     event TokenRescued(address indexed token, address indexed to, uint256 amount);
     event HbarRescued(address indexed to, uint256 amount);
     event UpgradeAuthorityUpdated(address indexed prev, address indexed next);
+    event SyReserveFunded(address indexed token, uint256 amount, uint256 newReserve);
+    event SyReserveWithdrawn(address indexed token, address indexed to, uint256 amount, uint256 newReserve);
 
     /// @notice Unified action event for the cron-indexer.
     /// @dev    kind ∈ {0=zapHbarToSy, 1=buySyForPt, 2=buySyForYt, 3=buySyForLp,
@@ -404,6 +420,55 @@ contract FissionPeriphery is Initializable, ReentrancyGuardTransient, UUPSUpgrad
         v3NpmFeeBudget = tinybars;
     }
 
+    /// @notice YT-LEVERAGE: seed working-capital SY so buySyForYt can front the
+    ///         leverage (user deploys their FULL budget into YT, Pendle-parity).
+    ///         Pulls `amount` of SY-share `token` from the owner and books it into
+    ///         syReserve[token]. The reserve is never swept to users (see _freeSy)
+    ///         and is recoverable ONLY here (rescueToken refuses protected SY).
+    ///         Unfunded => buySyForYt gracefully degrades to the user fronting the
+    ///         full gross (the prior, non-leveraged behavior), so this upgrade is
+    ///         safe to ship before any reserve is seeded.
+    function fundSyReserve(address token, uint256 amount) external onlyOwner {
+        if (token == address(0)) revert ZeroAddress();
+        if (amount == 0) revert AmountZero();
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        syReserve[token] += amount;
+        emit SyReserveFunded(token, amount, syReserve[token]);
+    }
+
+    /// @notice YT-LEVERAGE: recover working-capital SY. Decrements the booked
+    ///         reserve then transfers out — bounded by syReserve[token], so it can
+    ///         only ever move reserve SY, never user funds sitting mid-flight.
+    function withdrawSyReserve(address token, address to, uint256 amount) external onlyOwner {
+        if (to == address(0)) revert ZeroAddress();
+        if (amount == 0) revert AmountZero();
+        uint256 r = syReserve[token];
+        if (amount > r) revert InsufficientReserve(amount, r);
+        syReserve[token] = r - amount;
+        IERC20(token).safeTransfer(to, amount);
+        emit SyReserveWithdrawn(token, to, amount, syReserve[token]);
+    }
+
+    /// @notice YT-LEVERAGE: recover SY held ABOVE the booked reserve — e.g. dust
+    ///         donated directly to the contract (which would otherwise be stranded,
+    ///         since shareTokens are protected from rescueToken). Moves only
+    ///         un-booked excess (balance − syReserve[token]); the reserve is never
+    ///         touched. nonReentrant — cannot interleave with an in-flight buy.
+    function sweepExcessSy(address token, address to) external onlyOwner nonReentrant returns (uint256 amount) {
+        if (to == address(0)) revert ZeroAddress();
+        amount = _freeSy(token);
+        if (amount > 0) IERC20(token).safeTransfer(to, amount);
+    }
+
+    /// @notice YT-LEVERAGE: user-owned SY = balance − booked reserve. EVERY SY
+    ///         refund/sweep routes through this so the working-capital reserve is
+    ///         structurally impossible to pay out to a user.
+    function _freeSy(address token) internal view returns (uint256) {
+        uint256 bal = IERC20(token).balanceOf(address(this));
+        uint256 r = syReserve[token];
+        return bal > r ? bal - r : 0;
+    }
+
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert ZeroAddress();
         pendingOwner = newOwner;
@@ -544,39 +609,87 @@ contract FissionPeriphery is Initializable, ReentrancyGuardTransient, UUPSUpgrad
         emit PeripheryAction(1, market, msg.sender, syIn, ptOut, 0);
     }
 
-    /// @notice Tx 2 of the Buy-YT flow. SY → split into PT+YT, then sells the PT
-    ///         for SY (refunded to receiver). YT (and SY refund) go to `receiver`.
+    /// @notice Tx 2 of the Buy-YT flow — LEVERAGED (2026-05-31, Pendle parity).
+    ///         Mints `ytOut` PT+YT, delivers the FULL `ytOut` YT to `receiver`, and
+    ///         sells the PT back to recover principal — so the user's budget deploys
+    ///         entirely into YT instead of ~98% bouncing back as SY (the old
+    ///         split-and-refund behavior, which only deployed the ~2% yield slice).
+    ///
+    ///         The mint needs `ytOut` SY up-front, but the PT-sale proceeds only
+    ///         arrive after — so the Periphery FRONTS the gap from its
+    ///         working-capital reserve (syReserve[shareToken]) and the PT sale
+    ///         replenishes it within the same call. Net cost = ytOut − ptProceeds,
+    ///         hard-capped at `maxSyIn`; any unused budget is refunded.
+    ///
+    ///         SAFETY: minSyFromPt = ytOut − maxSyIn floors the PT sale so net cost
+    ///         can never exceed the user's budget (an under-delivering curve reverts
+    ///         the swap). The reserve is fronted then repaid in-tx, and the function
+    ///         ASSERTS the SY balance ≥ booked reserve at the end — a mispriced sale
+    ///         reverts the whole tx rather than denting the reserve. Unfunded reserve
+    ///         ⇒ requires maxSyIn ≥ ytOut (user fronts the gross) ⇒ degrades safely
+    ///         to the prior non-leveraged path, so shipping before seeding is safe.
+    /// @param ytOut   Exact YT to deliver. Frontend sizes it via Lens.previewBuyYt.
+    /// @param maxSyIn Max SY the user spends (expected net cost + slippage).
     function buySyForYt(
         address market,
-        uint256 syIn,
-        uint256 minSyOutFromPtSale,
+        uint256 ytOut,
+        uint256 maxSyIn,
         address receiver,
         uint256 deadline
     )
         external
         nonReentrant
         checkDeadline(deadline)
-        returns (uint256 ytOut, uint256 syRefund)
+        returns (uint256 ytDelivered, uint256 syPaid)
     {
-        if (syIn == 0) revert AmountZero();
+        if (ytOut == 0 || maxSyIn == 0) revert AmountZero();
         if (receiver == address(0)) revert ZeroAddress();
         if (!marketRegistered[market]) revert MarketNotRegistered(market);
 
         IFissionMarketExt m = IFissionMarketExt(market);
         address shareToken = ISYLiquidity(address(m.sy())).shareToken();
 
-        _checkSize(syIn, m.totalSy());
+        // Cap the PT sale (ytOut PT) at maxTradeBps% of pool depth.
+        _checkSize(ytOut, m.totalSy());
 
-        IERC20(shareToken).safeTransferFrom(msg.sender, address(this), syIn);
+        uint256 reserve = syReserve[shareToken];
 
-        // Split: PT to this contract (for resale), YT to receiver (frozen there).
-        m.splitTo(syIn, address(this), receiver);
-        ytOut = syIn;
+        // Pull the user's budget. Periphery now holds (reserve + maxSyIn) SY.
+        IERC20(shareToken).safeTransferFrom(msg.sender, address(this), maxSyIn);
 
-        // Sell the PT half for SY → receiver.
-        syRefund = m.swapExactPtForSy(syIn, minSyOutFromPtSale, receiver);
+        // The split mints ytOut PT + ytOut YT, consuming ytOut SY. We must already
+        // hold it from (reserve + maxSyIn); otherwise the budget is too small for
+        // this much YT at the current reserve level.
+        uint256 bal = IERC20(shareToken).balanceOf(address(this));
+        if (ytOut > bal) revert InsufficientReserve(ytOut, bal);
 
-        emit PeripheryAction(2, market, receiver, syIn, ytOut, syRefund);
+        // Mint: PT → this contract (resold below), YT → user (frozen there).
+        m.splitTo(ytOut, address(this), receiver);
+        ytDelivered = ytOut;
+
+        // Sell the ytOut PT for SY back to THIS contract (replenishes the fronted
+        // reserve). Floor the sale so the net cost can never exceed the budget.
+        uint256 minSyFromPt = ytOut > maxSyIn ? ytOut - maxSyIn : 0;
+        uint256 proceeds = m.swapExactPtForSy(ytOut, minSyFromPt, address(this));
+
+        // AUDIT-FIX (donation griefing): derive the refund from the INTRINSIC net
+        // cost (ytOut − proceeds), NOT from the raw balance. The minSyFromPt floor
+        // guarantees proceeds ≥ ytOut − maxSyIn ⇒ netCost ≤ maxSyIn, so the
+        // subtraction cannot underflow. Deriving the refund from `_freeSy(balance)`
+        // would let anyone permanently brick this call by donating SY straight to
+        // the contract (inflating the balance past maxSyIn ⇒ underflow). Any such
+        // donation now just sits as un-booked excess, recoverable via sweepExcessSy.
+        syPaid = ytOut > proceeds ? ytOut - proceeds : 0;
+        uint256 refund = maxSyIn - syPaid;
+        if (refund > 0) IERC20(shareToken).safeTransfer(receiver, refund);
+
+        // Hard invariant: the working-capital reserve must be whole. Belt over the
+        // arithmetic — if anything left the balance below the booked reserve, the
+        // entire transaction reverts.
+        uint256 endBal = IERC20(shareToken).balanceOf(address(this));
+        if (endBal < reserve) revert ReserveViolated(endBal, reserve);
+
+        emit PeripheryAction(2, market, receiver, syPaid, ytDelivered, refund);
     }
 
     /// @notice Tx 2 of the Buy-LP flow. Splits SY into (syForLp, syForPt), swaps
@@ -637,7 +750,9 @@ contract FissionPeriphery is Initializable, ReentrancyGuardTransient, UUPSUpgrad
         if (ptLeft > 0) m.swapExactPtForSy(ptLeft, 0, address(this));
 
         // Refund any dust SY to msg.sender (includes PT-resale proceeds above).
-        uint256 syLeft = IERC20(shareToken).balanceOf(address(this));
+        // YT-LEVERAGE: only user-owned SY (balance − booked reserve) is refundable;
+        // the working-capital reserve is structurally excluded via _freeSy.
+        uint256 syLeft = _freeSy(shareToken);
         if (syLeft > 0) IERC20(shareToken).safeTransfer(msg.sender, syLeft);
 
         emit PeripheryAction(3, market, receiver, syIn, lpOut, 0);
@@ -799,11 +914,14 @@ contract FissionPeriphery is Initializable, ReentrancyGuardTransient, UUPSUpgrad
     }
 
     function _refundDust(address tA, address tB, address tC) internal {
-        uint256 a = IERC20(tA).balanceOf(address(this));
+        // YT-LEVERAGE: _freeSy(token) = balance − syReserve[token]. syReserve is 0
+        // for non-SY tokens, so USDC/WHBAR sweep exactly as before; only the SY
+        // share token (which carries a working-capital reserve) is shielded.
+        uint256 a = _freeSy(tA);
         if (a > 0) IERC20(tA).safeTransfer(msg.sender, a);
-        uint256 b = IERC20(tB).balanceOf(address(this));
+        uint256 b = _freeSy(tB);
         if (b > 0) IERC20(tB).safeTransfer(msg.sender, b);
-        uint256 c = IERC20(tC).balanceOf(address(this));
+        uint256 c = _freeSy(tC);
         if (c > 0) IERC20(tC).safeTransfer(msg.sender, c);
         uint256 hbarLeft = address(this).balance;
         if (hbarLeft > 0) {
@@ -826,5 +944,5 @@ contract FissionPeriphery is Initializable, ReentrancyGuardTransient, UUPSUpgrad
 
     /// @dev Storage gap for future upgrade-safe variable additions. Reduced from
     ///      50 → 49 when `isRewardsMarket` (MDS-3) was added.
-    uint256[49] private __gap;
+    uint256[48] private __gap;
 }

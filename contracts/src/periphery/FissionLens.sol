@@ -140,6 +140,90 @@ contract FissionLens is Initializable, UUPSUpgradeable {
         syUsed = uint256(-netSy);
     }
 
+    /// @notice YT-LEVERAGE (2026-05-31): size a leveraged Buy-YT. Given a net SY
+    ///         budget, returns the YT amount deliverable (full-budget-deployed,
+    ///         Pendle parity) and the exact net cost. Feed `ytOut` into
+    ///         Periphery.buySyForYt(market, ytOut, maxSyIn=netCost·(1+slippage)).
+    /// @dev    Net cost to buy `yt` YT = yt − swapExactPtForSy(yt) (mint yt PT+YT,
+    ///         keep YT, sell the PT). That cost is monotonic increasing in `yt`, so
+    ///         we binary-search the largest `yt` whose net cost ≤ syBudget. The
+    ///         search ceiling is 10% of pool SY (≥ the on-chain 5% per-trade cap,
+    ///         and well inside the AMM's proportion limits so the preview can't
+    ///         revert). If the returned netCost < syBudget, the trade is cap-bound.
+    /// @param maxTradeBps The Periphery's live per-trade cap (read
+    ///        periphery.maxTradeBps()). The search ceiling is clamped to
+    ///        maxTradeBps% of pool SY so a quote NEVER exceeds what buySyForYt's
+    ///        _checkSize accepts (else the buy reverts TradeExceedsCap). Pass 0 to
+    ///        fall back to the curve-safe 10% ceiling.
+    function previewBuyYt(address market, uint256 syBudget, uint16 maxTradeBps)
+        external
+        view
+        returns (uint256 ytOut, uint256 netCost)
+    {
+        if (syBudget == 0) return (0, 0);
+        IMarketLens m = IMarketLens(market);
+        MarketMath.MarketState memory ms = m.getMarketState();
+        if (ms.totalSy <= 0) return (0, 0);
+        int256 syIndex = int256(m.sy().exchangeRate());
+        MarketMath.PreCompute memory pre = MarketMath.getMarketPreCompute(ms, syIndex, block.timestamp);
+
+        // Ceiling = the on-chain per-trade cap (mirrors _checkSize), bounded by a
+        // curve-safe 10% fallback so the search can't exceed what the buy accepts.
+        uint256 hi = uint256(ms.totalSy) / 10;
+        if (maxTradeBps > 0 && maxTradeBps < 10000) {
+            uint256 capHi = (uint256(ms.totalSy) * maxTradeBps) / 10000;
+            if (capHi < hi) hi = capHi;
+        }
+        if (hi == 0) return (0, 0);
+
+        uint256 lo = 0;
+        for (uint256 i = 0; i < 48 && lo < hi; i++) {
+            uint256 mid = (lo + hi + 1) / 2;
+            // try/catch so a curve-bound revert (proportion ceiling on a PT-heavy
+            // pool) is treated as "too big" and shrinks the search, rather than
+            // bricking the whole quote — honors the never-reverts contract.
+            try this.netCostBuyYtView(ms, pre, mid) returns (uint256 cost) {
+                if (cost <= syBudget) lo = mid;
+                else hi = mid - 1;
+            } catch {
+                hi = mid - 1;
+            }
+        }
+        if (lo == 0) return (0, 0);
+        ytOut = lo;
+        try this.netCostBuyYtView(ms, pre, lo) returns (uint256 c) {
+            netCost = c;
+        } catch {
+            return (0, 0);
+        }
+    }
+
+    /// @dev External wrapper so previewBuyYt can `try/catch` the curve math (Solidity
+    ///      try/catch only works on external calls). Net SY cost to buy `yt` YT.
+    function netCostBuyYtView(
+        MarketMath.MarketState memory ms,
+        MarketMath.PreCompute memory pre,
+        uint256 yt
+    ) external view returns (uint256) {
+        return _netCostBuyYt(ms, pre, yt);
+    }
+
+    /// @dev Net SY cost to buy `yt` YT = yt − (SY from selling `yt` PT). Returns
+    ///      type(uint256).max (infeasible) if the PT sale yields nothing at that
+    ///      size. `ms`/`pre` are reused across the search — executeTradeCore is
+    ///      pure and does not mutate them (verified).
+    function _netCostBuyYt(
+        MarketMath.MarketState memory ms,
+        MarketMath.PreCompute memory pre,
+        uint256 yt
+    ) internal view returns (uint256) {
+        if (yt == 0) return 0;
+        (int256 netSy,,,) = MarketMath.executeTradeCore(ms, pre, -int256(yt), block.timestamp);
+        if (netSy <= 0) return type(uint256).max;
+        uint256 proceeds = uint256(netSy);
+        return proceeds >= yt ? 0 : yt - proceeds;
+    }
+
     // ───────────────────── Ed25519-safe holder previews ─────────────────────
 
     /// @notice PT balance of `user` on a FissionRewardsMarket, read from the
