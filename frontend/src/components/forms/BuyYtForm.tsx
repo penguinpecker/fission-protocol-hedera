@@ -15,16 +15,13 @@
  * approve + buy use the chain-observed delta, not the UI estimate.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createPublicClient, http } from "viem";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
-import { hederaMainnet } from "@/lib/chains";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate, ytToSyRate } from "@/components/MarketPositionCard";
 import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, HEDERA_TOKENS, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
-import { lensAbi } from "@/lib/abis";
-import { readLiveTradeCap } from "@/lib/trade-cap";
+import { previewLeveragedYt } from "@/lib/trade-cap";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
@@ -364,28 +361,20 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     async (syInRaw: bigint): Promise<boolean> => {
       if (!user) return false;
       setStatus({ kind: "buying", stepIdx: 4 });
-      // BUY-CAP-01: clamp syIn to the LIVE per-trade cap before the swap so an
-      // oversized post-zap SY balance buys the max YT it can instead of
-      // reverting TradeExceedsCap and stranding the zapped SY (see
-      // readLiveTradeCap). No-op in the normal regime; only fires on the price
-      // knife-edge where the pre-zap linear guard undershoots.
-      let syIn = syInRaw;
-      const liveCap = await readLiveTradeCap(market);
-      if (liveCap > 0n && syIn > liveCap) syIn = liveCap;
-      // BUY-YT-01: buySyForYt splits `syIn` SY → `syIn` PT + `syIn` YT, then
-      // sells the PT for SY (refunded to the user). The market reverts if that
-      // PT-sale's SY output < minSyOutFromPtSale. The old JS interest model
-      // drifted high and produced an unreachable floor → revert at 10bps.
-      // Use the live Lens — previewSwapExactPtForSy(market, syIn) is exactly
-      // the PT-sale's SY output, so minSyOut = that × (1 − slippage) is always
-      // reachable.
-      const minSyOut = await computeMinSyOutForYt(market, syIn, slippageBps);
-      // BUYLP-2: on a Lens-read failure computeMinSyOutForYt returns the 0n
-      // sentinel. Previously the fallback was minSyOut=1, leaving the PT-resale
-      // refund leg with no slippage protection. Abort with a clear error
-      // instead of submitting an unprotected trade.
-      if (minSyOut <= 0n) {
-        const msg = "Price quoter unreachable — couldn't set slippage protection. Please try again in a moment.";
+      // LEVERAGED Buy-YT (2026-05-31): the periphery now deploys the user's FULL
+      // SY budget into YT (fronting the gap from its working-capital reserve,
+      // Pendle parity) instead of the old split-and-refund that only deployed the
+      // ~2% yield slice and bounced ~98% back as SY. Size the YT for slightly
+      // under budget (slippage buffer) via the Lens, then request that exact ytOut
+      // with the full budget as the spend cap. Protection lives in the contract:
+      // previewBuyYt clamps ytOut to the on-chain cap, and buySyForYt's
+      // minSyFromPt floor (= ytOut − maxSyIn) caps the net cost at the budget — so
+      // no manual cap clamp / min-out is needed here.
+      const budget = syInRaw;
+      const sized = (budget * BigInt(10_000 - slippageBps)) / 10_000n;
+      const ytOut = await previewLeveragedYt(market, sized);
+      if (ytOut <= 0n) {
+        const msg = "Price quoter unreachable — couldn't size your YT. Please try again in a moment.";
         setWriteError(msg);
         setStatus({ kind: "error", message: msg, failedAt: 4 });
         return false;
@@ -394,7 +383,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
         const { txHash } = await adapter.write({
           kind: "writePeriphery",
           functionName: "buySyForYt",
-          args: [market, syIn, minSyOut, user, 0n],
+          args: [market, ytOut, budget, user, 0n],
         });
         setLastTxHash(txHash);
         setStatus({ kind: "done", finalTxHash: txHash });
@@ -1138,48 +1127,6 @@ function HbarInput({
 function shortAddr(addr: string): string {
   if (addr.length <= 12) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
-
-/* ─────────────────────────────────────────────────────── lens quoter */
-
-let _lensClient: ReturnType<typeof createPublicClient> | null = null;
-function lensClient() {
-  if (!_lensClient) {
-    _lensClient = createPublicClient({ chain: hederaMainnet, transport: http() });
-  }
-  return _lensClient;
-}
-
-/**
- * BUY-YT-01 fix — compute the PT-resale-leg's minSyOut from the live Lens.
- *
- * buySyForYt sells the PT half for SY and reverts if that SY output is below
- * `minSyOutFromPtSale`. `lens.previewSwapExactPtForSy(market, syIn)` returns
- * exactly that SY output (same MarketMath path), so flooring it by the slippage
- * chip yields a target that's always reachable.
- *
- * BUYLP-2: returns the 0n sentinel when the lens is unreachable (or syIn is
- * non-positive). The caller MUST treat 0n as "abort" rather than submitting an
- * unprotected (minSyOut=1) refund leg.
- */
-async function computeMinSyOutForYt(
-  market: `0x${string}`,
-  syIn: bigint,
-  slippageBps: number,
-): Promise<bigint> {
-  if (syIn <= 0n) return 0n;
-  try {
-    const syOut = (await lensClient().readContract({
-      abi: lensAbi,
-      address: ADDRESSES.lens,
-      functionName: "previewSwapExactPtForSy",
-      args: [market, syIn],
-    })) as bigint;
-    const floor = (syOut * BigInt(10_000 - slippageBps)) / 10_000n;
-    return floor; // 0n if the preview itself returned 0 → caller aborts
-  } catch {
-    return 0n;
-  }
 }
 
 /**

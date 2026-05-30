@@ -26,7 +26,7 @@
  */
 import { createPublicClient, http } from "viem";
 import { hederaMainnet } from "@/lib/chains";
-import { marketAbi } from "@/lib/abis";
+import { lensAbi, marketAbi } from "@/lib/abis";
 import { ADDRESSES } from "@/lib/addresses";
 
 let _client: ReturnType<typeof createPublicClient> | null = null;
@@ -71,6 +71,37 @@ export async function readLiveTradeCap(
     if (bps <= 0n || totalSy <= 0n) return 0n;
     const cap = (totalSy * bps) / 10_000n;
     return (cap * 9990n) / 10_000n; // −0.1% headroom vs totalSy drift
+  } catch {
+    return 0n;
+  }
+}
+
+/**
+ * YT-LEVERAGE (2026-05-31): size a leveraged Buy-YT. Reads the live `maxTradeBps`
+ * and asks the Lens `previewBuyYt` for the YT amount deliverable for `syBudget` of
+ * net spend — full-budget-deployed, Pendle parity, clamped to the on-chain cap so
+ * the subsequent buySyForYt(ytOut, …) can't revert TradeExceedsCap. Returns 0n on
+ * any read failure so the caller aborts cleanly instead of submitting a bad size.
+ */
+export async function previewLeveragedYt(
+  market: `0x${string}`,
+  syBudget: bigint,
+): Promise<bigint> {
+  if (syBudget <= 0n) return 0n;
+  try {
+    const c = client();
+    const bps = (await c.readContract({
+      abi: MAX_TRADE_BPS_ABI,
+      address: ADDRESSES.periphery,
+      functionName: "maxTradeBps",
+    })) as bigint;
+    const res = (await c.readContract({
+      abi: lensAbi,
+      address: ADDRESSES.lens,
+      functionName: "previewBuyYt",
+      args: [market, syBudget, Number(bps)],
+    })) as readonly [bigint, bigint];
+    return res[0] ?? 0n;
   } catch {
     return 0n;
   }

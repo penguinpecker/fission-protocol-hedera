@@ -122,6 +122,20 @@ export const marketAbi = [
 export const lensAbi = [
   {
     type: "function",
+    name: "previewBuyYt",
+    stateMutability: "view",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "syBudget", type: "uint256" },
+      { name: "maxTradeBps", type: "uint16" },
+    ],
+    outputs: [
+      { name: "ytOut", type: "uint256" },
+      { name: "netCost", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
     name: "previewSwapExactYtForSy",
     stateMutability: "view",
     inputs: [
