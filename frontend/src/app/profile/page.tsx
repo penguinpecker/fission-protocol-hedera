@@ -58,6 +58,11 @@ interface PortfolioRow {
   costBasisSy: number;
   currentValueSy: number;
   unrealisedSy: number;
+  /** USD values (sy × usdPerShare). undefined when the SY price feed is down —
+   *  callers fall back to the token count / "—" rather than showing $0. */
+  costBasisUsd?: number;
+  currentValueUsd?: number;
+  unrealisedUsd?: number;
   /** Display string for the unrealised column when SY-units don't fit (e.g. YT). */
   unrealisedOverride?: string;
   maturity: { days: number; never?: boolean };
@@ -69,6 +74,10 @@ interface PortfolioTotals {
   ptRaw: bigint;
   ytRaw: bigint;
   lpRaw: bigint;
+  /** Per-kind current USD value (mark-to-market), for the KPI strip. */
+  ptUsd: number | undefined;
+  ytUsd: number | undefined;
+  lpUsd: number | undefined;
   ptPayoutUsd: number | undefined;
   unclaimedYieldUsd: number | undefined;
   /** Per-asset breakdown of the unclaimed yield — what the user would
@@ -113,6 +122,9 @@ function ProfileBody() {
     let ptRaw = 0n;
     let ytRaw = 0n;
     let lpRaw = 0n;
+    let ptUsd: number | undefined = undefined;
+    let ytUsd: number | undefined = undefined;
+    let lpUsd: number | undefined = undefined;
     let ptPayoutUsd: number | undefined = undefined;
     let unclaimedYieldUsd: number | undefined = undefined;
     let unclaimedUsdc: number | undefined = undefined;
@@ -124,6 +136,9 @@ function ProfileBody() {
       if (t.ptRaw !== undefined) ptRaw += t.ptRaw;
       if (t.ytRaw !== undefined) ytRaw += t.ytRaw;
       if (t.lpRaw !== undefined) lpRaw += t.lpRaw;
+      if (t.ptUsd !== undefined) ptUsd = (ptUsd ?? 0) + t.ptUsd;
+      if (t.ytUsd !== undefined) ytUsd = (ytUsd ?? 0) + t.ytUsd;
+      if (t.lpUsd !== undefined) lpUsd = (lpUsd ?? 0) + t.lpUsd;
       if (t.ptPayoutUsd !== undefined)
         ptPayoutUsd = (ptPayoutUsd ?? 0) + t.ptPayoutUsd;
       if (t.unclaimedYieldUsd !== undefined)
@@ -134,7 +149,7 @@ function ProfileBody() {
         unclaimedWhbar = (unclaimedWhbar ?? 0) + t.unclaimedWhbar;
     }
 
-    return { portfolioUsd, ptRaw, ytRaw, lpRaw, ptPayoutUsd, unclaimedYieldUsd, unclaimedUsdc, unclaimedWhbar };
+    return { portfolioUsd, ptRaw, ytRaw, lpRaw, ptUsd, ytUsd, lpUsd, ptPayoutUsd, unclaimedYieldUsd, unclaimedUsdc, unclaimedWhbar };
   }, [totalsByMarket]);
 
   return (
@@ -251,7 +266,7 @@ function KpiStrip({ totals }: { totals: PortfolioTotals }) {
       />
       <Kpi
         label="PT · fixed locked"
-        value={formatCompact(totals.ptRaw)}
+        value={totals.ptUsd !== undefined ? (formatUsd(totals.ptUsd) ?? "—") : "—"}
         sub={
           totals.ptPayoutUsd !== undefined
             ? `≈ ${formatUsd(totals.ptPayoutUsd) ?? "—"} at maturity`
@@ -260,14 +275,18 @@ function KpiStrip({ totals }: { totals: PortfolioTotals }) {
       />
       <Kpi
         label="YT · active stream"
-        value={formatCompact(totals.ytRaw)}
+        value={totals.ytUsd !== undefined ? (formatUsd(totals.ytUsd) ?? "—") : "—"}
         sub={
           totals.unclaimedYieldUsd !== undefined
             ? `${formatUsd(totals.unclaimedYieldUsd) ?? "$0.00"} unclaimed`
             : "—"
         }
       />
-      <Kpi label="LP · provided" value={formatCompact(totals.lpRaw)} sub="$— fees earned" />
+      <Kpi
+        label="LP · provided"
+        value={totals.lpUsd !== undefined ? (formatUsd(totals.lpUsd) ?? "—") : "—"}
+        sub="fees earned in pool"
+      />
     </div>
   );
 }
@@ -482,14 +501,25 @@ function PositionRow({ row, user }: { row: PortfolioRow; user: `0x${string}` | u
           {row.kind}
         </span>
       </PosTd>
-      <PosNum>{formatRaw(row.amountRaw, row.decimals)}</PosNum>
-      <PosNum>{formatCompactNum(row.costBasisSy)} SY</PosNum>
-      <PosNum>{formatCompactNum(row.currentValueSy)} SY</PosNum>
+      <PosNum>
+        {row.currentValueUsd !== undefined ? (
+          <span className="flex flex-col items-end leading-tight">
+            <span>{formatUsd(row.currentValueUsd) ?? "—"}</span>
+            <span className="text-[10px] text-textDim">{formatRaw(row.amountRaw, row.decimals)}</span>
+          </span>
+        ) : (
+          formatRaw(row.amountRaw, row.decimals)
+        )}
+      </PosNum>
+      <PosNum>{row.costBasisUsd !== undefined ? (formatUsd(row.costBasisUsd) ?? "—") : "—"}</PosNum>
+      <PosNum>{row.currentValueUsd !== undefined ? (formatUsd(row.currentValueUsd) ?? "—") : "—"}</PosNum>
       <PosNum>
         <span className={unrealisedColor}>
           {row.unrealisedOverride
             ? row.unrealisedOverride
-            : `${row.unrealisedSy >= 0 ? "+" : ""}${formatCompactNum(row.unrealisedSy)} SY`}
+            : row.unrealisedUsd !== undefined
+              ? `${row.unrealisedUsd >= 0 ? "+" : ""}${formatUsd(row.unrealisedUsd) ?? "—"}`
+              : "—"}
         </span>
       </PosNum>
       <PosNum dim={row.maturity.never}>{row.maturity.never ? "never" : `${row.maturity.days}d`}</PosNum>
@@ -1115,6 +1145,14 @@ function buildRows(
   // here produced "3.02e-9 PT" / "0.0000 SY" rows that contradicted the KPIs.
   const dec = detail.syDecimals || 18;
 
+  // DECIMALS-01 follow-up (2026-05-30): the position page shows $ values, not
+  // raw token counts. usdPerShare is $/raw-SY-unit, and the costBasis/current/
+  // unrealised figures below are raw-SY counts, so sy × usdPerShare = USD.
+  // Returns undefined when the price feed is down so the UI falls back to the
+  // token count instead of a misleading $0.
+  const toUsd = (sy: number): number | undefined =>
+    usdPerShare !== undefined ? sy * usdPerShare : undefined;
+
   const rows: PortfolioRow[] = [];
 
   // F7: the real accrued rewards come straight off the position object, which
@@ -1144,6 +1182,9 @@ function buildRows(
       costBasisSy: sySy,
       currentValueSy: sySy,
       unrealisedSy: 0,
+      costBasisUsd: toUsd(sySy),
+      currentValueUsd: toUsd(sySy),
+      unrealisedUsd: toUsd(0),
       maturity: { days: 0, never: true },
       expired,
     });
@@ -1165,6 +1206,9 @@ function buildRows(
       costBasisSy: currentSy,
       currentValueSy: currentSy,
       unrealisedSy: unrealisedSy,
+      costBasisUsd: toUsd(currentSy),
+      currentValueUsd: toUsd(currentSy),
+      unrealisedUsd: toUsd(unrealisedSy),
       maturity: { days, never: false },
       expired,
     });
@@ -1194,6 +1238,9 @@ function buildRows(
       costBasisSy: currentSy,
       currentValueSy: currentSy,
       unrealisedSy: claimableSy,
+      costBasisUsd: toUsd(currentSy),
+      currentValueUsd: toUsd(currentSy),
+      unrealisedUsd: usdClaim,
       unrealisedOverride: formatUsd(usdClaim)
         ? `${formatUsd(usdClaim)} unclaimed`
         : `${claimableSy.toFixed(4)} SY unclaimed`,
@@ -1221,6 +1268,9 @@ function buildRows(
       costBasisSy: currentSy,
       currentValueSy: currentSy,
       unrealisedSy: parSy - currentSy,
+      costBasisUsd: toUsd(currentSy),
+      currentValueUsd: toUsd(currentSy),
+      unrealisedUsd: toUsd(parSy - currentSy),
       maturity: { days, never: false },
       expired,
     });
@@ -1244,6 +1294,17 @@ function buildRows(
 
   const ptPayoutUsd =
     usdPerShare !== undefined ? Number(position.pt) * usdPerShare : undefined;
+
+  // Per-kind current (mark-to-market) USD value for the KPI strip.
+  const ptUsd = toUsd(Number(position.pt) * ptRate);
+  const ytUsd = toUsd(Number(position.yt) * ytRate);
+  const lpUsd = toUsd(
+    detail.lpSupply > 0n
+      ? (Number(position.lp) *
+          (Number(detail.totalPt) * ptRate + Number(detail.totalSy))) /
+          Number(detail.lpSupply)
+      : 0,
+  );
 
   // F7: the real accrued rewards come off the position object (see `f7` above).
   // The old path multiplied an always-0 `previewYield`-derived claimableYield by
@@ -1279,6 +1340,9 @@ function buildRows(
       ptRaw: position.pt,
       ytRaw: position.yt,
       lpRaw: position.lp,
+      ptUsd,
+      ytUsd,
+      lpUsd,
       ptPayoutUsd,
       unclaimedYieldUsd,
       unclaimedUsdc,
@@ -1296,17 +1360,4 @@ function formatRaw(v: bigint, decimals: number): string {
   // applies the divisor internally.
   void decimals;
   return formatCompact(v);
-}
-
-/**
- * DECIMALS-01: numeric companion to `formatCompact` for the SY-denominated value
- * columns (cost basis / current value / unrealised). Those are raw-count
- * `number`s after a rate multiply (e.g. ptCount * ptRate); we floor to a bigint
- * raw and reuse `formatCompact`, which divides by 1e18 — so these columns render
- * in the SAME canonical 18-decimal units as every balance in the app.
- */
-function formatCompactNum(n: number): string {
-  if (!Number.isFinite(n)) return "0";
-  if (n === 0) return "0";
-  return formatCompact(BigInt(Math.trunc(n)));
 }
