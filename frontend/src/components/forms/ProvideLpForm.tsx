@@ -25,6 +25,7 @@ import { ptToSyRate } from "@/components/MarketPositionCard";
 import { useHbarUsd, usePoolHbarUsd, useSyValueUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, HEDERA_TOKENS, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
 import { erc20Abi } from "@/lib/abis";
+import { readLiveTradeCap } from "@/lib/trade-cap";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
@@ -697,11 +698,20 @@ function AddLp({
 
       // BUY-LP-02: read the REAL post-zap SY-share delta (lag-aware). This is
       // the syIn we pass to Tx2 — not the over-shooting linear estimate.
-      const realSyIn = await readPostZapSyDelta(preZapSy, estSyFromHbar);
+      let realSyIn = await readPostZapSyDelta(preZapSy, estSyFromHbar);
       if (realSyIn <= 0n) {
         setWriteError("Zap delivered no SY — aborting before the LP step. Try again.");
         return;
       }
+
+      // BUY-CAP-01: clamp realSyIn to the LIVE per-trade cap before Tx2 so an
+      // oversized post-zap SY balance adds the max LP it can instead of
+      // reverting TradeExceedsCap and stranding the zapped SY (see
+      // readLiveTradeCap). Conservative — clamps the full syIn, which keeps the
+      // internal swap leg within cap regardless of the ptShare split. No-op in
+      // the normal regime; only fires on the price knife-edge.
+      const liveCap = await readLiveTradeCap(market);
+      if (liveCap > 0n && realSyIn > liveCap) realSyIn = liveCap;
 
       // BUY-LP-02: approve SY-share → Periphery so Tx2's transferFrom succeeds.
       if (syShareToPeripheryAllowance < realSyIn) {

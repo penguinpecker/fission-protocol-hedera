@@ -35,6 +35,7 @@ import { ptToSyRate } from "@/components/MarketPositionCard";
 import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, HEDERA_TOKENS, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
 import { lensAbi } from "@/lib/abis";
+import { readLiveTradeCap } from "@/lib/trade-cap";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
@@ -415,9 +416,17 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   );
 
   const stepBuyPt = useCallback(
-    async (syIn: bigint): Promise<boolean> => {
+    async (syInRaw: bigint): Promise<boolean> => {
       if (!user) return false;
       setStatus({ kind: "buying", stepIdx: 4 });
+      // BUY-CAP-01: clamp syIn to the LIVE per-trade cap before the swap so an
+      // oversized post-zap SY balance buys the max PT it can instead of
+      // reverting TradeExceedsCap and stranding the zapped SY (see
+      // readLiveTradeCap). No-op in the normal regime (the pre-zap guard keeps
+      // syIn well under the cap); only fires on the price knife-edge.
+      let syIn = syInRaw;
+      const liveCap = await readLiveTradeCap(market);
+      if (liveCap > 0n && syIn > liveCap) syIn = liveCap;
       // BUY-PT-01/F4: buySyForPt(market, syIn, minPtOut, receiver, deadline)
       // treats the 3rd arg as the EXACT ptOut to mint while capping spend at
       // syIn — the curve reverts if it needs > syIn SY for that ptOut.

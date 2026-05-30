@@ -24,6 +24,7 @@ import { ptToSyRate, ytToSyRate } from "@/components/MarketPositionCard";
 import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, HEDERA_TOKENS, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
 import { lensAbi } from "@/lib/abis";
+import { readLiveTradeCap } from "@/lib/trade-cap";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
@@ -360,9 +361,17 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   );
 
   const stepBuyYt = useCallback(
-    async (syIn: bigint): Promise<boolean> => {
+    async (syInRaw: bigint): Promise<boolean> => {
       if (!user) return false;
       setStatus({ kind: "buying", stepIdx: 4 });
+      // BUY-CAP-01: clamp syIn to the LIVE per-trade cap before the swap so an
+      // oversized post-zap SY balance buys the max YT it can instead of
+      // reverting TradeExceedsCap and stranding the zapped SY (see
+      // readLiveTradeCap). No-op in the normal regime; only fires on the price
+      // knife-edge where the pre-zap linear guard undershoots.
+      let syIn = syInRaw;
+      const liveCap = await readLiveTradeCap(market);
+      if (liveCap > 0n && syIn > liveCap) syIn = liveCap;
       // BUY-YT-01: buySyForYt splits `syIn` SY → `syIn` PT + `syIn` YT, then
       // sells the PT for SY (refunded to the user). The market reverts if that
       // PT-sale's SY output < minSyOutFromPtSale. The old JS interest model
