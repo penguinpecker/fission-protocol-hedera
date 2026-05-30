@@ -125,39 +125,50 @@ export function formatBigInt(v: bigint, decimals: number, sigDigits = 4): string
 }
 
 /**
- * Compact magnitude formatter for raw bigints that don't divide cleanly
- * by their declared decimals. The SY share token declares 18 decimals but
- * actual minted amounts are far smaller, so `formatBigInt(v, 18)` collapses
- * everything to "0.0". This shows raw magnitude with K/M/B/T suffix instead.
+ * Token-amount formatter for the protocol's PT/YT/SY/LP tokens.
  *
- *   0n              → "0"
- *   123n            → "123"
- *   12345n          → "12.35K"
- *   1619561093n     → "1.62B"
+ * DECIMALS-01 (2026-05-30): these tokens declare `decimals() = 18` on-chain, so
+ * to match exactly what external wallets (HashPack / MetaMask / HashScan) render
+ * we display the CANONICAL 18-decimal value — `raw / 1e18` — not the raw integer
+ * count. The seeded supplies are small in base units (~3.0e9), so the canonical
+ * value is a small fraction; we show it at full precision (trailing zeros
+ * trimmed) so a holding reconciles 1:1 with the wallet. Whole-token counts of
+ * ≥1000 (rare for these tokens, possible on future markets) fall back to a
+ * K/M/B/T compact suffix.
+ *
+ *   0n                  → "0"
+ *   3016820951n         → "0.000000003016820951"   (matches the wallet)
+ *   1_500000000000000000n (1.5 tokens)  → "1.5"
+ *   12345e18n           → "12.345K"
  */
+const TOKEN_ONE = 10n ** 18n;
 export function formatCompact(v: bigint): string {
   if (v === 0n) return "0";
   const neg = v < 0n;
   const abs = neg ? -v : v;
+  const sign = neg ? "-" : "";
 
-  const TIERS: ReadonlyArray<{ threshold: bigint; divisor: bigint; suffix: string }> = [
-    { threshold: 1_000_000_000_000n, divisor: 1_000_000_000_000n, suffix: "T" }, // ≥1e12
-    { threshold: 1_000_000_000n,     divisor: 1_000_000_000n,     suffix: "B" }, // ≥1e9
-    { threshold: 1_000_000n,         divisor: 1_000_000n,         suffix: "M" }, // ≥1e6
-    { threshold: 1_000n,             divisor: 1_000n,             suffix: "K" }, // ≥1e3
-  ];
-
-  for (const t of TIERS) {
-    if (abs >= t.threshold) {
-      // Scale to fixed-point with 3 fractional digits so small yield accruals
-      // remain visible at the M/B suffix levels (e.g. 1.234B vs the prior 1.23B
-      // — the third digit catches sub-1% pool moves on a ~$700 pool).
-      const scaled = (abs * 1000n) / t.divisor;
-      const whole = scaled / 1000n;
-      const frac = scaled % 1000n;
-      const fracStr = frac.toString().padStart(3, "0");
-      return `${neg ? "-" : ""}${whole}.${fracStr}${t.suffix}`;
+  // Large whole-token counts → compact suffix (operates on whole tokens).
+  if (abs >= 1000n * TOKEN_ONE) {
+    const whole = abs / TOKEN_ONE;
+    const TIERS: ReadonlyArray<{ threshold: bigint; divisor: bigint; suffix: string }> = [
+      { threshold: 1_000_000_000_000n, divisor: 1_000_000_000_000n, suffix: "T" },
+      { threshold: 1_000_000_000n,     divisor: 1_000_000_000n,     suffix: "B" },
+      { threshold: 1_000_000n,         divisor: 1_000_000n,         suffix: "M" },
+      { threshold: 1_000n,             divisor: 1_000n,             suffix: "K" },
+    ];
+    for (const t of TIERS) {
+      if (whole >= t.threshold) {
+        const scaled = (whole * 1000n) / t.divisor;
+        const w = scaled / 1000n;
+        const fracStr = (scaled % 1000n).toString().padStart(3, "0");
+        return `${sign}${w}.${fracStr}${t.suffix}`;
+      }
     }
   }
-  return `${neg ? "-" : ""}${abs.toString()}`;
+
+  // Sub-1000-token values: exact 18-decimal string, trailing zeros trimmed.
+  const whole = abs / TOKEN_ONE;
+  const fracStr = (abs % TOKEN_ONE).toString().padStart(18, "0").replace(/0+$/, "");
+  return fracStr.length > 0 ? `${sign}${whole}.${fracStr}` : `${sign}${whole}`;
 }

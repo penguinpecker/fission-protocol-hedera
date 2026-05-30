@@ -1288,29 +1288,25 @@ function buildRows(
 }
 
 function formatRaw(v: bigint, decimals: number): string {
-  // F1: the position table only ever holds the protocol's SY/PT/YT/LP tokens.
-  // These declare decimals()=18 but are ISSUED + TRACKED as RAW INTEGER COUNTS,
-  // so the whole app (KPI strip, trade forms) renders them with `formatCompact`
-  // (raw integer + K/M/B suffix, NO division by 10**18). Use that SAME
-  // convention here so a 3,016,820,951-unit PT balance renders "3.016B PT" — not
-  // the "3.02e-9 PT" the old `/ 10**18` round-trip produced.
-  void decimals; // raw-count tokens: declared decimals are NOT a divisor here
+  // DECIMALS-01 (2026-05-30): the position table only holds the protocol's
+  // SY/PT/YT/LP tokens, which declare decimals()=18. We render them with the
+  // shared `formatCompact`, which now shows the CANONICAL 18-decimal value
+  // (raw / 1e18) so a balance reconciles 1:1 with what HashPack / MetaMask /
+  // HashScan display. `decimals` is always 18 for these tokens; formatCompact
+  // applies the divisor internally.
+  void decimals;
   return formatCompact(v);
 }
 
 /**
- * F1: numeric companion to `formatCompact` for the SY-denominated value columns
- * (cost basis / current value / unrealised). Those are raw-count `number`s after
- * a rate multiply (e.g. ptCount * ptRate), so we floor to a bigint and reuse the
- * exact same compact formatter the rest of the app uses — keeping the table
- * consistent with the KPI strip. Sub-unit magnitudes (rare, e.g. a near-zero
- * unrealised delta) fall back to a fixed-4 render with sign preserved.
+ * DECIMALS-01: numeric companion to `formatCompact` for the SY-denominated value
+ * columns (cost basis / current value / unrealised). Those are raw-count
+ * `number`s after a rate multiply (e.g. ptCount * ptRate); we floor to a bigint
+ * raw and reuse `formatCompact`, which divides by 1e18 — so these columns render
+ * in the SAME canonical 18-decimal units as every balance in the app.
  */
 function formatCompactNum(n: number): string {
   if (!Number.isFinite(n)) return "0";
   if (n === 0) return "0";
-  const abs = Math.abs(n);
-  if (abs < 1) return n.toFixed(4);
-  const floored = BigInt(Math.trunc(n));
-  return formatCompact(floored);
+  return formatCompact(BigInt(Math.trunc(n)));
 }

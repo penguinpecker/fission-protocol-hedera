@@ -367,15 +367,14 @@ function makeAmount(
   const info = lookupToken(primary.tokenAddress);
   const symbol = info?.symbol ?? primary.tokenSymbol ?? "—";
   const raw = BigInt(primary.raw);
-  // F2: the protocol's SY/PT/YT/LP tokens declare decimals()=18 but are ISSUED +
-  // TRACKED as RAW INTEGER COUNTS — the whole app renders them with the compact
-  // raw-integer formatter, NO division by 10**18. So format them with 0
-  // display-decimals here (raw count + K/M/B suffix); a buySyForPt syIn of
-  // 54,694,224 then renders "54.69M", not the old "5.47e-11". USDC(6)/WHBAR(8)
-  // are real-decimal and keep their pinned decimals; unknown tokens stay at 18.
-  const isRawCountToken =
-    info?.kind === "sy" || info?.kind === "pt" || info?.kind === "yt" || info?.kind === "lp";
-  const decimals = isRawCountToken ? 0 : (info?.decimals ?? 18);
+  // DECIMALS-01 (2026-05-30): the protocol's SY/PT/YT/LP tokens declare
+  // decimals()=18, and the whole app now renders their CANONICAL 18-decimal
+  // value (raw / 1e18) to match external wallets. Format the activity amount
+  // with the token's real decimals too (18 for protocol tokens, the pinned
+  // 6/8 for USDC/WHBAR) so the feed agrees with the rest of the UI and the
+  // wallet. `formatTokenAmount` renders small fractions compactly (e.g.
+  // "3.02e-9") for the secondary amount line; USD remains the headline.
+  const decimals = info?.decimals ?? 18;
   const formatted = formatTokenAmount(raw, decimals);
 
   // USD only for SY share-denominated amounts. syUsdPerShare is in

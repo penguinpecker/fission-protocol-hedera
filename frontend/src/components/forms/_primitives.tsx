@@ -278,7 +278,16 @@ export function MoneyInput({
     const rounded = Math.floor(balanceUsd * 1000) / 1000;
     setUsdStr(rounded.toFixed(3));
   };
-  const setMaxRaw = () => setRawStr(balance.toString());
+  // DECIMALS-01: fill the raw input with the canonical 18-decimal value of the
+  // balance (matching the display + parseRawBigInt), so MAX round-trips exactly
+  // back to `balance`. Only invoked for 18-decimal protocol tokens — the lone
+  // non-18-dec MoneyInput (HBAR) passes balance=0n, which disables MAX.
+  const setMaxRaw = () => {
+    const ONE = 10n ** 18n;
+    const whole = balance / ONE;
+    const fracStr = (balance % ONE).toString().padStart(18, "0").replace(/0+$/, "");
+    setRawStr(fracStr.length > 0 ? `${whole}.${fracStr}` : `${whole}`);
+  };
 
   return (
     <label className="mb-3 block">
@@ -405,17 +414,26 @@ export function usdToRawBigInt(usdStr: string, usdPerUnit: number | undefined): 
 }
 
 /**
- * Parse a raw bigint string. Matches the existing input contract used in the
- * pre-redesign forms (drops fractional digits because raw counts are whole).
+ * DECIMALS-01 (2026-05-30): parse a user-typed PT/YT/SY/LP amount into the raw
+ * base-unit bigint the contract expects. These tokens are 18-decimal, and the
+ * UI now displays / accepts the canonical 18-decimal value (e.g. a balance shows
+ * "0.000000003016820951" to match the wallet), so a typed amount is scaled by
+ * 1e18. Fractional input beyond 18 places is truncated (never rounded up, so we
+ * never over-spend). Returns 0n on any unparseable input.
+ *
+ * Only ever called for the 18-decimal protocol tokens; 6/8-decimal underlyings
+ * (USDC/WHBAR) use their own decimal-aware parsing in MintSyForm.
  */
 export function parseRawBigInt(s: string): bigint {
   try {
     if (!s) return 0n;
     const cleaned = s.trim().replace(/,/g, "");
-    if (/^[0-9]+(\.0+)?$/.test(cleaned)) {
-      return BigInt(cleaned.split(".")[0] ?? "0");
-    }
-    return 0n;
+    if (cleaned === "" || cleaned === "." || !/^[0-9]*\.?[0-9]*$/.test(cleaned)) return 0n;
+    const [wholePart = "0", fracPart = ""] = cleaned.split(".");
+    const frac = (fracPart + "0".repeat(18)).slice(0, 18); // pad/truncate to 18
+    const combined = `${wholePart}${frac}`.replace(/^0+(?=\d)/, "");
+    const raw = BigInt(combined === "" ? "0" : combined);
+    return raw > 0n ? raw : 0n;
   } catch {
     return 0n;
   }

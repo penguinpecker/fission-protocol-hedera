@@ -65,20 +65,33 @@ export function formatCompactBigint(v: bigint): string {
   return formatBigCompact(v);
 }
 
+// DECIMALS-01: mirror useMarkets.formatCompact — render the canonical 18-decimal
+// value (raw / 1e18) so cap numbers match wallets, not the raw base-unit count.
 function formatBigCompact(v: bigint): string {
   if (v === 0n) return "0";
-  const TIERS: ReadonlyArray<{ t: bigint; d: bigint; s: string }> = [
-    { t: 1_000_000_000_000n, d: 1_000_000_000_000n, s: "T" },
-    { t: 1_000_000_000n,     d: 1_000_000_000n,     s: "B" },
-    { t: 1_000_000n,         d: 1_000_000n,         s: "M" },
-    { t: 1_000n,             d: 1_000n,             s: "K" },
-  ];
-  for (const { t, d, s } of TIERS) {
-    if (v >= t) {
-      const whole = v / d;
-      const frac = ((v % d) * 100n) / d;
-      return frac > 0n ? `${whole}.${frac.toString().padStart(2, "0")}${s}` : `${whole}${s}`;
+  const neg = v < 0n;
+  const abs = neg ? -v : v;
+  const sign = neg ? "-" : "";
+  const ONE = 10n ** 18n;
+
+  if (abs >= 1000n * ONE) {
+    const whole = abs / ONE;
+    const TIERS: ReadonlyArray<{ t: bigint; d: bigint; s: string }> = [
+      { t: 1_000_000_000_000n, d: 1_000_000_000_000n, s: "T" },
+      { t: 1_000_000_000n,     d: 1_000_000_000n,     s: "B" },
+      { t: 1_000_000n,         d: 1_000_000n,         s: "M" },
+      { t: 1_000n,             d: 1_000n,             s: "K" },
+    ];
+    for (const { t, d, s } of TIERS) {
+      if (whole >= t) {
+        const w = whole / d;
+        const frac = ((whole % d) * 100n) / d;
+        return frac > 0n ? `${sign}${w}.${frac.toString().padStart(2, "0")}${s}` : `${sign}${w}${s}`;
+      }
     }
   }
-  return v.toString();
+
+  const whole = abs / ONE;
+  const fracStr = (abs % ONE).toString().padStart(18, "0").replace(/0+$/, "");
+  return fracStr.length > 0 ? `${sign}${whole}.${fracStr}` : `${sign}${whole}`;
 }
