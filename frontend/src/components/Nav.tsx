@@ -139,6 +139,7 @@ export function Nav() {
           <div className="hidden items-center gap-1 md:flex">
             <NavLink href="/" active={isActive("/")}>Home</NavLink>
             <NavLink href="/markets" active={isActive("/markets")}>Markets</NavLink>
+            <NavLink href="/leaderboard" active={isActive("/leaderboard")}>Leaderboard</NavLink>
             <NavLink href="/profile" active={isActive("/profile")}>Profile</NavLink>
             <NavLink href="/whitepaper" active={isActive("/whitepaper")}>Whitepaper</NavLink>
           </div>
@@ -246,6 +247,7 @@ export function Nav() {
             <div className="mx-auto flex max-w-[1440px] flex-col gap-1 px-4 py-3 sm:px-6">
               <MobileNavLink href="/" active={isActive("/")}>Home</MobileNavLink>
               <MobileNavLink href="/markets" active={isActive("/markets")}>Markets</MobileNavLink>
+              <MobileNavLink href="/leaderboard" active={isActive("/leaderboard")}>Leaderboard</MobileNavLink>
               <MobileNavLink href="/profile" active={isActive("/profile")}>Profile</MobileNavLink>
               <MobileNavLink href="/whitepaper" active={isActive("/whitepaper")}>Whitepaper</MobileNavLink>
             </div>
