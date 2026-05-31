@@ -146,11 +146,24 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   }, [effectiveSource, hbarAmount, hbarUsd, usdPerShare]);
 
   const syForSwap: bigint = useMemo(() => {
-    if (effectiveSource === "sy") return parsedSy;
-    if (flowState.kind === "zapped" || flowState.kind === "approving" || flowState.kind === "approved" || flowState.kind === "buying") {
-      return (flowState as { syAcquired: bigint }).syAcquired;
+    let raw: unknown;
+    if (effectiveSource === "sy") raw = parsedSy;
+    else if (
+      flowState.kind === "zapped" || flowState.kind === "approving" ||
+      flowState.kind === "approved" || flowState.kind === "buying"
+    ) {
+      raw = (flowState as { syAcquired: bigint }).syAcquired;
+    } else {
+      raw = estimatedSyFromHbar;
     }
-    return estimatedSyFromHbar;
+    // Defensive coercion: this value is typed bigint, but if any source ever
+    // yields a JS number at runtime, the bigint arithmetic below (live-quote
+    // effect, minYtOut, formatCompact) throws "Cannot mix BigInt and other
+    // types" and white-screens the page. Normalize to bigint here so every
+    // downstream consumer is safe.
+    if (typeof raw === "bigint") return raw;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? BigInt(Math.trunc(n)) : 0n;
   }, [effectiveSource, parsedSy, estimatedSyFromHbar, flowState]);
 
   const insufficient = effectiveSource === "sy" && parsedSy > syBalance;
