@@ -4,13 +4,25 @@ import { useCallback, useEffect, useState } from "react";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 
+type ReferralItem = {
+  referee: string;
+  code: string;
+  signedUpAt: string;
+  transacted: boolean;
+};
+
 type Resp = {
   code: string | null;
   link: string | null;
   totalSignups: number;
   signupsWithTx: number;
   referralXp: number;
+  referrals: ReferralItem[];
 };
+
+function shortAddr(a: string): string {
+  return a.length > 14 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a;
+}
 
 export default function ReferralsPage() {
   return (
@@ -121,6 +133,52 @@ function ReferralsBody() {
             <Stat label="Total signups" value={data.totalSignups} />
             <Stat label="Signups with ≥1 tx" value={data.signupsWithTx} />
             <Stat label="Referral XP earned" value={data.referralXp} />
+          </div>
+
+          {/* per-referral list */}
+          <div className="mt-6 overflow-hidden rounded-[6px] border border-border bg-bgCard">
+            <div className="grid grid-cols-[1fr_150px_90px_110px] gap-2 border-b border-border bg-white/[0.02] px-4 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-textDim">
+              <div>Referred wallet</div>
+              <div>Signed up</div>
+              <div>Code</div>
+              <div className="text-right">Status</div>
+            </div>
+            {data.referrals.length === 0 ? (
+              <div className="px-4 py-10 text-center font-mono text-[12px] text-textDim">
+                No referrals yet — share your link to get started.
+              </div>
+            ) : (
+              data.referrals.map((r) => (
+                <div
+                  key={r.referee}
+                  className="grid grid-cols-[1fr_150px_90px_110px] items-center gap-2 border-b border-border/60 px-4 py-3 text-[13px] last:border-b-0"
+                >
+                  <a
+                    href={`https://hashscan.io/mainnet/account/${r.referee}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="truncate font-mono text-text underline-offset-2 hover:underline"
+                  >
+                    {shortAddr(r.referee)}
+                  </a>
+                  <div className="font-mono text-[11px] text-textSec">
+                    {new Date(r.signedUpAt).toLocaleString()}
+                  </div>
+                  <div className="font-mono text-[11px] text-textSec">{r.code}</div>
+                  <div className="text-right">
+                    {r.transacted ? (
+                      <span className="inline-block rounded-[2px] border border-success/30 bg-success/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.1em] text-success">
+                        Transacted
+                      </span>
+                    ) : (
+                      <span className="inline-block rounded-[2px] border border-border bg-white/[0.04] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.1em] text-textDim">
+                        Signed up
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </>
       )}
