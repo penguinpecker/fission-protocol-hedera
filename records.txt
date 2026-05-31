@@ -1415,3 +1415,68 @@ NEW SCRIPTS (scripts/): deploy-rebuild-proxy, seed-init-rebuild-market,
   sweep-old-deployer, wallet-ledger.
 
 ═══════════════════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════════════════
+2026-05-31 — LEVERAGED BUY-YT · RESERVE-AWARE SIZING · FULL CONTRACT VERIFICATION
+            · DONE-BUTTON RE-FIRE FIX · TX AUDITS
+═══════════════════════════════════════════════════════════════════════════════
+
+LEVERAGED BUY-YT (Pendle parity) — periphery+lens UUPS upgrade + frontend wiring:
+  New impls behind the existing proxies: FissionPeriphery 0x..a04973, FissionLens
+  0x..a04975 (proxies a03fad / a03f9b unchanged). Buy-YT now fronts the full ytOut
+  in SY from the periphery working-capital reserve, splits, then sells the minted PT
+  to replenish — so a user can buy YT worth far more than the thin YT pool.
+  previewLeveragedYt clamps ytOut to reserve (peripheryBal*0.999 + syBudget) to dodge
+  InsufficientReserve(0x315276c9); dynamic "Max ~$X" cap pill on Buy PT + YT;
+  Fixed-APY display on Buy PT. Commits 4c3536a, ea0b302, 012c302, 265f70e.
+
+POOL + RESERVE FUNDING (operator 0.0.10495279 / 0xA7e1..11a7): added ~$200 then ~$800
+  working capital via zap->split->addLiquidity + reserve top-up. Supports ~$13 PT and
+  ~$1.86 YT per trade at current depth (caps dynamic, reserve-bound).
+
+APY HISTORY LOGGER: apy_snapshots table (migration 20260531000000, applied via MCP) +
+  60s heartbeat insert in /api/markets/refresh + public /api/markets/history series.
+  Implied APY moves ONLY on swaps (lastLnImpliedRate); the 8->11% drift was market
+  re-pricing (cross-checked vs Pendle V2 mechanics), not a bug.
+
+BIGINT CRASH CLASS FIXED (white-screen "Cannot mix BigInt"): values typed bigint but
+  built from runtime casts (flowState.syAcquired, lensSyOut) could arrive as JS
+  numbers; arithmetic then threw + white-screened (hit on Buy-YT during the 2/2 sign).
+  Coerced the source memos to bigint across Buy/Sell PT+YT. Commits 6b887cb, f7a46d5.
+  FlowOfFunds vertical-text bug fixed (long 18-dec amounts crushed the column) 4f46c65.
+
+FULL CONTRACT VERIFICATION (Sourcify/HashScan, chain 295) — went 2/10 -> 10/10:
+  `forge verify-contract -> sourcify.dev/server` matched EVERY contract, incl. the
+  embedded-initcode deployers + the market the old note claimed via_ir would block:
+    factory impl a03f92, factory proxy a03f94, lens impl a04975, lens proxy a03f9b,
+    periphery impl a04973, periphery proxy a03fad, SY adapter a03f9d,
+    StandardMarketDeployer a03f8a, RewardsMarketDeployer a03f8f,
+    market 0x31742a (FissionRewardsMarket).
+  All `match` (partial, expected with bytecode_hash=none — still shows verified source
+  on HashScan). PT/YT/LP/SY = HTS native tokens (no source verification). Gotchas:
+  proxies need the on-disk lib path (lib/openzeppelin-contracts/.../ERC1967Proxy.sol:
+  ERC1967Proxy), NOT the @openzeppelin remapping; factory is UUPS too (impl a03f92 read
+  from the EIP-1967 slot, not present in 295.json). The old "via_ir fails on Sourcify"
+  belief was WRONG — likely wrong-source/mapping or a stale instance before.
+
+DONE-BUTTON RE-FIRE BUG FIXED (4 buy/sell forms): after a buy/sell settled, the white
+  primary button showed "✓ Done" but stayed ENABLED and onPrimary() re-ran the WHOLE
+  trade on click — a real double-spend risk. Added `isDoneFinal ||` as the first term
+  of buttonDisabled in BuyYtForm/BuyPtForm/SellYtForm/SellPtForm so the settled button
+  is a non-interactive indicator; the "New trade" link is the reset path. ProvideLpForm
+  already had a chainInFlight re-entry guard; MintSyForm's nextStep model already
+  disables on completion — both left as-is.
+
+TX AUDITS (both SUCCESS, both SY->HBAR redemptions via unzapSyToHbar 0x047a7060, NOT
+  YT sales — confirmed by selector keccak + the SY-burn/LP-withdraw/unwrap cascade):
+  - 0x84a36f..c14abf6: redeemed 5,667,025 SY -> 3.68104347 HBAR gross (min 3.66262465,
+    slippage held); 1.71316011 HBAR gas; net +1.96788336 HBAR to 0.0.10490020.
+  - 0.0.10457309-1780249297-283450814: redeemed 4,162,910 SY -> 2.69847325 HBAR gross
+    (min 2.68635647, held); 1.70502818 HBAR gas; net +0.99344507 HBAR to 0.0.10457309.
+  FLAG: gas ate 46% / 63% of proceeds — these were tiny exits (~$0.35 / ~$0.26). On
+  Hedera the unzap gas is ~fixed regardless of size; batch larger exits. The Done-button
+  bug above plausibly caused some of these repeated tiny redemptions.
+
+STILL OPEN (unchanged): #11 multisig/timelock handoff (operator EOA still sole admin);
+  ROTATE the Supabase token shared in chat; record factoryImpl/lensImpl in 295.json
+  (factory impl = a03f92, lens impl = a04975, periphery impl = a04973).

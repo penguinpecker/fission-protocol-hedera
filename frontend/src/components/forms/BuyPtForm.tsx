@@ -966,6 +966,10 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   // SY mint. Sub-floor inputs hit AmountZero on-chain — block in UI.
   const hbarBelowFloor = effectiveSource === "hbar" && hbarAmount > 0 && hbarAmount < 6;
   const buttonDisabled =
+    // Once the flow has settled, the primary button is a non-interactive
+    // "✓ Done" indicator — clicking it must NOT re-fire the trade. Reset is via
+    // the "New trade" link below.
+    isDoneFinal ||
     !user ||
     isPending ||
     isConfirmingFinal ||
