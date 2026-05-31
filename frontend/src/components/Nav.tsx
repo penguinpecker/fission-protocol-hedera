@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { useAccount, useChainId, useSwitchChain } from "wagmi";
+import { useAccount, useSwitchChain } from "wagmi";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { HEDERA_MAINNET_CHAIN_ID, HEDERA_ADD_PARAMS } from "@/lib/wagmi";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
@@ -28,15 +28,20 @@ export function Nav() {
   const router = useRouter();
   const adapter = useWalletAdapter();
   const wagmiAcct = useAccount();
-  const chainId = useChainId();
   const { switchChain } = useSwitchChain();
   const { state: auth, signIn, signOut } = useSiweAuth();
   const hedera = useHederaWallet();
 
+  // NB: use the connector's ACTUAL chain (`useAccount().chainId`), NOT
+  // `useChainId()`. The wagmi config only declares chain 295, so `useChainId()`
+  // always returns 295 regardless of the wallet's real network — which made
+  // onWrongChain permanently false and let SIWE fire while MetaMask was still
+  // on Polygon/Ethereum. `wagmiAcct.chainId` reflects the wallet's true chain
+  // (e.g. 137 Polygon) so the add+switch fires and the sign-gate holds.
   const onWrongChain =
     adapter.mode === "evm" &&
     wagmiAcct.isConnected &&
-    chainId !== HEDERA_MAINNET_CHAIN_ID;
+    wagmiAcct.chainId !== HEDERA_MAINNET_CHAIN_ID;
   useEffect(() => {
     if (onWrongChain) {
       // Auto-switch MetaMask to Hedera; addEthereumChainParameter makes the
