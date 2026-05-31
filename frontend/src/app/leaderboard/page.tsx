@@ -31,19 +31,6 @@ export default function LeaderboardPage() {
   );
 }
 
-function fmtAge(iso: string | null): string {
-  if (!iso) return "—";
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return "—";
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
-}
-
 function LeaderboardBody() {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<Resp | null>(null);
@@ -97,12 +84,10 @@ function LeaderboardBody() {
 
       {/* table */}
       <div className="mt-5 overflow-hidden rounded-[6px] border border-border bg-bgCard">
-        <div className="grid grid-cols-[64px_1fr_84px_120px_96px] gap-2 border-b border-border bg-white/[0.02] px-4 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-textDim">
+        <div className="grid grid-cols-[72px_1fr_140px] gap-2 border-b border-border bg-white/[0.02] px-4 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-textDim">
           <div>Rank</div>
           <div>Account</div>
-          <div className="text-center">Level</div>
           <div className="text-right">XP</div>
-          <div className="text-right">Actions</div>
         </div>
 
         {loading ? (
@@ -122,7 +107,7 @@ function LeaderboardBody() {
               href={`https://hashscan.io/mainnet/account/${r.account_id}`}
               target="_blank"
               rel="noreferrer"
-              className="grid grid-cols-[64px_1fr_84px_120px_96px] items-center gap-2 border-b border-border/60 px-4 py-3 text-[13px] transition last:border-b-0 hover:bg-white/[0.03]"
+              className="grid grid-cols-[72px_1fr_140px] items-center gap-2 border-b border-border/60 px-4 py-3 text-[13px] transition last:border-b-0 hover:bg-white/[0.03]"
             >
               <div className="font-mono text-textSec">
                 {r.rank <= 3 ? (
@@ -132,17 +117,8 @@ function LeaderboardBody() {
                 )}
               </div>
               <div className="truncate font-mono text-text">{r.account_id}</div>
-              <div className="text-center">
-                <span className="inline-block rounded-[2px] border border-borderHover bg-white/[0.05] px-2 py-0.5 font-mono text-[11px] text-text">
-                  L{r.level}
-                </span>
-              </div>
               <div className="text-right font-mono font-semibold text-text">
                 {r.total_xp.toLocaleString()}
-              </div>
-              <div className="text-right font-mono text-textSec">
-                {r.action_count.toLocaleString()}
-                <span className="ml-1.5 text-[10px] text-textDim">· {fmtAge(r.last_event_at)}</span>
               </div>
             </a>
           ))
