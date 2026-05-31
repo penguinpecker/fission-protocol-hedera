@@ -1480,3 +1480,72 @@ TX AUDITS (both SUCCESS, both SY->HBAR redemptions via unzapSyToHbar 0x047a7060,
 STILL OPEN (unchanged): #11 multisig/timelock handoff (operator EOA still sole admin);
   ROTATE the Supabase token shared in chat; record factoryImpl/lensImpl in 295.json
   (factory impl = a03f92, lens impl = a04975, periphery impl = a04973).
+
+═══════════════════════════════════════════════════════════════════════════════
+2026-06-01 — XP SYSTEM + PUBLIC LEADERBOARD (on-chain-derived, un-gameable)
+═══════════════════════════════════════════════════════════════════════════════
+
+GOAL: reward users for using the platform with XP; manipulation-resistant; DB-level.
+
+CORE PRINCIPLE: XP is a deterministic function of VERIFIED on-chain events only
+(activity_log, which mirrors the chain) — never client input — so it's fully
+recomputable + un-gameable. Service-role writes only; RLS public-read on the board.
+
+DB (Supabase atjsjwebftwbaellnuuy; applied via MCP + mirrored to
+supabase/migrations/20260601000000..04):
+  - longzero_to_account(evm): Hedera long-zero EVM -> 0.0.x. Uses payload.from_raw
+    (always long-zero) so XP attaches to the real account, not a duplicate EVM form
+    (the dual-form gotcha — see the unique-user reconciliation).
+  - xp_config: per-event-type points / daily-cap / first-bonus (tunable). Seeded:
+    deposit/swap_sy_for_pt/swap_pt_for_sy/split/merge=10, add_liquidity=25,
+    remove_liquidity/redeem/redeem_after_expiry=10, claim_rewards=5; first-time
+    bonus +50 (+75 LP); daily cap 25/type.
+  - xp_ledger: append-only, UNIQUE(account_id,kind,ref). kind=action|bonus|holding.
+  - xp_balances: aggregate per account. level = 1 + floor(sqrt(total_xp)/50)
+    (sqrt curve — magnitude-robust for the big holding numbers).
+  - xp_excluded: team wallets hidden from the board (0.0.10495279 operator,
+    0.0.10463169 old deployer); XP still computed, just filtered.
+  - xp_leaderboard VIEW: excluded-filtered + pre-ranked.
+  - xp_params: holding_xp_per_usd_per_min=1, level_sqrt_divisor=50.
+  - xp_holding_runs: holding-snapshot run tracking (elapsed-min accrual + audit).
+  - recompute_xp() (SECURITY DEFINER; rebuilds action+bonus deterministically,
+    preserves holding rows, re-aggregates balances). pg_cron 'xp-recompute' /2 min.
+
+ANTI-MANIPULATION: on-chain only (payload.result='SUCCESS'; failed/old-format rows
+  excluded); idempotent per source row; per-day caps; account-id normalization;
+  service-role writes; fully recomputable from chain (tamper-detectable).
+
+ACTION-XP STATE (initial recompute): operator 0.0.10495279=795, your wallets
+  0.0.10457309=320 / 0.0.10490020=270, old deployer 0.0.10463169=310. Board (after
+  exclusions) shows your 2 wallets. Zero genuine external users yet.
+
+HOLDING XP — 1 XP / $ held / minute (user's explicit rate; HUGE: $100=144k XP/day,
+  by design). /api/xp/holding-sync = Vercel daily cron (00:10 UTC, CRON_SECRET-gated)
+  → values each holder's SY/PT/YT/LP in USD, credits usd*minutes_elapsed*rate as
+  kind='holding' rows, then recompute_xp(). VALUATION (validated live):
+    usdPerShare ported from useSyValueUsd (SaucerSwap-V2 LP basket V3 tick math +
+      CoinGecko WHBAR) = 6.21e-8/share ($1,379 TVL);
+    PT/YT->SY via Lens previewSwapExact{Pt,Yt}ForSy(market, 1e7 probe) — parity
+      check syPerPt+syPerYt = 0.970+0.025 ≈ 1;
+    LP->SY = (total_sy_shares + total_pt*syPerPt) / lp_total_supply (markets_cache).
+  Holders from mirror /tokens/{id}/balances; protocol contracts (market 0.0.10502053,
+  periphery ..061, SY adapter ..045) + xp_excluded filtered out. CAVEAT: agent cannot
+  trigger the first run (CRON_SECRET is write-only in Vercel) — needs a USER curl
+  `-H "Authorization: Bearer $CRON_SECRET"` or the nightly cron. Daily snapshot =
+  coarse granularity (holders valued at snapshot instant); finer needs Pro cron/pg_net.
+
+FRONTEND: /leaderboard page (Rank · Account · XP — Level/Actions columns dropped per
+  user), top 50/page paginated to top 1000, HashScan links; /api/xp/leaderboard
+  (public; count-first so pages past the data return empty-200, not 500); Nav tab.
+
+COMMITS: 23cdcb7 (xp engine + leaderboard), c446b4c (pagination empty-200 fix),
+  4a65241 (board columns -> Rank·Account·XP), f194425 (holding-XP cron).
+
+— ALSO 2026-06-01 (non-XP): docs synced to current contracts (669b8ba). README +
+  docs/MAINNET_DEPLOY listed the stale 2026-05-27 set → updated to the live 2026-05-29
+  UUPS rebuild (factory/periphery/lens proxies + impls a03f92/a04973/a04975, SY a03f9d,
+  market 0x31742a, tokens a03f9e/a03fa6/a03fa7/a03fa8) + "all 10 verified" Sourcify
+  note. GOVERNANCE FIX: README + live whitepaper falsely claimed "controlled by a
+  2-of-2 ThresholdKey + 48h Timelock"; verified on-chain periphery.owner()/market.owner()
+  = operator EOA 0.0.10495279 (single key) → corrected both to operator-controlled
+  bootstrap, with the 2-of-2 + timelock as the pending #11 handoff.
