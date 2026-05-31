@@ -21,7 +21,7 @@ import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate, ytToSyRate } from "@/components/MarketPositionCard";
 import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, HEDERA_TOKENS, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
-import { previewLeveragedYt } from "@/lib/trade-cap";
+import { previewLeveragedYt, type LeveragedYtQuote } from "@/lib/trade-cap";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
@@ -157,14 +157,29 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   const needsSy = effectiveSource === "sy" && syBalance === 0n;
   const sizeLimit = computeSizeLimit(syForSwap, detail.totalSy, detail.totalPt);
 
-  // F8: mirror the periphery's own size cap (maxTradeBps = 5% of totalSy,
-  // checked against syIn) on the HBAR path so an oversized zap doesn't sail
-  // through to a TradeExceedsCap revert. 500 bps matches the contract default.
-  const CONTRACT_MAX_TRADE_BPS = 500n;
-  const contractTradeCap =
-    detail.totalSy > 0n ? (detail.totalSy * CONTRACT_MAX_TRADE_BPS) / 10_000n : 0n;
-  const hbarExceedsContractCap =
-    effectiveSource === "hbar" && contractTradeCap > 0n && syForSwap > contractTradeCap;
+  // SELF-ADAPTING SIZE (2026-05-31): a leveraged Buy-YT is bound by the periphery's
+  // frontable SY (working-capital reserve) + this budget — NOT a static bps cap.
+  // Read the reserve-aware quote live (debounced) so the UI shows the true max
+  // deliverable right now and clamps oversize to it instead of reverting. Replaces
+  // the old stale 500n constant (live maxTradeBps is read inside previewLeveragedYt).
+  const [liveQuote, setLiveQuote] = useState<LeveragedYtQuote | null>(null);
+  useEffect(() => {
+    if (syForSwap <= 0n) {
+      setLiveQuote(null);
+      return;
+    }
+    const sizedBudget = (syForSwap * BigInt(10_000 - slippageBps)) / 10_000n;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      void previewLeveragedYt(market, sizedBudget).then((q) => {
+        if (!cancelled) setLiveQuote(q);
+      });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [market, syForSwap, slippageBps]);
 
   /* ─────────────────────────── YT estimate */
 
@@ -175,7 +190,14 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     syForSwap > 0n && ytRate > 0
       ? Number(syForSwap) / Math.max(1e-9, ytRate)
       : 0;
-  const ytEstimate = ytEstimateNum > 0 ? BigInt(Math.floor(ytEstimateNum)) : 0n;
+  const ytEstimateFallback = ytEstimateNum > 0 ? BigInt(Math.floor(ytEstimateNum)) : 0n;
+  // Show the CHAIN-derived, reserve-clamped deliverable once the live quote lands
+  // (the simple-interest fallback is only used during the ~400ms debounce). This is
+  // the true max buyable now — it never overstates past what the buy actually
+  // delivers, which is what previously misled the failed MetaMask buy.
+  const ytEstimate = liveQuote && liveQuote.ytOut > 0n ? liveQuote.ytOut : ytEstimateFallback;
+  // True iff the protocol working-capital reserve (not budget/pool) bound the size.
+  const reserveLimited = liveQuote?.reserveClamped ?? false;
   const minYtOut = (ytEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
   /* ─────────────────────────── allowance + SY balance reads */
@@ -372,7 +394,11 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
       // no manual cap clamp / min-out is needed here.
       const budget = syInRaw;
       const sized = (budget * BigInt(10_000 - slippageBps)) / 10_000n;
-      const ytOut = await previewLeveragedYt(market, sized);
+      // Reserve-aware quote: q.ytOut is already clamped to what the periphery can
+      // FRONT (its SY balance + this budget), so buySyForYt can't revert
+      // InsufficientReserve. Fresh read at submit time guards against drift.
+      const q = await previewLeveragedYt(market, sized);
+      const ytOut = q.ytOut;
       if (ytOut <= 0n) {
         const msg = "Price quoter unreachable — couldn't size your YT. Please try again in a moment.";
         setWriteError(msg);
@@ -763,7 +789,6 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
       if (hbarAmount < 6) return "Min 6 HBAR";
-      if (hbarExceedsContractCap) return "Trade too large for pool";
       if (megaZapAvailable) {
         if (flowState.kind === "error") return "Retry MegaZap";
         if (flowState.kind === "associating") return "Associating tokens…";
@@ -809,7 +834,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     isConfirmingFinal ||
     !routerDeployed ||
     (effectiveSource === "hbar"
-      ? hbarAmount === 0 || !zapAvailable || hbarBelowFloor || hbarExceedsContractCap
+      ? hbarAmount === 0 || !zapAvailable || hbarBelowFloor
       : parsedSy === 0n || insufficient || sizeLimit.exceeded);
 
   return (
@@ -876,6 +901,9 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
               ytEstimate > 0n ? (
                 <span>
                   Buying <span className="text-text">~{formatCompact(ytEstimate)} YT</span>
+                  {reserveLimited
+                    ? " · max available now — limited by protocol working capital"
+                    : ""}
                 </span>
               ) : undefined
             }

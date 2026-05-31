@@ -35,7 +35,7 @@ import { ptToSyRate } from "@/components/MarketPositionCard";
 import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, HEDERA_TOKENS, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
 import { lensAbi } from "@/lib/abis";
-import { readLiveTradeCap } from "@/lib/trade-cap";
+import { readLiveTradeCap, maxPtBuyable } from "@/lib/trade-cap";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
@@ -191,16 +191,26 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   const needsSy = effectiveSource === "sy" && syBalance === 0n;
   const sizeLimit = computeSizeLimit(syForSwap, detail.totalSy, detail.totalPt);
 
-  // F10: the periphery enforces its own size cap (maxTradeBps = 5% of totalSy,
-  // checked against syIn). The UI's 1%-of-pool-depth guard above already gates
-  // SY mode; mirror the contract's actual revert boundary on the HBAR path so
-  // an oversized zap doesn't sail through to a TradeExceedsCap revert. 500 bps
-  // matches FissionPeriphery.maxTradeBps (initialize default).
-  const CONTRACT_MAX_TRADE_BPS = 500n;
-  const contractTradeCap =
-    detail.totalSy > 0n ? (detail.totalSy * CONTRACT_MAX_TRADE_BPS) / 10_000n : 0n;
+  // SELF-ADAPTING PT CAP (2026-05-31): read the LIVE per-trade PT cap (the smaller
+  // of the contract maxTradeBps cap and the 1% pool-depth slippage gate) instead
+  // of a stale hardcoded 500n. Drives the HBAR-path guard + the "$ max" shown to
+  // the user, and self-adapts to the pool + owner-set bps. Debounced; on read
+  // failure the guard is inert (the submit-time readLiveTradeCap clamp backstops).
+  const [maxPtSyIn, setMaxPtSyIn] = useState<bigint>(0n);
+  useEffect(() => {
+    let cancelled = false;
+    const t = setTimeout(() => {
+      void maxPtBuyable(market).then((v) => {
+        if (!cancelled) setMaxPtSyIn(v);
+      });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [market]);
   const hbarExceedsContractCap =
-    effectiveSource === "hbar" && contractTradeCap > 0n && syForSwap > contractTradeCap;
+    effectiveSource === "hbar" && maxPtSyIn > 0n && syForSwap > maxPtSyIn;
 
   /* ─────────────────────────── PT estimate + slippage floor */
 
@@ -213,6 +223,40 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
       : 0;
   const ptEstimate = ptEstimateNum > 0 ? BigInt(Math.floor(ptEstimateNum)) : 0n;
   const minPtOut = (ptEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
+
+  // FIXED-APY (size-aware). The rate a PT buyer actually LOCKS is set by their
+  // own fill, not the spot implied APY: a large buy pushes PT's price up, so the
+  // locked rate sits below the headline. Ask the Lens what THIS ptEstimate truly
+  // costs in SY (curve + the buyer's own slippage), then annualize PT/SY to
+  // maturity — PT redeems ~1:1 for SY (rewards-SY exchangeRate = 1). Equals the
+  // implied APY for tiny buys; drops below it for large buys on a thin pool.
+  const fixedApyRead = useReadContracts({
+    contracts:
+      isDeployed(ADDRESSES.lens) && ptEstimate > 0n
+        ? [
+            {
+              abi: lensAbi,
+              address: ADDRESSES.lens,
+              functionName: "previewSwapExactSyForPt",
+              args: [market, ptEstimate],
+            } as const,
+          ]
+        : [],
+    query: { enabled: isDeployed(ADDRESSES.lens) && ptEstimate > 0n },
+    allowFailure: true,
+  });
+  const syUsedForEstimate =
+    fixedApyRead.data?.[0]?.status === "success"
+      ? (fixedApyRead.data[0].result as bigint)
+      : undefined;
+  const lockedFixedApy =
+    syUsedForEstimate !== undefined && syUsedForEstimate > 0n && ptEstimate > 0n && days > 0
+      ? ((Number(ptEstimate) / Number(syUsedForEstimate)) ** (365 / days) - 1) * 100
+      : undefined;
+  // Copy fragment reused in the flow steps: shows the locked fixed rate when the
+  // live quote is available, otherwise nothing (falls back to the impl-APY line).
+  const fixedApyTag =
+    lockedFixedApy !== undefined ? `locks ~${lockedFixedApy.toFixed(2)}% fixed · ` : "";
 
   /* ─────────────────────────── SY allowance (SY-mode + post-zap approve) */
 
@@ -769,7 +813,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         },
         {
           label: "Buy PT (swapExactSyForPt)",
-          detail: `${apy.toFixed(2)}% impl APY · ≤ ${(slippageBps / 100).toFixed(2)}% slippage`,
+          detail: `${fixedApyTag}${apy.toFixed(2)}% impl APY · ≤ ${(slippageBps / 100).toFixed(2)}% slippage`,
           inToken:
             syForSwap > 0n
               ? { sym: "SY", amount: formatCompact(syForSwap) }
@@ -816,7 +860,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         },
         {
           label: "Fission AMM",
-          detail: `swapExactSyForPt · ${apy.toFixed(2)}% impl APY`,
+          detail: `swapExactSyForPt · ${fixedApyTag}${apy.toFixed(2)}% impl APY`,
           isActive: isActive && !isDoneFinal,
           isComplete: isDoneFinal,
         },
@@ -985,6 +1029,9 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
               <>
                 Pool depth: {formatCompact(sizeLimit.poolDepth)} · max trade{" "}
                 {MAX_TRADE_PCT_OF_POOL}% = {formatCompact(sizeLimit.maxAllowed)}
+                {maxPtSyIn > 0n && usdPerShare !== undefined
+                  ? ` (max PT now ≈ $${((Number(maxPtSyIn) / 1e18) * usdPerShare).toFixed(2)})`
+                  : ""}
                 {" · "}gas ~0.08 HBAR
               </>
             }

@@ -190,6 +190,46 @@ async function refreshMarketsCache(req: NextRequest) {
       .eq("chain_id", hederaMainnet.id)
       .neq("factory_address", ADDRESSES.factory.toLowerCase())
       .eq("is_archived", false);
+
+    // APY-HISTORY: append a heartbeat snapshot of each initialized market's
+    // implied rate + pool depth to the apy_snapshots time-series. markets_cache
+    // only keeps the latest value (overwritten every refresh); this preserves
+    // the series so the implied-APY curve can be charted. The implied rate only
+    // changes on swaps, so a 60s heartbeat captures every real move within 60s.
+    // Best-effort: a failure here (e.g. the table not yet migrated) must NOT
+    // fail the markets_cache refresh.
+    try {
+      const capturedAt = new Date().toISOString();
+      const snapshots = rows
+        .filter((r) => r.initialized && !r.is_archived && r.last_ln_implied_rate)
+        .map((r) => {
+          // Match the frontend: impliedApyPct = (exp(lastLnImpliedRate/1e18) - 1) * 100.
+          const lnRate = Number(r.last_ln_implied_rate) / 1e18;
+          const apyPct = (Math.exp(lnRate) - 1) * 100;
+          return {
+            chain_id: r.chain_id,
+            market_address: r.market_address,
+            captured_at: capturedAt,
+            last_ln_implied_rate: r.last_ln_implied_rate,
+            implied_apy_pct: Number.isFinite(apyPct) ? apyPct.toFixed(8) : "0",
+            total_sy: r.total_sy_shares,
+            total_pt: r.total_pt,
+            lp_total_supply: r.lp_total_supply,
+            source: "heartbeat" as const,
+          };
+        });
+      if (snapshots.length > 0) {
+        const { error: snapErr } = await supa.from("apy_snapshots").insert(snapshots);
+        if (snapErr) {
+          console.error("apy_snapshots insert failed (non-fatal):", snapErr.message);
+        }
+      }
+    } catch (e) {
+      console.error(
+        "apy_snapshots snapshot skipped (non-fatal):",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
   }
 
   return NextResponse.json({
