@@ -160,6 +160,7 @@ export function Nav() {
             <NavLink href="/" active={isActive("/")}>Home</NavLink>
             <NavLink href="/markets" active={isActive("/markets")}>Markets</NavLink>
             <NavLink href="/leaderboard" active={isActive("/leaderboard")}>Leaderboard</NavLink>
+            <NavLink href="/referrals" active={isActive("/referrals")}>Referrals</NavLink>
             <NavLink href="/profile" active={isActive("/profile")}>Profile</NavLink>
             <NavLink href="/whitepaper" active={isActive("/whitepaper")}>Whitepaper</NavLink>
           </div>
@@ -268,6 +269,7 @@ export function Nav() {
               <MobileNavLink href="/" active={isActive("/")}>Home</MobileNavLink>
               <MobileNavLink href="/markets" active={isActive("/markets")}>Markets</MobileNavLink>
               <MobileNavLink href="/leaderboard" active={isActive("/leaderboard")}>Leaderboard</MobileNavLink>
+              <MobileNavLink href="/referrals" active={isActive("/referrals")}>Referrals</MobileNavLink>
               <MobileNavLink href="/profile" active={isActive("/profile")}>Profile</MobileNavLink>
               <MobileNavLink href="/whitepaper" active={isActive("/whitepaper")}>Whitepaper</MobileNavLink>
             </div>

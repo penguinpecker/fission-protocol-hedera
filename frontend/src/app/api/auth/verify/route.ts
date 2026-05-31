@@ -19,6 +19,15 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SiweMessage } from "siwe";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { signSession, attachSessionCookie } from "@/lib/auth/session";
+import {
+  resolveAccountId,
+  ensureReferralCode,
+  backfillRefereeAccount,
+  recordReferral,
+  isNewUser,
+  REF_COOKIE,
+  REF_CODE_RE,
+} from "@/lib/referrals";
 
 const EXPECTED_CHAIN_ID = Number(process.env.NEXT_PUBLIC_HEDERA_CHAIN_ID ?? "295");
 
@@ -320,6 +329,15 @@ async function consumeNonceAndIssueCookie(
     return NextResponse.json({ error: "invalid_or_expired_nonce" }, { status: 401 });
   }
 
+  // Referral: capture new-vs-returning BEFORE record_sign_in upserts the user,
+  // so a pending ref code is only attributed to a genuinely new account.
+  let refereeIsNew = false;
+  try {
+    refereeIsNew = await isNewUser(lowerAddress);
+  } catch {
+    /* non-fatal */
+  }
+
   // Atomic upsert + sign-in-count increment via the record_sign_in RPC
   // (added in 20260525000000_track_session_metadata.sql). No IP collection —
   // only an anonymized "browser/os" summary. Failure here is non-fatal: the
@@ -337,6 +355,22 @@ async function consumeNonceAndIssueCookie(
   const token = await signSession(lowerAddress);
   const res = NextResponse.json({ ok: true, address: lowerAddress });
   attachSessionCookie(res, token);
+
+  // Referral attribution — strictly best-effort; a failure here must NEVER break
+  // sign-in (the session cookie is already attached above).
+  try {
+    const accountId = await resolveAccountId(lowerAddress);
+    await ensureReferralCode(lowerAddress, accountId); // every signed-in user gets a code
+    await backfillRefereeAccount(lowerAddress, accountId); // resolve 0.0.x if they're a referee
+    const refCode = req.cookies.get(REF_COOKIE)?.value;
+    if (refereeIsNew && refCode && REF_CODE_RE.test(refCode)) {
+      await recordReferral(lowerAddress, accountId, refCode);
+    }
+    if (refCode) res.cookies.set(REF_COOKIE, "", { maxAge: 0, path: "/" }); // one-shot
+  } catch (e) {
+    console.error("referral hook failed (non-fatal)", e instanceof Error ? e.message : e);
+  }
+
   return res;
 }
 
