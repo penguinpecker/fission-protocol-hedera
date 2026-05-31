@@ -4,15 +4,18 @@
 > Skipping any step risks user funds. The protocol is **not externally audited**;
 > a mainnet deploy is at the operator's risk.
 
-> **2026-05-27 update — Clean-slate redeploy + audit pass-2 LIVE.**
-> Current production set (all per `deployments/295.json`):
-> - FissionFactory: `0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c` / `0.0.10495346`
-> - FissionPeriphery v3: `0x0000000000000000000000000000000000a02731` / `0.0.10495793`
-> - FissionLens: `0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969` / `0.0.10495350`
-> - SaucerSwapLPYieldSource v2: `0x0000000000000000000000000000000000a0289a` / `0.0.10496154`
-> - Market USDC-WHBAR-2026-08-25-v3: `0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f` / `0.0.10496157`
-> - StandardMarketDeployer: `0xdbDf8da50240F21DFc1ed6c44e3a5806AFDcC9bF` / `0.0.10495325`
-> - RewardsMarketDeployer:  `0x63A75EaaB07feeBc48226A6eaF3Cbb057614e537` / `0.0.10495326`
+> **2026-05-29 update — UUPS-proxy rebuild + freeze-PT LIVE.**
+> Current production set (all per `deployments/295.json`). Factory/Periphery/Lens
+> are UUPS proxies; market is a `FissionRewardsMarket` (99/1 AMM-fee redirect):
+> - FissionFactory (proxy): `0x0000000000000000000000000000000000a03f94` / `0.0.10502036`
+> - FissionPeriphery (proxy): `0x0000000000000000000000000000000000a03fad` / `0.0.10502061`
+> - FissionLens (proxy): `0x0000000000000000000000000000000000a03f9b` / `0.0.10502043`
+> - SaucerSwapLPYieldSource: `0x0000000000000000000000000000000000a03f9d` / `0.0.10502045`
+> - Market USDC-WHBAR-2026-08-27: `0x31742aFF65fcfed391cc6B4B9DA0271643e0Eec6` / `0.0.10502053`
+> - StandardMarketDeployer: `0x0000000000000000000000000000000000a03f8a` / `0.0.10502026`
+> - RewardsMarketDeployer:  `0x0000000000000000000000000000000000a03f8f` / `0.0.10502031`
+> - Impls behind proxies: factory `0x…a03f92`, periphery `0x…a04973`, lens `0x…a04975`
+> - All 10 contracts verified on Sourcify/HashScan.
 >
 > All prior contracts (Factory `0x...a00b4e`, Periphery v1/v2, SY adapter v1
 > `0x...a02585`, market `0x556938...`, ActionRouter v3, FissionZap, MegaZap,

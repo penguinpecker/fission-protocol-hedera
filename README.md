@@ -109,17 +109,21 @@ Governance:  2-of-2 Hedera ThresholdKey  ──►  Timelock (48h)  ──►  c
 
 All deployments are tracked in [`deployments/295.json`](deployments/295.json). HashScan links open the contract page directly.
 
-### Core protocol *(2026-05-27 clean-slate redeploy + audit-pass-2 fixes)*
+### Core protocol *(2026-05-29 UUPS-proxy rebuild + freeze-PT — current live set)*
 
-| Contract | EVM | Hedera ID | HashScan |
+Factory / Periphery / Lens are **UUPS proxies** (stable address, upgradeable implementation). The market is a `FissionRewardsMarket` (99% of AMM swap fees → PT+YT holders, 1% → treasury).
+
+| Contract | EVM (proxy) | Hedera ID | HashScan |
 |----------|-----|-----------|----------|
-| **FissionFactory** | `0x799549F698bBBAc90B9e1C37eF3946A1A1d3397c` | `0.0.10495346` | [view](https://hashscan.io/mainnet/contract/0.0.10495346) |
-| **FissionPeriphery v3** *(consolidates Zap+MegaZap+Unzap+Gateway+Router)* | `0x0000000000000000000000000000000000a02731` | `0.0.10495793` | [view](https://hashscan.io/mainnet/contract/0.0.10495793) |
-| **FissionLens** | `0xa1aAfc8C11A686a3Dee5DfE8B19D9eB43d321969` | `0.0.10495350` | [view](https://hashscan.io/mainnet/contract/0.0.10495350) |
-| **SaucerSwapLPYieldSource v2** *(with `sweepHbar`)* | `0x0000000000000000000000000000000000a0289a` | `0.0.10496154` | [view](https://hashscan.io/mainnet/contract/0.0.10496154) |
-| **Market — `USDC-WHBAR-2026-08-25-v3`** | `0xfD33CCB2385EC20C4B7bc682712fb92e01e87D5f` | `0.0.10496157` | [view](https://hashscan.io/mainnet/contract/0.0.10496157) |
-| StandardMarketDeployer | `0xdbDf8da50240F21DFc1ed6c44e3a5806AFDcC9bF` | `0.0.10495325` | [view](https://hashscan.io/mainnet/contract/0.0.10495325) |
-| RewardsMarketDeployer | `0x63A75EaaB07feeBc48226A6eaF3Cbb057614e537` | `0.0.10495326` | [view](https://hashscan.io/mainnet/contract/0.0.10495326) |
+| **FissionFactory** | `0x0000000000000000000000000000000000a03f94` | `0.0.10502036` | [view](https://hashscan.io/mainnet/contract/0.0.10502036) |
+| **FissionPeriphery** *(single user-facing contract)* | `0x0000000000000000000000000000000000a03fad` | `0.0.10502061` | [view](https://hashscan.io/mainnet/contract/0.0.10502061) |
+| **FissionLens** *(quotes / previews)* | `0x0000000000000000000000000000000000a03f9b` | `0.0.10502043` | [view](https://hashscan.io/mainnet/contract/0.0.10502043) |
+| **SaucerSwapLPYieldSource** *(SY adapter)* | `0x0000000000000000000000000000000000a03f9d` | `0.0.10502045` | [view](https://hashscan.io/mainnet/contract/0.0.10502045) |
+| **Market — `USDC-WHBAR-2026-08-27`** | `0x31742aFF65fcfed391cc6B4B9DA0271643e0Eec6` | `0.0.10502053` | [view](https://hashscan.io/mainnet/contract/0.0.10502053) |
+| StandardMarketDeployer | `0x0000000000000000000000000000000000a03f8a` | `0.0.10502026` | [view](https://hashscan.io/mainnet/contract/0.0.10502026) |
+| RewardsMarketDeployer | `0x0000000000000000000000000000000000a03f8f` | `0.0.10502031` | [view](https://hashscan.io/mainnet/contract/0.0.10502031) |
+
+**Implementations** (logic behind the proxies): FissionFactory impl `0x…a03f92` (`0.0.10502034`) · FissionPeriphery impl `0x…a04973` (`0.0.10504563`) · FissionLens impl `0x…a04975` (`0.0.10504565`).
 
 **User flow (2-tx deterministic):**
 - Buy: `Periphery.zapHbarToSy` → `Periphery.buySyForPt / buySyForYt / buySyForLp`
@@ -129,11 +133,11 @@ Old contracts (ActionRouter v3, FissionZap, MegaZap, FissionUnzap, FissionGatewa
 
 #### Sourcify verification
 
-Programmatic Sourcify verification against the HashScan endpoint is currently flaky for `via_ir = true` artifacts (HTTP 500 "unexpected end of form"). Manual upload via HashScan UI (`https://hashscan.io/mainnet/contract/<entity_id>/source`) is the workaround. Source in this repo is byte-identical to what's deployed; anyone can recompile + cross-reference against the deployed bytecode (`cast code <addr>`).
+**All 10 contracts are verified on Sourcify / HashScan** — factory, periphery, and lens (each proxy + implementation), plus the SY adapter, both market deployers, and the market itself. Verify with `forge verify-contract <addr> <path:Contract> --chain 295 --verifier sourcify --verifier-url https://sourcify.dev/server` (run from `contracts/`; for the proxies use the on-disk OZ path `lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy`). Matches are partial — expected, since `bytecode_hash = "none"` — which still renders verified source on HashScan.
 
-> **2026-05-27 clean-slate redeploy + audit pass-2**
+> **Deployment history**
 >
-> The current contract set replaces every prior on-chain instance (going back through three Periphery iterations + two SY adapters + two markets). Reasons across the cycle:
+> The **current set is the 2026-05-29 UUPS-proxy rebuild** (upgradeable proxies for Factory/Periphery/Lens, freeze-PT, and the 99/1 AMM-fee redirect via `FissionRewardsMarket`). It supersedes the 2026-05-27 clean-slate set, which itself replaced every prior on-chain instance (three Periphery iterations + two SY adapters + two markets). Reasons across the cycle:
 >
 > - **Ed25519 reward-accrual bug** (2026-05-22 cycle, now fixed) — HTS facade `balanceOf` returned 0 for long-zero Ed25519 EVM addresses. Resolved by tracking YT balances in `_ytBal[address]` mapping.
 > - **Periphery consolidation** (2026-05-27) — collapsed FissionZap + MegaZap + FissionUnzap + FissionGateway + ActionRouter into a single `FissionPeriphery` with deterministic 2-tx flow.
@@ -142,27 +146,26 @@ Programmatic Sourcify verification against the HashScan endpoint is currently fl
 >
 > Full forensic write-up: [`records.txt`](records.txt) at repo root.
 
-### Governance contracts
+### Governance
 
-| Contract | EVM | Hedera ID | HashScan |
-|----------|-----|-----------|----------|
-| **Timelock** (48h) | `0x...009fc1c0` | `0.0.10469824` | [view](https://hashscan.io/mainnet/contract/0.0.10469824) |
-| **2-of-2 ThresholdKey** account | `0x...009fc1be` | `0.0.10469822` | [view](https://hashscan.io/mainnet/account/0.0.10469822) |
+**Current (bootstrap):** the protocol is controlled by the operator EOA `0xA7e128…11a7` (`0.0.10495279`) — admin role + UUPS upgrade authority on Factory/Periphery/Lens, and `owner()` on the live market. Verified on-chain: `periphery.owner()` and `market.owner()` both return the operator key.
 
-### Live market HTS tokens *(USDC-WHBAR-2026-08-25-v3)*
+**Planned handoff (#11 — not yet active):** a 2-of-2 Hedera ThresholdKey (`0.0.10469822`) behind a 48-hour Timelock (`0.0.10469824`). These are deployed but hold **no** role yet — transferring admin + `UPGRADER_ROLE` + `owner()` to them is the final on-chain step.
+
+### Live market HTS tokens *(USDC-WHBAR-2026-08-27)*
 
 | Token | EVM | Hedera ID | HashScan |
 |-------|-----|-----------|----------|
-| SY share | `0x0000000000000000000000000000000000a0289b` | `0.0.10496155` | [view](https://hashscan.io/mainnet/token/0.0.10496155) |
-| Principal Token (PT) | `0x0000000000000000000000000000000000a028aa` | `0.0.10496170` | [view](https://hashscan.io/mainnet/token/0.0.10496170) |
-| Yield Token (YT) | `0x0000000000000000000000000000000000a028ab` | `0.0.10496171` | [view](https://hashscan.io/mainnet/token/0.0.10496171) |
-| LP Token | `0x0000000000000000000000000000000000a028ac` | `0.0.10496172` | [view](https://hashscan.io/mainnet/token/0.0.10496172) |
+| SY share | `0x0000000000000000000000000000000000a03f9e` | `0.0.10502046` | [view](https://hashscan.io/mainnet/token/0.0.10502046) |
+| Principal Token (PT) | `0x0000000000000000000000000000000000a03fa6` | `0.0.10502054` | [view](https://hashscan.io/mainnet/token/0.0.10502054) |
+| Yield Token (YT) | `0x0000000000000000000000000000000000a03fa7` | `0.0.10502055` | [view](https://hashscan.io/mainnet/token/0.0.10502055) |
+| LP Token | `0x0000000000000000000000000000000000a03fa8` | `0.0.10502056` | [view](https://hashscan.io/mainnet/token/0.0.10502056) |
 
 All four are HTS-native fungibles. YT is frozen post-receive so user-to-user transfers revert — AMM-only by design, which closes a stale-yield-index exploit class.
 
 ### Trade surface (`FissionPeriphery` — single user-facing contract)
 
-All Buy and Sell flows go through Periphery v3 (`0x...a02731`). Each flow is **two transactions** (deterministic, no atomic 1-tx, no fallback):
+All Buy and Sell flows go through the Periphery (`0x...a03fad`). Each flow is **two transactions** (deterministic, no atomic 1-tx, no fallback):
 
 #### Buy path (HBAR-in)
 

@@ -182,7 +182,7 @@ export default function WhitepaperPage() {
               ["SY adapter", "Wraps the underlying yield source (Uniswap-V3-style LP NFT). Mints SY share tokens. Includes sweepHbar() so refunded HBAR is always recoverable."],
               ["Market", "The logit-curve AMM where PT/YT/LP get minted and traded. Post-expiry auto-redeems LP's PT share so exits don't race PT redeemers."],
               ["FissionLens", "Read-only helper for batched on-chain reads (positions, market state, rates)."],
-              ["Timelock + Threshold", "2-of-2 keys, 48-hour delay, govern any protocol changes."],
+              ["Operator key (bootstrap)", "A single operator key currently administers + upgrades Factory/Periphery/Lens. Handoff to a 2-of-2 ThresholdKey + 48h Timelock is planned but not yet live."],
             ]}
           />
           <p className="mt-4">
@@ -212,10 +212,13 @@ export default function WhitepaperPage() {
 
         <Section title="Governance">
           <p>
-            Fission is controlled by a <span className="text-text">2-of-2 Hedera ThresholdKey</span> sitting behind a <span className="text-text">48-hour Timelock</span>. Two independent keys must sign, and any change waits 48 hours before executing — long enough for users to exit if they don&apos;t like what&apos;s being proposed.
+            Today, Fission is administered by a <span className="text-text">single operator key</span> — it holds the admin role and the upgrade authority on the Factory, Periphery, and Lens (which are UUPS proxies), and is <code>owner()</code> on the live market. This is the bootstrap phase.
           </p>
           <p className="mt-3">
-            The protocol has no fee switch, no admin pause on user funds, and no upgrade key on the markets. The threshold + timelock can whitelist new yield sources and deploy new market instances per maturity, but cannot touch existing positions or change the AMM math.
+            The planned handoff is a <span className="text-text">2-of-2 Hedera ThresholdKey</span> behind a <span className="text-text">48-hour Timelock</span>: two independent keys must sign, and any change waits 48 hours before executing — long enough for users to exit if they don&apos;t like what&apos;s being proposed. <span className="text-text">This handoff is not yet live.</span>
+          </p>
+          <p className="mt-3">
+            Markets are deployed per maturity and their logic is fixed once live (not upgradeable). Governance can whitelist new yield sources and deploy new market instances, but cannot touch existing positions or change a live market&apos;s AMM math.
           </p>
         </Section>
 
