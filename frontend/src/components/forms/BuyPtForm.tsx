@@ -211,6 +211,9 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   }, [market]);
   const hbarExceedsContractCap =
     effectiveSource === "hbar" && maxPtSyIn > 0n && syForSwap > maxPtSyIn;
+  // Live max PT a single buy can take, in USD ($ = raw SY-in × usdPerShare; PT≈1:1 SY).
+  const maxPtUsd =
+    maxPtSyIn > 0n && usdPerShare !== undefined ? Number(maxPtSyIn) * usdPerShare : undefined;
 
   /* ─────────────────────────── PT estimate + slippage floor */
 
@@ -965,6 +968,9 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
                 <StatusPill tone="warning">Thin pool</StatusPill>
               )}
               <StatusPill tone="neutral">{MAX_TRADE_PCT_OF_POOL}% limit</StatusPill>
+              {maxPtUsd !== undefined && (
+                <StatusPill tone="info">Max ~${maxPtUsd.toFixed(2)}</StatusPill>
+              )}
             </>
           }
         />
@@ -1029,9 +1035,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
               <>
                 Pool depth: {formatCompact(sizeLimit.poolDepth)} · max trade{" "}
                 {MAX_TRADE_PCT_OF_POOL}% = {formatCompact(sizeLimit.maxAllowed)}
-                {maxPtSyIn > 0n && usdPerShare !== undefined
-                  ? ` (max PT now ≈ $${((Number(maxPtSyIn) / 1e18) * usdPerShare).toFixed(2)})`
-                  : ""}
+                {maxPtUsd !== undefined ? ` (max PT now ≈ $${maxPtUsd.toFixed(2)})` : ""}
                 {" · "}gas ~0.08 HBAR
               </>
             }

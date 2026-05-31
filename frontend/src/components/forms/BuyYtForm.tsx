@@ -21,7 +21,7 @@ import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
 import { ptToSyRate, ytToSyRate } from "@/components/MarketPositionCard";
 import { useSyValueUsd, useHbarUsd } from "@/hooks/useSyValueUsd";
 import { ADDRESSES, HEDERA_TOKENS, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
-import { previewLeveragedYt, type LeveragedYtQuote } from "@/lib/trade-cap";
+import { previewLeveragedYt, maxYtBuyable, type LeveragedYtQuote } from "@/lib/trade-cap";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
@@ -180,6 +180,21 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
       clearTimeout(t);
     };
   }, [market, syForSwap, slippageBps]);
+
+  // Live absolute max YT a single buy can deliver, in USD — bound by BOTH the pool
+  // 10% clamp AND the working-capital reserve. Market-level (input-independent).
+  const [maxYtCostRaw, setMaxYtCostRaw] = useState<bigint>(0n);
+  useEffect(() => {
+    let cancelled = false;
+    void maxYtBuyable(market).then((v) => {
+      if (!cancelled) setMaxYtCostRaw(v);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [market]);
+  const maxYtUsd =
+    maxYtCostRaw > 0n && usdPerShare !== undefined ? Number(maxYtCostRaw) * usdPerShare : undefined;
 
   /* ─────────────────────────── YT estimate */
 
@@ -855,6 +870,9 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
                 <StatusPill tone="warning">Thin pool</StatusPill>
               )}
               <StatusPill tone="neutral">{MAX_TRADE_PCT_OF_POOL}% limit</StatusPill>
+              {maxYtUsd !== undefined && (
+                <StatusPill tone="info">Max ~${maxYtUsd.toFixed(2)}</StatusPill>
+              )}
             </>
           }
         />

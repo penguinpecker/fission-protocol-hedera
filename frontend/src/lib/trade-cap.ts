@@ -197,3 +197,37 @@ export async function maxPtBuyable(market: `0x${string}`): Promise<bigint> {
     return 0n;
   }
 }
+
+/**
+ * Live max a single Buy-YT can deliver, returned as the NET SY cost (raw) of the
+ * largest frontable YT buy — i.e. the YT *value* the user can acquire right now.
+ * Bound by BOTH the pool 10% clamp (lens previewBuyYt at a huge budget) AND the
+ * periphery's frontable reserve. Multiply by usdPerShare for the $ figure.
+ * 0n on read failure.
+ */
+export async function maxYtBuyable(market: `0x${string}`): Promise<bigint> {
+  try {
+    const c = client();
+    const bps = (await c.readContract({
+      abi: MAX_TRADE_BPS_ABI, address: ADDRESSES.periphery, functionName: "maxTradeBps",
+    })) as bigint;
+    const [res, frontable] = await Promise.all([
+      // Huge budget → previewBuyYt returns the pool-clamp ytOut + its net cost.
+      c.readContract({
+        abi: lensAbi, address: ADDRESSES.lens, functionName: "previewBuyYt",
+        args: [market, 10n ** 30n, Number(bps)],
+      }) as Promise<readonly [bigint, bigint]>,
+      readPeripheryFrontable(market),
+    ]);
+    const poolMaxYt = res[0] ?? 0n;   // 10% (or bps) clamp on ytOut
+    const poolMaxCost = res[1] ?? 0n; // net SY cost to buy poolMaxYt
+    if (poolMaxYt <= poolMaxCost || poolMaxYt === 0n) return 0n;
+    // Reserve-bound net cost: the periphery fronts ytOut from (reserve + budget),
+    // and budget≈netCost, so reserve >= ytOut - netCost = ytOut*(1 - ytPriceSy).
+    // => max net cost = frontable * poolMaxCost / (poolMaxYt - poolMaxCost).
+    const reserveBoundCost = (frontable * poolMaxCost) / (poolMaxYt - poolMaxCost);
+    return poolMaxCost < reserveBoundCost ? poolMaxCost : reserveBoundCost;
+  } catch {
+    return 0n;
+  }
+}
