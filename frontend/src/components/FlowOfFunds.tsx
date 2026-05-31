@@ -114,7 +114,11 @@ export function FlowOfFunds({ title = "Flow of funds", badge, steps }: Props) {
                 className={`absolute left-[3px] top-[5px] block h-2 w-2 rounded-full ${dotColor} ${dotRing}`}
               />
               <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
-                <div className="min-w-0 flex-1">
+                {/* min-w floor so the long 18-dec amount column can't crush the
+                    label/detail to ~1ch (which made break-words wrap the caption
+                    one character per line). When the amounts are wide, the flex
+                    row wraps them below instead of collapsing this column. */}
+                <div className="min-w-[9rem] flex-1">
                   <div
                     className={`font-mono text-[12px] font-medium leading-tight ${
                       step.isActive
