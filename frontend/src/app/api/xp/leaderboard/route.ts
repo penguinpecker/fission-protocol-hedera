@@ -28,22 +28,37 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "not_configured" }, { status: 503 });
   }
 
-  const { data, error, count } = await supa
+  // Count first (cheap head query) so we never ask PostgREST for an
+  // out-of-range slice — `.range(offset, …)` with offset >= rowcount throws
+  // "range not satisfiable" (PGRST103). Past the last page we return an empty
+  // set with 200 instead.
+  const { count, error: countErr } = await supa
     .from("xp_leaderboard")
-    .select("rank,account_id,total_xp,level,action_count,last_event_at", { count: "exact" })
-    .order("rank", { ascending: true })
-    .range(offset, offset + PAGE_SIZE - 1);
+    .select("*", { count: "exact", head: true });
 
-  if (error) {
+  if (countErr) {
     return NextResponse.json({ error: "query_failed" }, { status: 500 });
   }
 
   const total = Math.min(count ?? 0, MAX_RANK);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const rows = (data ?? []).filter((r) => Number(r.rank) <= MAX_RANK);
+  const headers = { "cache-control": "public, max-age=30, s-maxage=30" };
 
-  return NextResponse.json(
-    { rows, page, pageSize: PAGE_SIZE, total, totalPages },
-    { headers: { "cache-control": "public, max-age=30, s-maxage=30" } },
-  );
+  if (offset >= total) {
+    return NextResponse.json({ rows: [], page, pageSize: PAGE_SIZE, total, totalPages }, { headers });
+  }
+
+  const to = Math.min(offset + PAGE_SIZE - 1, MAX_RANK - 1);
+  const { data, error } = await supa
+    .from("xp_leaderboard")
+    .select("rank,account_id,total_xp,level,action_count,last_event_at")
+    .order("rank", { ascending: true })
+    .range(offset, to);
+
+  if (error) {
+    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+  }
+
+  const rows = (data ?? []).filter((r) => Number(r.rank) <= MAX_RANK);
+  return NextResponse.json({ rows, page, pageSize: PAGE_SIZE, total, totalPages }, { headers });
 }
