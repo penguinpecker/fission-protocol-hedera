@@ -83,17 +83,27 @@ export function Nav() {
 
   // When the wallet has just connected AND the user clicked our Connect button
   // (not a session restore), fire SIWE automatically.
+  //
+  // Order matters for MetaMask: we wait until the wallet is on Hedera before
+  // prompting the signature. `!onWrongChain` blocks SIWE while the add+switch
+  // (the onWrongChain effect above) is still pending, so the user sees the
+  // MetaMask prompts in a clean sequence — add Hedera → switch → sign — instead
+  // of a signature popup landing on the wrong chain mid-switch. For HashPack
+  // (mode='hedera') onWrongChain is always false, so it's unaffected. The
+  // autoSign ref stays armed until the chain is right, so a declined/slow
+  // switch just defers the signature rather than dropping it.
   useEffect(() => {
     if (
       autoSignAfterConnectRef.current &&
       adapter.isConnected &&
       adapter.address &&
-      auth.status === "idle"
+      auth.status === "idle" &&
+      !onWrongChain
     ) {
       autoSignAfterConnectRef.current = false;
       void signIn();
     }
-  }, [adapter.isConnected, adapter.address, auth.status, signIn]);
+  }, [adapter.isConnected, adapter.address, auth.status, signIn, onWrongChain]);
 
   // Redirect to /markets ONCE, only after a click-initiated Connect & Sign
   // chain finishes. Probes that flip state to "authenticated" (eg. /api/auth/me
