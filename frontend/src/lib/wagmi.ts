@@ -44,3 +44,20 @@ export const wagmiConfig = createConfig({
   },
   ssr: true,
 });
+
+/**
+ * `wallet_addEthereumChain` parameters for MetaMask, passed to wagmi's
+ * `switchChain({ chainId, addEthereumChainParameter })`. We hardcode the
+ * PUBLIC Hashio RPC here (the canonical chainlist.org/chain/295 endpoint)
+ * rather than reuse `hederaMainnet.rpcUrls` — the app's own read RPC may be a
+ * keyed/private endpoint (Arkhia/Validation Cloud) that must NOT be handed to
+ * the user's MetaMask. Matches the ethereum-lists canonical entry: HBAR with
+ * 18 decimals (the JSON-RPC weibar representation), HashScan explorer.
+ * `chainId` is supplied by wagmi from the switch target — do not add it here.
+ */
+export const HEDERA_ADD_PARAMS = {
+  chainName: "Hedera Mainnet",
+  nativeCurrency: { name: "HBAR", symbol: "HBAR", decimals: 18 },
+  rpcUrls: ["https://mainnet.hashio.io/api"],
+  blockExplorerUrls: ["https://hashscan.io/mainnet"],
+};

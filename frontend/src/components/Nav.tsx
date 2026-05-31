@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useAccount, useChainId, useSwitchChain } from "wagmi";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
-import { HEDERA_MAINNET_CHAIN_ID } from "@/lib/wagmi";
+import { HEDERA_MAINNET_CHAIN_ID, HEDERA_ADD_PARAMS } from "@/lib/wagmi";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { WalletPicker } from "@/components/WalletPicker";
@@ -38,7 +38,12 @@ export function Nav() {
     wagmiAcct.isConnected &&
     chainId !== HEDERA_MAINNET_CHAIN_ID;
   useEffect(() => {
-    if (onWrongChain) switchChain({ chainId: HEDERA_MAINNET_CHAIN_ID });
+    if (onWrongChain) {
+      // Auto-switch MetaMask to Hedera; addEthereumChainParameter makes the
+      // injected connector fall back to wallet_addEthereumChain (with the
+      // public Hashio RPC) when chain 295 isn't yet in the user's wallet.
+      switchChain({ chainId: HEDERA_MAINNET_CHAIN_ID, addEthereumChainParameter: HEDERA_ADD_PARAMS });
+    }
   }, [onWrongChain, switchChain]);
 
   const hederaAvailable = Boolean(process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID);
@@ -260,7 +265,7 @@ export function Nav() {
           Wrong network — Fission only operates on Hedera Mainnet (chain 295).{" "}
           <button
             type="button"
-            onClick={() => switchChain({ chainId: HEDERA_MAINNET_CHAIN_ID })}
+            onClick={() => switchChain({ chainId: HEDERA_MAINNET_CHAIN_ID, addEthereumChainParameter: HEDERA_ADD_PARAMS })}
             className="underline underline-offset-2"
           >
             Switch network
