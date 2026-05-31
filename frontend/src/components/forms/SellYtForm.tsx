@@ -246,7 +246,18 @@ export function SellYtForm({ market, detail, user }: Props) {
     parsedYt > 0n && ytPrice > 0
       ? BigInt(Math.floor(Number(parsedYt) * ytPrice * 0.95))
       : 0n;
-  const syEstimate = lensSyOut ?? linearEstimate;
+  // Defensive coercion: syEstimate is typed bigint, but lensSyOut is a wagmi-
+  // decoded tuple cast `(... as readonly [bigint, bigint])[0]`. If it ever
+  // arrives as a JS number at runtime, the bigint arithmetic below (minSyOut
+  // multiply) and formatCompact(syEstimate) throw "Cannot mix BigInt and other
+  // types" and white-screen the page. Normalize at the source; value preserved
+  // (linearEstimate is already bigint and passes through unchanged).
+  const syEstimate: bigint = ((): bigint => {
+    const raw: unknown = lensSyOut ?? linearEstimate;
+    if (typeof raw === "bigint") return raw;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? BigInt(Math.trunc(n)) : 0n;
+  })();
   const minSyOut = (syEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
   // F3/F4 + SELL-MINHBAR-COINGECKO-01: the Tx3 unzap (SY → HBAR) needs a

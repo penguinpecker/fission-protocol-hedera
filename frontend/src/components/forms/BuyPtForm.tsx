@@ -180,11 +180,27 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   // is the estimate until the zap has actually run, then we substitute the
   // chain-observed `syAcquired`. In SY mode it's just `parsedSy`.
   const syForSwap: bigint = useMemo(() => {
-    if (effectiveSource === "sy") return parsedSy;
-    if (flowState.kind === "zapped" || flowState.kind === "approving" || flowState.kind === "approved" || flowState.kind === "buying") {
-      return (flowState as { syAcquired: bigint }).syAcquired;
+    let raw: unknown;
+    if (effectiveSource === "sy") {
+      raw = parsedSy;
+    } else if (
+      flowState.kind === "zapped" ||
+      flowState.kind === "approving" ||
+      flowState.kind === "approved" ||
+      flowState.kind === "buying"
+    ) {
+      raw = (flowState as { syAcquired: bigint }).syAcquired;
+    } else {
+      raw = estimatedSyFromHbar;
     }
-    return estimatedSyFromHbar;
+    // Defensive coercion: this value is typed bigint, but the flowState.syAcquired
+    // branch is a chain-read cast that can arrive as a JS number at runtime. The
+    // bigint arithmetic below (computeSizeLimit, formatCompact's `x / TOKEN_ONE`)
+    // then throws "Cannot mix BigInt and other types" and white-screens the page.
+    // Normalize to bigint here so every downstream consumer is safe; value preserved.
+    if (typeof raw === "bigint") return raw;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? BigInt(Math.trunc(n)) : 0n;
   }, [effectiveSource, parsedSy, estimatedSyFromHbar, flowState]);
 
   const insufficient = effectiveSource === "sy" && parsedSy > syBalance;
@@ -471,7 +487,15 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
       // reverting TradeExceedsCap and stranding the zapped SY (see
       // readLiveTradeCap). No-op in the normal regime (the pre-zap guard keeps
       // syIn well under the cap); only fires on the price knife-edge.
-      let syIn = syInRaw;
+      // Defensive: syInRaw can arrive as a JS number (it rides flowState.syAcquired,
+      // a chain-read cast). computePtOutForBudget below does `syIn * BigInt(...)`,
+      // which throws "Cannot mix BigInt and other types" on a number. Coerce up
+      // front; value preserved.
+      let syIn = typeof syInRaw === "bigint"
+        ? syInRaw
+        : Number.isFinite(Number(syInRaw)) && Number(syInRaw) > 0
+          ? BigInt(Math.trunc(Number(syInRaw)))
+          : 0n;
       const liveCap = await readLiveTradeCap(market);
       if (liveCap > 0n && syIn > liveCap) syIn = liveCap;
       // BUY-PT-01/F4: buySyForPt(market, syIn, minPtOut, receiver, deadline)

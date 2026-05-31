@@ -225,7 +225,18 @@ export function SellPtForm({ market, detail, user }: Props) {
       : undefined;
   const linearEstimate =
     parsedPt > 0n && ptRate > 0 ? BigInt(Math.floor(Number(parsedPt) * ptRate)) : 0n;
-  const syEstimate = lensSyOut ?? linearEstimate;
+  // Defensive coercion: syEstimate is typed bigint, but lensSyOut is a wagmi-
+  // decoded `result as bigint` runtime-trust cast (same class as BuyYtForm's
+  // syAcquired). If it ever arrives as a JS number, the bigint arithmetic below
+  // (minSyOut multiply) and formatCompact(syEstimate) throw "Cannot mix BigInt
+  // and other types" and white-screen the page. Normalize at the source; value
+  // preserved (linearEstimate is already bigint and passes through unchanged).
+  const syEstimate: bigint = ((): bigint => {
+    const raw: unknown = lensSyOut ?? linearEstimate;
+    if (typeof raw === "bigint") return raw;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? BigInt(Math.trunc(n)) : 0n;
+  })();
   // W2-07: minSyOut from the preview × (1 − slippage), no longer a decorative 1n.
   const minSyOut = (syEstimate * BigInt(10_000 - slippageBps)) / 10_000n;
 
