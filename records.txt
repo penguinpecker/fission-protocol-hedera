@@ -1549,3 +1549,55 @@ COMMITS: 23cdcb7 (xp engine + leaderboard), c446b4c (pagination empty-200 fix),
   2-of-2 ThresholdKey + 48h Timelock"; verified on-chain periphery.owner()/market.owner()
   = operator EOA 0.0.10495279 (single key) → corrected both to operator-controlled
   bootstrap, with the 2-of-2 + timelock as the pending #11 handoff.
+
+═══════════════════════════════════════════════════════════════════════════════
+2026-06-01 (cont.) — METAMASK NETWORK ONBOARDING + REFERRAL SYSTEM
+═══════════════════════════════════════════════════════════════════════════════
+
+METAMASK AUTO ADD+SWITCH TO HEDERA (commits 0df1531, a558d5a, ff5e8d6):
+  Connecting MetaMask on the wrong network now auto-switches to chain 295 and ADDS
+  it if missing. HEDERA_ADD_PARAMS (frontend/src/lib/wagmi.ts) passes the PUBLIC
+  hashio RPC (https://mainnet.hashio.io/api), HBAR/18-dec, HashScan to
+  switchChain({chainId:295, addEthereumChainParameter}) in the onWrongChain effect
+  + the manual banner button. GOTCHA: the add MUST use the public RPC, never
+  hederaMainnet.rpcUrls (= NEXT_PUBLIC_RPC_URL, possibly a keyed Arkhia/ValidationCloud
+  endpoint that must not reach a user's wallet). Params match chainlist.org/chain/295;
+  RPC verified (eth_chainId -> 0x127). a558d5a gated SIWE auto-sign on !onWrongChain
+  so prompts sequence cleanly: add -> switch -> sign.
+  CRITICAL BUG + FIX (ff5e8d6): onWrongChain used useChainId() which — with only chain
+  295 in the wagmi config — ALWAYS returns 295, so it was permanently false: the
+  switch never fired AND SIWE signed while MetaMask was still on Polygon (live repro).
+  Fixed to read useAccount().chainId (the connector's REAL chain). RULE: wrong-chain
+  detection uses useAccount().chainId, NEVER useChainId() (config's chain, not wallet's).
+
+REFERRAL SYSTEM (commits f0c82fe, 230d3b4):
+  Link fissionp.com/ref?r=<6-char base36 code> -> /ref route sets an httpOnly fp_ref
+  cookie (30d) -> attribution in the SIWE verify route consumeNonceAndIssueCookie
+  (STRICTLY best-effort try/catch; session cookie attached BEFORE the block so a
+  referral hiccup can never break auth). BOTH wallet types tracked via the ONE
+  canonical EVM address the auth layer already produces — no separate plumbing. Only
+  NEW accounts attributed (isNewUser before record_sign_in); no self-referral;
+  one-referrer-per-referee (referee_address PK, first-touch wins).
+  XP (additive, user's choice): +100 to referrer on referee signup, +1000 on the
+  referee's first on-chain SUCCESS tx (= 1100 total). DERIVED in recompute_xp from the
+  referrals table (deterministic/recomputable), keyed to the referrer's 0.0.x so it
+  flows into xp_balances + the leaderboard. First-tx detection = referee's 0.0.x in
+  the activity_log SUCCESS set. Identity via resolveAccountId (long-zero decodes
+  directly; ECDSA -> mirror; null until a MetaMask account exists on-chain, backfilled
+  on a later sign-in).
+  DB (atjsjwebftwbaellnuuy; migrations 20260601000005 + 000006): referral_codes
+  (code PK<=6, owner_address unique, owner_account_id), referrals (referee_address PK,
+  referrer/referee account_ids, code, signed_up_at) — service-role RLS. referral_stats()
+  computes XP LIVE from counts (100*signups + 1000*tx) so the dashboard never lags the
+  2-min recompute (root cause of the "1 signup but 0 XP" report — viewed in the ~40s
+  gap before recompute ran; value is correct, just was stale). referral_list() = per-
+  referral detail.
+  FRONTEND: /referrals dashboard + Nav tab — link + copy, total signups, signups-with-tx,
+  referral XP earned, and a table (referred wallet [HashScan link], signup timestamp,
+  ref code, Signed-up / Transacted status). /api/referrals/me (getSession-gated). Lib
+  frontend/src/lib/referrals.ts. Validated end-to-end (1100 XP for a transacting
+  referral; test data cleaned). Basic guards only — sybil farming of the 1000-XP bonus
+  is possible, per the user's standing "don't bother about sybil" call.
+
+NOTE: all of the above deploys were verified GREEN by read-only agents (standing rule:
+  spawn an agent to confirm Vercel READY + routes after every push).
