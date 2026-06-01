@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Providers } from "@/components/Providers";
+import { GoogleAnalytics } from "@/components/GoogleAnalytics";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="bg-bg font-sans text-text antialiased">
         <Providers>{children}</Providers>
+        <GoogleAnalytics />
       </body>
     </html>
   );

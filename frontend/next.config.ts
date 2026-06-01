@@ -35,7 +35,7 @@ const CSP = [
   "default-src 'self'",
   // Next.js injects inline bootstrap scripts; 'unsafe-inline' is required until
   // a nonce-based setup is wired. 'unsafe-eval' kept for dev/source-map tooling.
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data: https://fonts.gstatic.com",
@@ -52,6 +52,9 @@ const CSP = [
     "https://*.hedera.com",
     "https://*.supabase.co wss://*.supabase.co",
     "https://api.coingecko.com",
+    // Google Analytics — gtag.js loader + measurement beacons.
+    "https://www.googletagmanager.com",
+    "https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com",
     "https://*.walletconnect.com wss://*.walletconnect.com",
     "https://*.walletconnect.org wss://*.walletconnect.org",
     "https://*.web3modal.org",
