@@ -1601,3 +1601,40 @@ REFERRAL SYSTEM (commits f0c82fe, 230d3b4):
 
 NOTE: all of the above deploys were verified GREEN by read-only agents (standing rule:
   spawn an agent to confirm Vercel READY + routes after every push).
+
+═══════════════════════════════════════════════════════════════════════════════
+2026-06-02 — GOOGLE ANALYTICS + XP/LEADERBOARD AUDIT
+═══════════════════════════════════════════════════════════════════════════════
+
+GOOGLE ANALYTICS (commit 0052dbd): gtag.js property G-4K3PGBJRHF added via
+  frontend/src/components/GoogleAnalytics.tsx (next/script, strategy=afterInteractive),
+  rendered in the root layout, gated on NEXT_PUBLIC_GA_ID (defaults to the property;
+  override/disable from Vercel env). CSP (report-only) updated in next.config.ts to
+  allow Google: googletagmanager.com in script-src, google-analytics.com /
+  *.analytics.google.com in connect-src (img-src already https:). CSP STAYS
+  REPORT-ONLY (enforcing previously broke the wallet — do NOT flip). Verified live by
+  agent: gtag/js?id=G-4K3PGBJRHF + the config snippet present in served HTML, CSP-RO
+  header carries the Google domains, routes 200/401. Tracking is now two layers: GA
+  (web traffic) + the Supabase on-chain-derived system (users/activity_log + XP/referral).
+  NOTE: GA fires for all visitors with NO consent gate — Consent Mode v2 / cookie banner
+  not yet wired (offered; pending the user's call).
+
+XP / LEADERBOARD AUDIT (DB <-> on-chain reconciliation, read-only):
+  The leaderboard's large numbers are HOLDING XP, NOT referrals (a user assumed refs).
+  Referral XP across the WHOLE board = 100 (the single referral). At the chosen rate
+  1 XP/$/min (= 1,440 per $ per day), even ~$0.50-2.60 of held positions produce
+  hundreds-to-thousands of XP. Verified on-chain: e.g. 0.0.10490020 holds ~$2.6 of
+  SY/PT/YT -> ~3,613 holding XP (math ties out). EXCLUSIONS CONFIRMED WORKING: the
+  market 0.0.10502053 (SY 21B + PT 11.5B AMM reserves), periphery 0.0.10502061 (1.02B SY
+  working reserve), and team wallets (operator 0.0.10495279 holding LP 10.5B / YT 10.9B;
+  old deployer 0.0.10463169) all get ZERO holding XP — correctly filtered by
+  PROTOCOL_EXCLUDE + xp_excluded, else they'd each have BILLIONS. So the board is real
+  users only; the big numbers are just the per-minute rate working as configured.
+  referral_stats was also made live-from-counts (migration 20260601000006) so the
+  dashboard XP no longer lags the 2-min recompute — that lag caused a "1 signup but 0 XP"
+  report (the value was correct, just not yet recomputed when viewed).
+
+FUNNEL SNAPSHOT (2026-06-02): ~24 user rows / 19 actually signed in (5 connect-only);
+  9 were a burst on 2026-06-01 ~17:14-18:04 UTC (organic/direct, 0 via referral); 6
+  accounts have EVER transacted on-chain (4 real users + 2 team); 1 referral total.
+  Drop-off is at the sign-in -> first-trade step, not acquisition.
