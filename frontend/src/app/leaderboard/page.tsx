@@ -116,7 +116,11 @@ function LeaderboardBody() {
                   <span>#{r.rank}</span>
                 )}
               </div>
-              <div className="truncate font-mono text-text">{r.account_id}</div>
+              <div className="truncate font-mono text-text">
+                {r.account_id.startsWith("0x")
+                  ? `${r.account_id.slice(0, 6)}…${r.account_id.slice(-4)}`
+                  : r.account_id}
+              </div>
               <div className="text-right font-mono font-semibold text-text">
                 {r.total_xp.toLocaleString()}
               </div>
