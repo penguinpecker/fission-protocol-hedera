@@ -128,3 +128,29 @@ export async function isNewUser(address: string): Promise<boolean> {
   const { data } = await supa.from("users").select("address").eq("address", address).maybeSingle();
   return !data;
 }
+
+/**
+ * Keep users.account_id fresh — the SINGLE resolution source recompute_xp +
+ * referral_stats use to map a referrer/referee address -> 0.0.x. Setting it on
+ * every sign-in (and the periodic sweep) is what stops a stale/null snapshot
+ * from silently zeroing referral XP. account_id is stable per address, so we
+ * only fill it when currently null.
+ */
+export async function setUserAccountId(address: string, accountId: string | null): Promise<void> {
+  if (!accountId) return;
+  const supa = createServiceRoleClient();
+  await supa.from("users").update({ account_id: accountId }).eq("address", address).is("account_id", null);
+}
+
+/** True if this 0.0.x account has >=1 successful on-chain action (bounds late attribution). */
+export async function accountHasTx(accountId: string | null): Promise<boolean> {
+  if (!accountId) return false;
+  const supa = createServiceRoleClient();
+  const { data } = await supa
+    .from("xp_balances")
+    .select("account_id")
+    .eq("account_id", accountId)
+    .gt("action_count", 0)
+    .maybeSingle();
+  return !!data;
+}

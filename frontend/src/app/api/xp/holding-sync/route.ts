@@ -18,6 +18,7 @@ import { syAbi, lensAbi } from "@/lib/abis";
 import { ADDRESSES, isDeployed } from "@/lib/addresses";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { timingSafeEqualStr } from "@/lib/auth/timing-safe";
+import { resolveAccountId } from "@/lib/referrals";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -306,7 +307,29 @@ async function run(req: NextRequest) {
   }
   await supa.from("xp_holding_runs").update({ total_xp_awarded: awarded }).eq("id", runId);
 
-  // fold holding XP into balances
+  // Referral-account sweep: resolve users.account_id for wallets whose Hedera
+  // account has come on-chain since their last sign-in, so referral XP (and the
+  // +1000 first-tx bonus) credit without requiring a re-sign-in. users.account_id
+  // is the single resolution source recompute_xp keys referral XP through.
+  let swept = 0;
+  try {
+    const { data: nulls } = await supa
+      .from("users")
+      .select("address")
+      .is("account_id", null)
+      .limit(300);
+    for (const u of nulls ?? []) {
+      const acct = await resolveAccountId(u.address as string);
+      if (acct) {
+        await supa.from("users").update({ account_id: acct }).eq("address", u.address);
+        swept++;
+      }
+    }
+  } catch (e) {
+    console.error("referral account sweep failed (non-fatal):", e instanceof Error ? e.message : e);
+  }
+
+  // fold holding XP into balances (after the sweep, so newly-resolved accounts credit)
   await supa.rpc("recompute_xp");
 
   return NextResponse.json({
@@ -316,6 +339,7 @@ async function run(req: NextRequest) {
     holders: heldUsd.size,
     totalUsd: Number(totalUsd.toFixed(6)),
     xpAwarded: awarded,
+    referralAccountsSwept: swept,
     markets: marketsValued,
     syncedAt: new Date(nowMs).toISOString(),
   });

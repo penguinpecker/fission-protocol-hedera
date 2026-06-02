@@ -22,7 +22,8 @@ import { signSession, attachSessionCookie } from "@/lib/auth/session";
 import {
   resolveAccountId,
   ensureReferralCode,
-  backfillRefereeAccount,
+  setUserAccountId,
+  accountHasTx,
   recordReferral,
   isNewUser,
   REF_COOKIE,
@@ -361,10 +362,16 @@ async function consumeNonceAndIssueCookie(
   try {
     const accountId = await resolveAccountId(lowerAddress);
     await ensureReferralCode(lowerAddress, accountId); // every signed-in user gets a code
-    await backfillRefereeAccount(lowerAddress, accountId); // resolve 0.0.x if they're a referee
+    await setUserAccountId(lowerAddress, accountId); // keep the single resolution source fresh
     const refCode = req.cookies.get(REF_COOKIE)?.value;
-    if (refereeIsNew && refCode && REF_CODE_RE.test(refCode)) {
-      await recordReferral(lowerAddress, accountId, refCode);
+    if (refCode && REF_CODE_RE.test(refCode)) {
+      // Attribute new users, OR returning users who haven't transacted yet
+      // (relaxed gate — fixes "signed in once before clicking the ref link").
+      // recordReferral enforces one-referrer-per-referee + no self-referral; the
+      // no-prior-tx check bounds farming of already-active users.
+      if (refereeIsNew || !(await accountHasTx(accountId))) {
+        await recordReferral(lowerAddress, accountId, refCode);
+      }
     }
     if (refCode) res.cookies.set(REF_COOKIE, "", { maxAge: 0, path: "/" }); // one-shot
   } catch (e) {
