@@ -117,7 +117,9 @@ export function Nav() {
   useEffect(() => {
     if (auth.status === "authenticated" && redirectAfterAuthRef.current) {
       redirectAfterAuthRef.current = false;
-      if (!pathname.startsWith("/markets")) {
+      // /claim drives its own post-redeem redirect to /markets — don't yank the
+      // user off the claim page the instant they sign in (before entering a code).
+      if (!pathname.startsWith("/markets") && !pathname.startsWith("/claim")) {
         router.push("/markets");
       }
     }

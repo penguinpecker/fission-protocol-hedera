@@ -49,6 +49,26 @@ export function useSiweAuth() {
     };
   }, [adapter.isConnected, adapter.address]);
 
+  // Cross-instance re-sync. useSiweAuth is a per-component hook, so the Nav and a
+  // page that drives its OWN sign-in (e.g. /claim) hold independent state. When
+  // one signs in it dispatches `fp:auth-changed`; every other instance re-probes
+  // /me so the Nav reflects the session without a navigation. Only ever upgrades
+  // to authenticated — logout/disconnect stays owned by the effect below.
+  useEffect(() => {
+    const reprobe = () => {
+      fetch("/api/auth/me", { credentials: "include" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data && typeof data.address === "string" && /^0x[a-f0-9]{40}$/.test(data.address)) {
+            setState({ status: "authenticated", address: data.address as `0x${string}` });
+          }
+        })
+        .catch(() => {});
+    };
+    window.addEventListener("fp:auth-changed", reprobe);
+    return () => window.removeEventListener("fp:auth-changed", reprobe);
+  }, []);
+
   // Wallet disconnect or address change → clear server session.
   //
   // Tracks the previous `isConnected` state to distinguish a real
