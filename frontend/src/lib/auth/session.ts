@@ -49,10 +49,20 @@ function getSecret(): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
-// Fail fast at module import: if SESSION_SECRET is missing or too short,
+// Fail fast on a real server boot: if SESSION_SECRET is missing or too short,
 // surface the error on first import rather than letting a silently-
 // misconfigured server hand out invalid sessions on the first auth request.
-getSecret();
+//
+// EXCEPTION: skip during `next build` page-data collection
+// (NEXT_PHASE === 'phase-production-build'), where Next imports every route
+// module WITHOUT runtime secrets present. Without this guard a build in any
+// environment that lacks SESSION_SECRET (Vercel Preview, CI) fails to compile.
+// getSecret() is still invoked at runtime by signSession()/verifySession(), so a
+// genuinely misconfigured *running* server still fails closed on the first auth
+// request — only the build-time eager check is relaxed.
+if (process.env.NEXT_PHASE !== "phase-production-build") {
+  getSecret();
+}
 
 export interface Session {
   address: string; // lowercased EVM hex
