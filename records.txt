@@ -1638,3 +1638,67 @@ FUNNEL SNAPSHOT (2026-06-02): ~24 user rows / 19 actually signed in (5 connect-o
   9 were a burst on 2026-06-01 ~17:14-18:04 UTC (organic/direct, 0 via referral); 6
   accounts have EVER transacted on-chain (4 real users + 2 team); 1 referral total.
   Drop-off is at the sign-in -> first-trade step, not acquisition.
+
+═══════════════════════════════════════════════════════════════════════════════
+2026-06-03 — /CLAIM ACCESS-CODE LANDING PAGE + REDEMPTION SYSTEM
+═══════════════════════════════════════════════════════════════════════════════
+
+SHIPPED: www.fissionp.com/claim — a marketing access-code landing page. Commit
+  50c08bc on main, production deploy verified GREEN by read-only agent (7/7 live
+  checks). LIVE.
+
+FEATURE (frontend/src/app/claim/page.tsx): terminal-theme landing page reusing
+  Nav/Footer/WalletPicker/useSiweAuth. Hero = the full portrait 9:16 intro video
+  (frontend/public/claim-intro.mp4, served at /claim-intro.mp4, "Genesis Pass" frame)
+  beside a free-mint NFT panel (Free / 1,000 / 1 trade) with a HIGHLIGHTED amber
+  "you must complete >=1 transaction to be eligible" callout + a "Rarity is earned"
+  block (rarity scales with leaderboard rank at season end). Below: the claim widget;
+  then "how it works" (PT/YT/LP). CODE-FIRST 2-STEP FLOW: Step 1 enter code -> validated
+  against the DB (exists + unclaimed) BEFORE anything else; Step 2 connect wallet + SIWE
+  sign-in (auto) -> the validated code auto-redeems -> redirect /markets, already signed
+  in. Self-contained connect->sign (own useSiweAuth instance); dispatches
+  `fp:auth-changed` so the Nav's separate instance re-syncs. Nav redirect guarded to
+  NOT bounce off /claim on sign-in (page owns its own post-redeem redirect).
+
+CODES: 2,000 unique 6-char codes, unambiguous uppercase (alphabet
+  ABCDEFGHJKMNPQRSTUVWXYZ23456789 — no 0/O/1/I/L). Seeded in 2 batches of 1,000
+  (disjoint, verified). Distributable lists: ~/Downloads/fission-claim-codes.csv (all
+  2,000) + ~/Downloads/fission-claim-codes-batch2.csv (the 1,000 added second). NOT in
+  the repo.
+
+API (all getSession/SIWE-aware except validate):
+  POST /api/claim/validate — PUBLIC pre-check, read-only (exists + unclaimed), returns
+    {valid,reason}; no owner/account leak. Enumeration not a threat (~887M space / 2,000
+    live codes). Powers Step 1.
+  POST /api/claim — auth-gated redeem. Idempotent (a wallet that already claimed gets its
+    existing code back, never burns a second). Race-safe conditional UPDATE (...WHERE
+    claimed=false) + one-per-wallet partial unique index. Resolves + stores the claimer's
+    0.0.x (both wallet types) + keeps users.account_id fresh.
+  GET /api/claim/me — claim status {claimed,code,eligible}; lazily backfills
+    claimed_by_account_id if null at claim time.
+
+DB (atjsjwebftwbaellnuuy; migrations 20260603000000_claim_codes +
+  ..0001_claim_codes_batch2): table claim_codes (code PK len 5-12, claimed,
+  claimed_by_address, claimed_by_account_id, claimed_at) — service-role RLS, partial
+  unique index claim_codes_one_per_wallet. claim_stats() returns total/claimed/eligible
+  where ELIGIBLE = claimed AND the wallet's 0.0.x has >=1 SUCCESS on-chain tx, resolved
+  via coalesce(users.account_id, claimed_by_account_id) — SAME fresh-source pattern as
+  the referral fix, so HashPack/Ed25519 (long-zero) AND MetaMask/ECDSA both track. The
+  NFT itself is NOT minted on-chain yet (claim + eligibility tracking + on-page message
+  only; on-chain mint = deliberate future step).
+
+DEPLOY LESSON (important, saved to memory): the Vercel project fission-protocol's
+  PRODUCTION BRANCH IS `main`, not the working branch rebuild/proxy-pt-fee. First push
+  went to rebuild -> only a PREVIEW deploy, which ERRORED at build time because
+  SESSION_SECRET is not set in Vercel's Preview env (lib/auth/session.ts throws at module
+  import). Production env HAS SESSION_SECRET, so prod builds fine. Fix = fast-forward main
+  to the reviewed commit (main was an ancestor of rebuild -> clean FF: `git push origin
+  <sha>:refs/heads/main`) -> real production deploy -> live. Pushing rebuild alone never
+  updates www.fissionp.com. (Preview builds remain broken until SESSION_SECRET is added
+  to the Preview scope or session.ts stops throwing at import — production unaffected,
+  not fixed this round.)
+
+STATUS: 2 of 2,000 claimed at ship (the two test wallets: 0.0.10490020 / 22AK74 and
+  0.0.10485960 / 22CU5G), both eligible (both have transacted). Verified the code-first
+  gate end-to-end: fake code -> "not valid" (stays Step 1), used code -> "already
+  claimed", real code -> advances to Step 2; validation is read-only (does not consume).
