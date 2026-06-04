@@ -46,8 +46,11 @@ export async function GET() {
   }
 
   const eligible = await accountHasTx(accountId);
+  // accountId is the wallet's Hedera 0.0.x — null for a fresh wallet until its
+  // account is created (by the drip or any funding). The claim page shows it so
+  // users can top up from a CEX (which sends to a 0.0.x, not a 0x address).
   return NextResponse.json(
-    { claimed: true, code: mine.code, eligible },
+    { claimed: true, code: mine.code, eligible, accountId },
     { headers: { "cache-control": "private, no-store" } },
   );
 }

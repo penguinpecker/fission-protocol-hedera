@@ -6,12 +6,16 @@
 // BOTH wallet types — HashPack/Ed25519 (long-zero decodes directly) and
 // MetaMask/ECDSA (mirror-resolved). The 0.0.x is the SAME identity key the XP +
 // referral systems use; nothing here trusts a client-supplied address.
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, after, type NextRequest } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { resolveAccountId, setUserAccountId } from "@/lib/referrals";
+import { dripGas } from "@/lib/gas-drip";
 
 export const dynamic = "force-dynamic";
+// The after() drip (an on-chain HBAR transfer + receipt wait) runs in this same
+// invocation post-response; give it room so it can't be killed mid-send.
+export const maxDuration = 60;
 
 // Seeded codes are 6-char unambiguous uppercase; accept that exact shape.
 const CODE_RE = /^[A-Z0-9]{6}$/;
@@ -87,6 +91,11 @@ export async function POST(req: NextRequest) {
     if (!exists) return NextResponse.json({ error: "invalid_code" }, { status: 404 });
     return NextResponse.json({ error: "code_used" }, { status: 409 });
   }
+
+  // Fire the starter-HBAR drip AFTER the response is sent — runs server-side,
+  // independent of the browser, and doesn't slow the claim. No-op unless the
+  // faucet is configured; idempotent + gated + budget-capped inside dripGas().
+  after(() => dripGas(address));
 
   return NextResponse.json({ ok: true, code: claimed.code });
 }

@@ -14,16 +14,12 @@ import { HEDERA_MAINNET_CHAIN_ID, HEDERA_ADD_PARAMS } from "@/lib/wagmi";
  * /claim — marketing access-code landing page.
  *
  * Flow (code-first, two real steps):
- *   Step 1 — enter the 6-char code; it's validated against the DB (exists +
- *            unclaimed) BEFORE moving on.
- *   Step 2 — connect wallet (connect + SIWE sign-in, two prompts); the validated
- *            code auto-redeems against the signed-in wallet → sent to /markets.
- *
- * The page drives its OWN connect→sign flow (its own useSiweAuth instance) and
- * dispatches `fp:auth-changed` so the Nav's instance stays in sync. Eligibility
- * for the free mint = claimed AND >=1 on-chain tx; rarity then scales with dApp
- * usage (leaderboard rank at season end). Both wallet types track via
- * users.account_id resolution server-side.
+ *   Step 1 — enter the 6-char code; validated against the DB (exists + unclaimed).
+ *   Step 2 — connect wallet (connect + SIWE sign-in); the code auto-redeems.
+ * After claiming, a popup shows the wallet's Hedera 0.0.x address (so users can
+ * top up from a CEX, which sends to a 0.0.x, not a 0x). The server also drips a
+ * little starter HBAR — that transfer auto-creates the Hedera account, which is
+ * why the 0.0.x appears a few seconds after claiming.
  */
 export default function ClaimPage() {
   return (
@@ -35,7 +31,15 @@ export default function ClaimPage() {
   );
 }
 
-type ClaimMe = { loaded: boolean; claimed: boolean; code: string | null; eligible: boolean };
+type ClaimMe = {
+  loaded: boolean;
+  claimed: boolean;
+  code: string | null;
+  eligible: boolean;
+  accountId: string | null; // wallet's Hedera 0.0.x; null until the account exists
+};
+
+const EMPTY_CLAIM: ClaimMe = { loaded: false, claimed: false, code: null, eligible: false, accountId: null };
 
 const CLAIM_ERROR_COPY: Record<string, string> = {
   invalid_code: "That code isn't valid. Double-check it and try again.",
@@ -63,6 +67,7 @@ function ClaimBody() {
   // One-shot: set when the user reaches Step 2 and connects, so the validated
   // code auto-redeems the moment sign-in lands.
   const claimAfterAuthRef = useRef(false);
+  const gasFiredRef = useRef(false);
 
   const [step, setStep] = useState<1 | 2>(1);
   const [code, setCode] = useState("");
@@ -70,7 +75,11 @@ function ClaimBody() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justClaimed, setJustClaimed] = useState(false);
-  const [claim, setClaim] = useState<ClaimMe>({ loaded: false, claimed: false, code: null, eligible: false });
+  const [addrModalOpen, setAddrModalOpen] = useState(false);
+  const [gasStatus, setGasStatus] = useState<string | null>(null);
+  const [pollExhausted, setPollExhausted] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const [claim, setClaim] = useState<ClaimMe>(EMPTY_CLAIM);
 
   const authed = auth.status === "authenticated";
 
@@ -105,7 +114,7 @@ function ClaimBody() {
   // Pull this wallet's existing claim status once signed in.
   useEffect(() => {
     if (!authed) {
-      setClaim({ loaded: false, claimed: false, code: null, eligible: false });
+      setClaim(EMPTY_CLAIM);
       return;
     }
     let cancelled = false;
@@ -113,7 +122,14 @@ function ClaimBody() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (cancelled) return;
-        if (d) setClaim({ loaded: true, claimed: Boolean(d.claimed), code: d.code ?? null, eligible: Boolean(d.eligible) });
+        if (d)
+          setClaim({
+            loaded: true,
+            claimed: Boolean(d.claimed),
+            code: d.code ?? null,
+            eligible: Boolean(d.eligible),
+            accountId: d.accountId ?? null,
+          });
         else setClaim((s) => ({ ...s, loaded: true }));
       })
       .catch(() => {
@@ -123,6 +139,53 @@ function ClaimBody() {
       cancelled = true;
     };
   }, [authed]);
+
+  // Once claimed: (1) make sure the starter-HBAR drip ran (after() in /api/claim
+  // is the primary trigger; this is a backup that also covers wallets that claimed
+  // before the faucet existed — idempotent server-side), and (2) poll for the
+  // Hedera 0.0.x to appear, since the drip creates it a few seconds later.
+  useEffect(() => {
+    if (!authed || !(justClaimed || claim.claimed)) return;
+    if (!gasFiredRef.current) {
+      gasFiredRef.current = true;
+      // Trigger the drip + capture its status so the UI can show an actionable
+      // state (e.g. budget exhausted / disabled) instead of an endless spinner.
+      void fetch("/api/claim/gas", { method: "POST", credentials: "include" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => setGasStatus(d?.status ?? null))
+        .catch(() => {});
+    }
+    if (claim.accountId) return; // already resolved
+    let cancelled = false;
+    let tries = 0;
+    const iv = setInterval(async () => {
+      if (cancelled) {
+        clearInterval(iv);
+        return;
+      }
+      if (tries++ > 16) {
+        clearInterval(iv);
+        if (!cancelled) setPollExhausted(true); // ~40s with no account → show self-fund fallback
+        return;
+      }
+      try {
+        const r = await fetch("/api/claim/me", { credentials: "include", cache: "no-store" });
+        if (!r.ok) return;
+        const d = (await r.json()) as { accountId?: string | null; eligible?: boolean };
+        if (d?.accountId) {
+          if (!cancelled)
+            setClaim((s) => ({ ...s, accountId: d.accountId ?? null, eligible: Boolean(d.eligible) }));
+          clearInterval(iv);
+        }
+      } catch {
+        /* keep polling */
+      }
+    }, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [authed, justClaimed, claim.claimed, claim.accountId, retryNonce]);
 
   const submit = useCallback(async () => {
     setError(null);
@@ -145,18 +208,18 @@ function ClaimBody() {
         setSubmitting(false);
         return;
       }
+      setSubmitting(false);
       setJustClaimed(true);
-      setClaim({ loaded: true, claimed: true, code: j.code ?? c, eligible: false });
-      // Land them on Markets (already signed in) after a beat of confirmation.
-      setTimeout(() => router.push("/markets"), 1400);
+      setClaim({ loaded: true, claimed: true, code: j.code ?? c, eligible: false, accountId: null });
+      setAddrModalOpen(true); // show their Hedera address + funding instructions
     } catch {
       setError("Network error. Try again.");
       setSubmitting(false);
     }
-  }, [code, router]);
+  }, [code]);
 
   // Once signed in with a pending claim (and no existing claim), redeem the
-  // validated code automatically — this is what "Step 2 → markets" hinges on.
+  // validated code automatically — this is what "Step 2 → claimed" hinges on.
   useEffect(() => {
     if (
       claimAfterAuthRef.current &&
@@ -231,6 +294,15 @@ function ClaimBody() {
     setStep(1);
   };
 
+  const goToMarkets = () => router.push("/markets");
+  const retryWallet = () => {
+    setPollExhausted(false);
+    gasFiredRef.current = false;
+    setRetryNonce((n) => n + 1);
+  };
+  // When the account never appears (slow/failed drip) or the pool is off/empty,
+  // fall back to "fund it yourself" guidance instead of an endless spinner.
+  const addrFallback = pollExhausted || gasStatus === "disabled" || gasStatus === "budget_exhausted";
   const signingIn = auth.status === "loading";
 
   return (
@@ -321,9 +393,17 @@ function ClaimBody() {
           <div className="mx-auto mt-11 max-w-[520px] sm:mt-14">
             <div className="rounded-[10px] border border-border bg-bgCard p-5 sm:p-6">
               {justClaimed ? (
-                <ClaimedSuccess />
+                <ClaimedSuccess onGo={goToMarkets} onShowAddress={() => setAddrModalOpen(true)} />
               ) : authed && claim.loaded && claim.claimed ? (
-                <AlreadyClaimed code={claim.code} eligible={claim.eligible} onGo={() => router.push("/markets")} />
+                <AlreadyClaimed
+                  code={claim.code}
+                  eligible={claim.eligible}
+                  accountId={claim.accountId}
+                  evmAddress={adapter.address ?? null}
+                  fallback={addrFallback}
+                  onRetry={retryWallet}
+                  onGo={goToMarkets}
+                />
               ) : step === 1 ? (
                 <StepEnterCode
                   code={code}
@@ -374,6 +454,17 @@ function ClaimBody() {
       </section>
 
       <WalletPicker open={pickerOpen} onClose={() => setPickerOpen(false)} onConnectStarted={handleConnectStarted} />
+
+      {addrModalOpen && (
+        <ClaimAddressModal
+          accountId={claim.accountId}
+          evmAddress={adapter.address ?? null}
+          fallback={addrFallback}
+          onRetry={retryWallet}
+          onClose={() => setAddrModalOpen(false)}
+          onGo={goToMarkets}
+        />
+      )}
     </>
   );
 }
@@ -392,6 +483,201 @@ function EligibilityCallout() {
           Claiming a code grants access. To become eligible for the free NFT you must complete at least one
           transaction on Fission afterward.
         </p>
+      </div>
+    </div>
+  );
+}
+
+/* ───────────── shared: the Hedera-address + funding panel (popup body) ────── */
+
+function HederaAddressPanel({
+  accountId,
+  evmAddress,
+  fallback,
+  onRetry,
+}: {
+  accountId: string | null;
+  evmAddress: string | null;
+  fallback: boolean;
+  onRetry: () => void;
+}) {
+  const [copied, setCopied] = useState("");
+  const copy = async (val: string, which: string) => {
+    try {
+      await navigator.clipboard.writeText(val);
+      setCopied(which);
+      setTimeout(() => setCopied(""), 1500);
+    } catch {
+      /* clipboard blocked — user can select manually */
+    }
+  };
+
+  // Resolved: show the Hedera 0.0.x + exchange funding instructions.
+  if (accountId) {
+    return (
+      <div>
+        <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-textDim">Your Hedera wallet</div>
+        <div className="mt-2 flex items-center justify-between gap-3 rounded-[6px] border border-border bg-black/30 px-3.5 py-3">
+          <span className="font-mono text-[18px] text-text">{accountId}</span>
+          <button
+            type="button"
+            onClick={() => copy(accountId, "id")}
+            className="flex-shrink-0 rounded-[2px] border border-border px-2.5 py-1.5 font-mono text-[11px] text-textSec transition hover:bg-white/[0.04] hover:text-text"
+          >
+            {copied === "id" ? "Copied ✓" : "Copy"}
+          </button>
+        </div>
+        <a
+          href={`https://hashscan.io/mainnet/account/${accountId}`}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-1.5 inline-block font-mono text-[11px] text-textDim underline underline-offset-2 hover:text-textSec"
+        >
+          View on HashScan ↗
+        </a>
+        <div className="mt-3 rounded-[6px] border border-border bg-black/20 px-3.5 py-3 text-[12px] leading-relaxed text-textSec">
+          <span className="font-semibold text-text">Add funds from an exchange:</span> withdraw{" "}
+          <span className="font-semibold text-text">HBAR</span> to this Hedera account ID. Leave the
+          memo/note field blank — it&apos;s your personal account. (Exchanges send to a{" "}
+          <span className="font-mono">0.0.x</span> ID, not a <span className="font-mono">0x</span>{" "}
+          address.)
+        </div>
+      </div>
+    );
+  }
+
+  // Fallback: the account didn't get created (slow/failed drip, or the starter pool
+  // is off/empty). Let them activate it themselves by sending HBAR to their 0x.
+  if (fallback) {
+    return (
+      <div>
+        <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-textDim">Activate your wallet</div>
+        <p className="mt-2 text-[12px] leading-relaxed text-textSec">
+          Your Hedera account isn&apos;t set up yet. Send any amount of{" "}
+          <span className="font-semibold text-text">HBAR</span> to your wallet address below (from another
+          wallet) to activate it — your Hedera <span className="font-mono">0.0.x</span> ID appears here
+          once it lands.
+        </p>
+        {evmAddress && (
+          <div className="mt-2 flex items-center justify-between gap-3 rounded-[6px] border border-border bg-black/30 px-3.5 py-2.5">
+            <span className="break-all font-mono text-[12px] text-text">{evmAddress}</span>
+            <button
+              type="button"
+              onClick={() => copy(evmAddress, "evm")}
+              className="flex-shrink-0 rounded-[2px] border border-border px-2.5 py-1.5 font-mono text-[11px] text-textSec transition hover:bg-white/[0.04] hover:text-text"
+            >
+              {copied === "evm" ? "Copied ✓" : "Copy"}
+            </button>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2.5 rounded-[2px] border border-border px-3 py-2 font-mono text-[11px] text-textSec transition hover:bg-white/[0.04] hover:text-text"
+        >
+          Check again
+        </button>
+      </div>
+    );
+  }
+
+  // Pending: drip in flight, account being created.
+  return (
+    <div>
+      <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-textDim">Your Hedera wallet</div>
+      <div className="mt-2 flex items-center gap-2.5 rounded-[6px] border border-border bg-black/20 px-3.5 py-3">
+        <span className="size-3 animate-spin rounded-full border-2 border-textDim border-t-transparent" />
+        <span className="text-[12px] leading-relaxed text-textSec">
+          Setting up your Hedera wallet — we&apos;re sending a little HBAR to get you started. Your address
+          will appear here in a few seconds.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────── post-claim address popup ──────────────────────── */
+
+function ClaimAddressModal({
+  accountId,
+  evmAddress,
+  fallback,
+  onRetry,
+  onClose,
+  onGo,
+}: {
+  accountId: string | null;
+  evmAddress: string | null;
+  fallback: boolean;
+  onRetry: () => void;
+  onClose: () => void;
+  onGo: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-[min(460px,94vw)] rounded-[12px] border border-border bg-bgCard p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="claim-addr-title"
+      >
+        <div className="flex items-center gap-2.5">
+          <div className="flex size-9 items-center justify-center rounded-full border border-success/40 bg-success/10">
+            <svg viewBox="0 0 24 24" className="size-5 text-success" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </div>
+          <h2 id="claim-addr-title" className="text-[17px] font-semibold text-text">
+            You&apos;re in 🎉
+          </h2>
+        </div>
+
+        <p className="mt-2 text-[13px] leading-relaxed text-textSec">
+          Your code is redeemed. Here&apos;s your Hedera wallet — save it so you can top it up later.
+        </p>
+
+        <div className="mt-4">
+          <HederaAddressPanel accountId={accountId} evmAddress={evmAddress} fallback={fallback} onRetry={onRetry} />
+        </div>
+
+        <div className="mt-4 flex items-start gap-2.5 rounded-[8px] border border-warning/30 bg-warning/[0.07] px-3.5 py-3">
+          <svg viewBox="0 0 24 24" className="mt-px size-4 flex-shrink-0 text-warning" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M13 2 4.5 13H11l-1 9 8.5-11H12z" />
+          </svg>
+          <p className="text-[12px] leading-relaxed text-textSec">
+            <span className="font-semibold text-text">Last step for the free NFT:</span> make at least one
+            transaction on Fission. The higher you climb the leaderboard, the rarer your mint.
+          </p>
+        </div>
+
+        <div className="mt-5 flex gap-2.5">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-[2px] border border-border px-4 py-3 text-[12px] font-semibold uppercase tracking-[0.14em] text-textSec transition hover:bg-white/[0.04] hover:text-text"
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            onClick={onGo}
+            className="flex-1 rounded-[2px] border border-white bg-white px-4 py-3 text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85"
+          >
+            Go to Markets
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -506,7 +792,7 @@ function StepConnect({
       <h2 className="mt-4 text-[16px] font-semibold text-text">Connect your wallet</h2>
       <p className="mt-1.5 text-[13px] leading-relaxed text-textSec">
         Connect HashPack or MetaMask and sign in — two quick prompts, no gas. Your code redeems
-        automatically and we&apos;ll take you to the markets.
+        automatically, and we&apos;ll show you your Hedera wallet address next.
       </p>
 
       <EligibilityCallout />
@@ -532,7 +818,7 @@ function StepConnect({
 
 /* ───────────────────────────── post-claim states ─────────────────────────── */
 
-function ClaimedSuccess() {
+function ClaimedSuccess({ onGo, onShowAddress }: { onGo: () => void; onShowAddress: () => void }) {
   return (
     <div className="text-center">
       <div className="mx-auto flex size-12 items-center justify-center rounded-full border border-success/40 bg-success/10">
@@ -544,12 +830,43 @@ function ClaimedSuccess() {
       <p className="mt-1.5 text-[13px] leading-relaxed text-textSec">
         You&apos;re in. Complete at least one transaction on Fission to qualify for the free mint.
       </p>
-      <div className="mt-3 font-mono text-[12px] text-textDim">Taking you to Markets…</div>
+      <div className="mt-4 flex flex-col gap-2.5">
+        <button
+          type="button"
+          onClick={onGo}
+          className="w-full rounded-[2px] border border-white bg-white px-4 py-3 text-[13px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85"
+        >
+          Go to Markets
+        </button>
+        <button
+          type="button"
+          onClick={onShowAddress}
+          className="w-full rounded-[2px] border border-border px-4 py-2.5 text-[12px] text-textSec transition hover:bg-white/[0.04] hover:text-text"
+        >
+          Show my Hedera address & how to add funds
+        </button>
+      </div>
     </div>
   );
 }
 
-function AlreadyClaimed({ code, eligible, onGo }: { code: string | null; eligible: boolean; onGo: () => void }) {
+function AlreadyClaimed({
+  code,
+  eligible,
+  accountId,
+  evmAddress,
+  fallback,
+  onRetry,
+  onGo,
+}: {
+  code: string | null;
+  eligible: boolean;
+  accountId: string | null;
+  evmAddress: string | null;
+  fallback: boolean;
+  onRetry: () => void;
+  onGo: () => void;
+}) {
   return (
     <div>
       <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-textDim">Already claimed</div>
@@ -571,6 +888,12 @@ function AlreadyClaimed({ code, eligible, onGo }: { code: string | null; eligibl
           {eligible ? "Eligible" : "1 transaction needed"}
         </span>
       </div>
+
+      {/* Their Hedera address + funding instructions (resolves once the account exists). */}
+      <div className="mt-4 rounded-[8px] border border-border bg-black/10 p-3.5">
+        <HederaAddressPanel accountId={accountId} evmAddress={evmAddress} fallback={fallback} onRetry={onRetry} />
+      </div>
+
       <button
         type="button"
         onClick={onGo}
