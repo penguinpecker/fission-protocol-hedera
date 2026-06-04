@@ -1702,3 +1702,58 @@ STATUS: 2 of 2,000 claimed at ship (the two test wallets: 0.0.10490020 / 22AK74 
   0.0.10485960 / 22CU5G), both eligible (both have transacted). Verified the code-first
   gate end-to-end: fake code -> "not valid" (stays Step 1), used code -> "already
   claimed", real code -> advances to Step 2; validation is read-only (does not consume).
+
+═══════════════════════════════════════════════════════════════════════════════
+2026-06-05 — STARTER-HBAR GAS DRIP + HEDERA-ADDRESS POPUP (+ a caught double-send)
+═══════════════════════════════════════════════════════════════════════════════
+
+WHY: a fresh MetaMask wallet has NO Hedera account and NO gas, so it can't make
+  its first Fission trade (needed to qualify for the NFT) and can't be funded from
+  a CEX (which sends to a 0.0.x, which doesn't exist yet). Lazy account creation:
+  a native HBAR transfer to a fresh 0x auto-creates the 0.0.x.
+
+FEATURE (live, www.fissionp.com/claim):
+  - On claim, the server drips a little HBAR from a DEDICATED faucet wallet to the
+    claimer's 0x (frontend/src/lib/gas-drip.ts, via viem over the Hedera RPC). That
+    transfer auto-creates their Hedera account AND gives gas. Fired post-response via
+    next/server after() in /api/claim (reliable, non-blocking) + a backup /api/claim/gas.
+  - A popup then shows the new 0.0.x (copy + HashScan + "withdraw HBAR from your
+    exchange to this account ID, leave memo blank"); polls until it resolves; falls
+    back to a self-fund-with-0x panel + retry if it doesn't (never an endless spinner).
+  - CONFIG (Vercel prod env): GAS_DRIP_AMOUNT_HBAR=1, GAS_DRIP_BUDGET_HBAR=1000
+    (cap = 1,000 accounts), GAS_DRIP_SKIP_IF_BALANCE_ABOVE_HBAR=1, FAUCET_KEY (on/off
+    switch — drip is a no-op until set). Faucet 0.0.10520209 / 0x2d80…F821, funded
+    1,000 HBAR from the deployer (deployer 1,336 -> 336 reserve). REAL cost ~1.66
+    HBAR/account (1 sent + ~0.66 account-creation gas) -> ~614 accounts fundable now;
+    full 1,000 needs ~1,660 HBAR (top up later). Faucet is a hot wallet (key in Vercel).
+
+HARDENING (5-dimension adversarial review before any real money): atomic
+  gas_drip_acquire RPC (advisory-lock'd budget cap + per-wallet lock + failed-retry,
+  no overspend/double-send); balance check FAILS CLOSED (mirror outage never funds a
+  funded wallet); tx hash persisted as 'submitted' BEFORE the receipt wait (a timeout
+  never mis-marks a landed tx failed); explicit nonce + retry past finality;
+  estimateGas for the ~600k-gas lazy create (a hardcoded 150k would've failed EVERY
+  fresh wallet — confirmed on mainnet); maxDuration=60 on /api/claim.
+
+BUG CAUGHT IN LIVE E2E (and fixed): first prod E2E sent 4 HBAR (2x) with NO gas_drips
+  row. Root cause: gas_drip_acquire returned 'acquired' but its INSERT never COMMITTED
+  through PostgREST/supabase-js (the app path) — verified: rpc said 'acquired' yet the
+  row never appeared, while direct table writes + sibling functions committed fine. So
+  the RPC "succeeded", the code sent HBAR, but no row was written -> idempotency + budget
+  blind -> both after() and the backup sent. FIX (migration 20260605000002): drop +
+  recreate the function (fresh OID) with a single `insert ... on conflict do update`
+  upsert; re-verified via the app path that the row now persists. Re-ran prod E2E:
+  exactly ONE 1-HBAR drip, row recorded ('sent'), backup returned in_progress, account
+  auto-created. Disabled the drip (pulled FAUCET_KEY) during diagnosis to stop the bleed.
+
+MIGRATIONS (atjsjwebftwbaellnuuy): 20260605000000_gas_drips (table + status index),
+  ..0001_gas_drip_acquire (RPC + gas_drip_stats), ..0002_gas_drip_acquire_fix (the
+  commit fix). Ops scripts (untracked, not committed): scripts/gas-faucet-setup-test.mjs,
+  fund-faucet.mjs, gas-drip-e2e-prod.mjs, diag-supabase-gasdrips.mjs.
+
+STATUS: LIVE + verified on real traffic — a genuine claim (code ZXUJ6B / 0.0.10520962)
+  came through with a clean single 1-HBAR drip. Budget 1/1,000 used. Test artifacts
+  (3 E2E codes + drip rows + test users) cleaned up; ~8 HBAR stranded in throwaway test
+  wallets (keys not saved) = the cost of the live testing that caught the double-send.
+  Vercel prod branch = main (see [memory] fission_vercel_prod_branch); deploys 26f1ba7
+  + a config-only redeploy for the 1-HBAR/1000-cap values.
