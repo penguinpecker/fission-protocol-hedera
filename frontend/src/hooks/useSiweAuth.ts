@@ -17,7 +17,16 @@
 
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { SiweMessage } from "siwe";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 
@@ -27,7 +36,21 @@ export type SiweAuthState =
   | { status: "authenticated"; address: `0x${string}` }
   | { status: "error"; error: string };
 
-export function useSiweAuth() {
+export interface SiweAuthApi {
+  state: SiweAuthState;
+  signIn: () => Promise<void>;
+  signOut: () => Promise<void>;
+}
+
+const AuthContext = createContext<SiweAuthApi | null>(null);
+
+// The single shared auth engine — mounted ONCE via <AuthProvider>. All the
+// wallet↔session logic lives here so every useSiweAuth() consumer (Nav, hero
+// CTA, /claim, /profile) reads the SAME state and stays in sync. Previously
+// each call site held its OWN copy that only re-synced via a best-effort
+// `fp:auth-changed` event which signIn/signOut never even dispatched — so
+// signing in on one button left the others showing "Sign In".
+function useAuthEngine(): SiweAuthApi {
   const adapter = useWalletAdapter();
   const [state, setState] = useState<SiweAuthState>({ status: "idle" });
 
@@ -197,4 +220,20 @@ export function useSiweAuth() {
   }, []);
 
   return { state, signIn, signOut };
+}
+
+/**
+ * Mounts the single shared auth engine. Placed inside the wallet providers so
+ * useWalletAdapter() resolves. Every useSiweAuth() below reads THIS instance.
+ */
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const api = useAuthEngine();
+  return createElement(AuthContext.Provider, { value: api }, children);
+}
+
+/** Reads the single shared SIWE auth state. Must be used within <AuthProvider>. */
+export function useSiweAuth(): SiweAuthApi {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useSiweAuth must be used within <AuthProvider>");
+  return ctx;
 }

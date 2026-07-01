@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactNode, useState } from "react";
 import { wagmiConfig } from "@/lib/wagmi";
 import { HederaWalletProvider } from "@/lib/hedera-wallet/provider";
+import { AuthProvider } from "@/hooks/useSiweAuth";
 
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -22,7 +23,9 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
-        <HederaWalletProvider>{children}</HederaWalletProvider>
+        <HederaWalletProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </HederaWalletProvider>
       </QueryClientProvider>
     </WagmiProvider>
   );
