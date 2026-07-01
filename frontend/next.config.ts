@@ -29,8 +29,12 @@ import type { NextConfig } from "next";
 //   - CoinGecko                       : HBAR/USD price
 //   - Supabase                        : REST + Realtime (https + wss)
 //
-// frame-ancestors 'none' is the CSP-level equivalent of X-Frame-Options DENY
-// (and supersedes it in modern browsers) — blocks clickjacking via iframes.
+// frame-ancestors: blocks clickjacking via iframes. Allowlists HashPack's dapp
+// browser (*.hashpack.app) so the Fission app can be embedded / "added" there,
+// while still blocking every other origin. This is ENFORCED via a dedicated
+// single-directive CSP header in headers() below. X-Frame-Options: DENY was
+// removed from vercel.json because it is all-or-nothing and cannot allowlist a
+// single origin — frame-ancestors is its modern, granular replacement.
 const CSP = [
   "default-src 'self'",
   // Next.js injects inline bootstrap scripts; 'unsafe-inline' is required until
@@ -61,7 +65,7 @@ const CSP = [
     "https://*.reown.com wss://*.reown.com",
   ].join(" "),
   "frame-src 'self' https://*.walletconnect.com https://*.walletconnect.org https://verify.walletconnect.org",
-  "frame-ancestors 'none'",
+  "frame-ancestors 'self' https://*.hashpack.app",
   "base-uri 'self'",
   "form-action 'self'",
   "object-src 'none'",
@@ -85,6 +89,15 @@ const config: NextConfig = {
           // keeps the violation visibility without breaking the dApp; only flip to
           // enforce after a FULL real-tx (buy/sell + receipt) test reports clean.
           { key: "Content-Security-Policy-Report-Only", value: CSP },
+          // ENFORCED (not report-only) — but ONLY the frame-ancestors directive.
+          // Lets HashPack's dapp browser (*.hashpack.app) embed this app in an
+          // iframe while blocking clickjacking from every other origin. Scoped to
+          // this single directive so the rest of the policy stays report-only
+          // (enforcing the full CSP breaks signed txs — see the note above).
+          {
+            key: "Content-Security-Policy",
+            value: "frame-ancestors 'self' https://*.hashpack.app",
+          },
         ],
       },
     ];
