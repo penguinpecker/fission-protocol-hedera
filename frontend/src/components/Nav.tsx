@@ -113,6 +113,13 @@ export function Nav() {
       !onWrongChain
     ) {
       autoSignAfterConnectRef.current = false;
+      // Inside a wallet dapp browser (iframe) the connect+sign is auto-initiated
+      // on entry — so also arm the one-shot redirect to land the user on /markets
+      // after sign-in, matching the click-initiated flow. This only runs on a
+      // fresh auto-sign (auth.status === "idle" above), so a passive reload with a
+      // live session won't fire it; the redirect effect's pathname guard also
+      // skips /markets and /claim.
+      if (isInIframe()) redirectAfterAuthRef.current = true;
       void signIn();
     }
   }, [adapter.isConnected, adapter.address, auth.status, signIn, onWrongChain]);
