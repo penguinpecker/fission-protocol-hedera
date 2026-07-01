@@ -152,6 +152,9 @@ function useAuthEngine(): SiweAuthApi {
       setState({ status: "error", error: err });
       return;
     }
+    // signInOnce is a hoisted per-render function closing over the same
+    // `adapter`; listing `adapter` covers its real dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adapter]);
 
   /** One nonce→sign→verify attempt. Returns null on success, error string on
@@ -162,7 +165,6 @@ function useAuthEngine(): SiweAuthApi {
     // Re-check inside the attempt: narrows adapter.address for TS and covers a
     // wallet that disconnected between retries.
     if (!adapter.isConnected || !adapter.address) return "wallet_not_connected";
-    const address = adapter.address;
     try {
       // Step 1: nonce keyed by the wallet's lowercased address. For Hedera
       // mode the long-zero EVM address is used here AND on the server when
