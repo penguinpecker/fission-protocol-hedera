@@ -143,7 +143,11 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
    * (~1MB+ uncompressed) stays out of the initial chunk.
    */
   const getOrInit = useCallback(async (): Promise<HederaConnectorShim> => {
-    if (connectorRef.current) return connectorRef.current as unknown as HederaConnectorShim;
+    // Only reuse a cached connector that actually has a live WC client. If the
+    // ref ever holds an un-initialized connector, openModal/connectURI throws
+    // "WalletConnect is not initialized" — so fall through and rebuild instead.
+    const cached = connectorRef.current as unknown as HederaConnectorShim | null;
+    if (cached?.walletConnectClient) return cached;
 
     const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
     if (!projectId) {
@@ -214,18 +218,16 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
   const connect = useCallback(async () => {
     diag("HederaConnect", { step: "click" });
     setState((s) => ({ ...s, status: "connecting", error: null }));
-    try {
-      diag("HederaConnect", { step: "before_init" });
+
+    // One connect attempt: (re)get a READY connector, prefer a detected
+    // extension, otherwise open the WC modal, then read the signer.
+    const attempt = async (pass: number): Promise<{ accountId: string; evmAddress: `0x${string}` }> => {
+      diag("HederaConnect", { step: "before_init", pass });
       const connector = await getOrInit();
-      diag("HederaConnect", { step: "init_ok", hasOpenModal: typeof (connector as { openModal?: unknown }).openModal === "function" });
+      diag("HederaConnect", { step: "init_ok", pass, ready: !!connector.walletConnectClient });
       // Prefer a DIRECT connect to an installed HashPack / Hedera browser
-      // extension when one has been detected. `connector.extensions` is
-      // auto-populated by the library's findExtensions (Step 4). A direct
-      // extension connect pops the wallet immediately — no QR, no WalletConnect
-      // relay (more robust when the relay is unreachable). Detection is checked
-      // SYNCHRONOUSLY (the connector was already inited on mount, so detection
-      // has completed); we fall back to the EXISTING openModal() flow for
-      // everyone else and on ANY error, so this is never worse than before.
+      // extension when detected (Step 4) — no QR, no WC relay. Falls back to the
+      // existing openModal() flow for everyone else and on any error.
       let usedExtension = false;
       try {
         if (typeof connector.connectExtension === "function") {
@@ -243,18 +245,41 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
       if (!usedExtension) {
         await connector.openModal();
       }
-      diag("HederaConnect", { step: "connect_resolved", via: usedExtension ? "extension" : "modal", signerCount: connector.signers?.length ?? 0 });
+      diag("HederaConnect", { step: "connect_resolved", pass, via: usedExtension ? "extension" : "modal", signerCount: connector.signers?.length ?? 0 });
       const signers = connector.signers;
-      if (!signers || signers.length === 0) {
-        throw new Error("No signer returned from wallet");
-      }
+      if (!signers || signers.length === 0) throw new Error("No signer returned from wallet");
       const signer = signers[0] as { getAccountId(): { toString(): string } };
       const accountId = signer.getAccountId().toString();
       // Resolve the REAL evm alias from Mirror so HTS facade reads don't revert
       // for ECDSA (HashPack) accounts. Falls back to long-zero for Ed25519.
       const evmAddress = await resolveEvmAddress(accountId);
-      diag("HederaConnect", { step: "success", accountId, evmAddress });
-      setState({ status: "connected", accountId, evmAddress, error: null });
+      return { accountId, evmAddress };
+    };
+
+    try {
+      let result: { accountId: string; evmAddress: `0x${string}` };
+      try {
+        result = await attempt(1);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        // SELF-HEAL the classic "WalletConnect is not initialized" (WC client
+        // not ready yet / stale-session init failure): tear down, clear the WC
+        // localStorage namespace, rebuild a fresh connector, and retry ONCE.
+        // This turns the prior hard failure ("Connect failed: WalletConnect is
+        // not initialized") into a transparent retry that succeeds once init
+        // completes. Only retries on this specific class of error.
+        if (/not initialized|no matching key|cannot read prop/i.test(msg)) {
+          diag("HederaConnect", { step: "retry_after_not_initialized", error: msg });
+          try { await connectorRef.current?.disconnectAll(); } catch { /* ignore */ }
+          connectorRef.current = null;
+          try { clearStaleWcStorage(); } catch { /* ignore */ }
+          result = await attempt(2);
+        } else {
+          throw e;
+        }
+      }
+      diag("HederaConnect", { step: "success", accountId: result.accountId, evmAddress: result.evmAddress });
+      setState({ status: "connected", accountId: result.accountId, evmAddress: result.evmAddress, error: null });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       diag("HederaConnect", { step: "error", error: msg, stack: e instanceof Error ? e.stack?.slice(0, 400) : undefined });
