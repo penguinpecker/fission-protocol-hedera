@@ -481,7 +481,7 @@ interface ExtensionData {
 }
 
 /** True when the app runs inside an iframe (e.g. a wallet's dapp browser). */
-function isInIframe(): boolean {
+export function isInIframe(): boolean {
   if (typeof window === "undefined") return false;
   try {
     return window.self !== window.top;

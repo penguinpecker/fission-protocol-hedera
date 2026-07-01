@@ -7,7 +7,7 @@ import { useAccount, useSwitchChain } from "wagmi";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { HEDERA_MAINNET_CHAIN_ID, HEDERA_ADD_PARAMS } from "@/lib/wagmi";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
-import { useHederaWallet } from "@/lib/hedera-wallet/provider";
+import { useHederaWallet, isInIframe } from "@/lib/hedera-wallet/provider";
 import { WalletPicker } from "@/components/WalletPicker";
 
 function shortAddr(addr: string): string {
@@ -99,7 +99,14 @@ export function Nav() {
   // switch just defers the signature rather than dropping it.
   useEffect(() => {
     if (
-      autoSignAfterConnectRef.current &&
+      // Auto-sign after a click-initiated connect (autoSignAfterConnectRef), OR
+      // whenever we're inside a wallet dapp-browser iframe (e.g. HashPack) — there
+      // the wallet auto-connects on mount with no click, so without this the
+      // "Sign In" button lingers even though the wallet is connected. Inside the
+      // dapp browser a seamless auto-sign is the expected flow. Top-level loads
+      // still only auto-sign after a user click (a restored session must NOT pop
+      // a spontaneous signature prompt on every refresh).
+      (autoSignAfterConnectRef.current || isInIframe()) &&
       adapter.isConnected &&
       adapter.address &&
       auth.status === "idle" &&
