@@ -218,8 +218,32 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
       diag("HederaConnect", { step: "before_init" });
       const connector = await getOrInit();
       diag("HederaConnect", { step: "init_ok", hasOpenModal: typeof (connector as { openModal?: unknown }).openModal === "function" });
-      await connector.openModal();
-      diag("HederaConnect", { step: "openModal_resolved", signerCount: connector.signers?.length ?? 0 });
+      // Prefer a DIRECT connect to an installed HashPack / Hedera browser
+      // extension when one has been detected. `connector.extensions` is
+      // auto-populated by the library's findExtensions (Step 4). A direct
+      // extension connect pops the wallet immediately — no QR, no WalletConnect
+      // relay (more robust when the relay is unreachable). Detection is checked
+      // SYNCHRONOUSLY (the connector was already inited on mount, so detection
+      // has completed); we fall back to the EXISTING openModal() flow for
+      // everyone else and on ANY error, so this is never worse than before.
+      let usedExtension = false;
+      try {
+        if (typeof connector.connectExtension === "function") {
+          const ext = (connector.extensions ?? []).find((e) => e.available);
+          if (ext) {
+            diag("HederaConnect", { step: "connectExtension", id: ext.id, name: ext.name });
+            await connector.connectExtension(ext.id);
+            usedExtension = true;
+          }
+        }
+      } catch (err) {
+        diag("HederaConnect", { step: "connectExtension_failed_fallback_modal", error: err instanceof Error ? err.message : String(err) });
+        usedExtension = false;
+      }
+      if (!usedExtension) {
+        await connector.openModal();
+      }
+      diag("HederaConnect", { step: "connect_resolved", via: usedExtension ? "extension" : "modal", signerCount: connector.signers?.length ?? 0 });
       const signers = connector.signers;
       if (!signers || signers.length === 0) {
         throw new Error("No signer returned from wallet");
@@ -288,6 +312,34 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
         const live = sessions.find((s) => s.expiry > now);
         console.log("[fission-rehydrate] live session?:", !!live, live ? { topic: live.topic, expiry: live.expiry, namespaces: Object.keys(live.namespaces) } : null);
         if (!live) {
+          // No stored session. If we're running INSIDE a wallet's dapp-browser
+          // iframe (e.g. HashPack's in-app browser, now that framing is allowed),
+          // auto-connect to the host extension so the user doesn't have to
+          // manually tap Connect inside the embedded browser (Step 4 iframe path).
+          // This ONLY runs when framed AND an available-in-iframe extension
+          // responds; normal top-level desktop/mobile loads fall straight through
+          // to INITIAL exactly as before.
+          if (isInIframe() && typeof connector.connectExtension === "function") {
+            try {
+              const ext = await findAvailableExtension(connector, { iframe: true }, 2500);
+              if (ext && !cancelled) {
+                diag("HederaConnect", { step: "iframe_autoconnect", id: ext.id });
+                await connector.connectExtension(ext.id);
+                const signer = connector.signers?.[0] as
+                  | { getAccountId(): { toString(): string } }
+                  | undefined;
+                const acct = signer?.getAccountId().toString();
+                if (acct && !cancelled) {
+                  const evmAddress = await resolveEvmAddress(acct);
+                  console.log("[fission-rehydrate] iframe auto-connected", { acct, evmAddress });
+                  setState({ status: "connected", accountId: acct, evmAddress, error: null });
+                  return;
+                }
+              }
+            } catch (err) {
+              console.log("[fission-rehydrate] iframe auto-connect skipped/failed", err);
+            }
+          }
           console.log("[fission-rehydrate] dropping to INITIAL — no live session");
           setState(INITIAL);
           return;
@@ -383,10 +435,53 @@ interface HederaConnectorShim {
   openModal(): Promise<unknown>;
   disconnectAll(): Promise<void>;
   signers: unknown[];
+  /** Auto-populated by the library's findExtensions (Step 4) with each detected
+   *  Hedera wallet browser extension (HashPack, Blade, ...). */
+  extensions?: ExtensionData[];
+  /** Connects directly to a detected extension by id, bypassing the QR/relay
+   *  modal. Rejects if the extension is not available. */
+  connectExtension?(extensionId: string, pairingTopic?: string): Promise<unknown>;
   /** Underlying @walletconnect/sign-client. Populated after init(); used
    *  to read persisted sessions synchronously and subscribe to lifecycle
    *  events (session_delete / session_expire). */
   walletConnectClient?: WcSignClient;
+}
+
+/** Subset of the library's ExtensionData we read to detect installed wallets. */
+interface ExtensionData {
+  id: string;
+  name?: string;
+  available: boolean;
+  availableInIframe: boolean;
+}
+
+/** True when the app runs inside an iframe (e.g. a wallet's dapp browser). */
+function isInIframe(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.self !== window.top;
+  } catch {
+    // Cross-origin access to window.top throws → we are framed.
+    return true;
+  }
+}
+
+/** Poll connector.extensions (auto-populated by the library's findExtensions,
+ *  which broadcasts a `hedera-extension-query` ~200ms after construction) for an
+ *  available Hedera wallet extension. Returns the first match, or null on timeout. */
+async function findAvailableExtension(
+  connector: HederaConnectorShim,
+  opts: { iframe: boolean },
+  timeoutMs: number,
+): Promise<ExtensionData | null> {
+  const pick = (e: ExtensionData) => (opts.iframe ? e.availableInIframe : e.available);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const found = (connector.extensions ?? []).find(pick);
+    if (found) return found;
+    if (Date.now() >= deadline) return null;
+    await new Promise((r) => setTimeout(r, 100));
+  }
 }
 
 /** Minimal slice of the @walletconnect/sign-client v2 surface we need.
