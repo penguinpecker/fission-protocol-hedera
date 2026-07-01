@@ -17,8 +17,9 @@
 
 import { useCallback, useMemo } from "react";
 import { useAccount, useChainId, useDisconnect, useWriteContract, useSignMessage } from "wagmi";
-import { createPublicClient, http, parseEther } from "viem";
+import { createPublicClient, parseEther } from "viem";
 import { hederaMainnet } from "@/lib/chains";
+import { hederaReadTransport } from "@/lib/rpc-client";
 import { HEDERA_MAINNET_CHAIN_ID } from "@/lib/wagmi";
 import { useHederaWallet } from "./provider";
 import {
@@ -343,7 +344,7 @@ export function useWalletAdapter(): AdapterAPI {
 let _evmPublicClient: ReturnType<typeof createPublicClient> | null = null;
 function evmPublicClient() {
   if (!_evmPublicClient) {
-    _evmPublicClient = createPublicClient({ chain: hederaMainnet, transport: http() });
+    _evmPublicClient = createPublicClient({ chain: hederaMainnet, transport: hederaReadTransport() });
   }
   return _evmPublicClient;
 }

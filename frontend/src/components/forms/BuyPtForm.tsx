@@ -26,7 +26,8 @@
  * intervals until we see the delta materialize.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createPublicClient, http } from "viem";
+import { createPublicClient, encodeFunctionData, decodeFunctionResult } from "viem";
+import { hederaReadTransport, mirrorContractRead } from "@/lib/rpc-client";
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import { hederaMainnet } from "@/lib/chains";
 import type { MarketDetail } from "@/hooks/useMarket";
@@ -1337,7 +1338,7 @@ function shortAddr(addr: string): string {
 let _lensClient: ReturnType<typeof createPublicClient> | null = null;
 function lensClient() {
   if (!_lensClient) {
-    _lensClient = createPublicClient({ chain: hederaMainnet, transport: http() });
+    _lensClient = createPublicClient({ chain: hederaMainnet, transport: hederaReadTransport() });
   }
   return _lensClient;
 }
@@ -1385,7 +1386,7 @@ async function computePtOutForBudget(
   const client = lensClient();
 
   const MAX_CALLS = 6; // hard ceiling on serial Lens reads (was 60+).
-  const WALL_MS = 8000; // wall-clock cutoff: fall back to last-known-safe ptOut.
+  const WALL_MS = 14000; // wall-clock cutoff (bumped for RPC retries + mirror fallback).
   const start = Date.now();
   let calls = 0;
   const budgetLeft = () => calls < MAX_CALLS && Date.now() - start < WALL_MS;
@@ -1404,7 +1405,29 @@ async function computePtOutForBudget(
         args: [market, ptOut],
       })) as bigint;
     } catch {
-      return null; // reverted (past pool cap) or RPC throttle/error
+      // Hashio threw — either the call reverted (past pool cap) OR the public
+      // relay throttled us (429 under a user spike). Fall back to the MIRROR
+      // NODE's contracts/call (separate infra, keyless, not relay-rate-limited);
+      // a genuine revert fails there too → null. This keeps the Buy-PT quoter
+      // alive through a Hashio throttle storm instead of hard-aborting Step 4.
+      try {
+        const hex = await mirrorContractRead(
+          ADDRESSES.lens,
+          encodeFunctionData({
+            abi: lensAbi,
+            functionName: "previewSwapExactSyForPt",
+            args: [market, ptOut],
+          }),
+        );
+        if (!hex) return null;
+        cost = decodeFunctionResult({
+          abi: lensAbi,
+          functionName: "previewSwapExactSyForPt",
+          data: hex,
+        }) as bigint;
+      } catch {
+        return null;
+      }
     }
     if (cost > 0n && cost <= budgetAdj && ptOut > bestSafe) bestSafe = ptOut;
     return cost;

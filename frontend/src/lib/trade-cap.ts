@@ -24,15 +24,16 @@
  * read, in which case callers DON'T clamp (the pre-zap guard + the on-chain cap
  * still apply), so a transient RPC error can never block a legitimate trade.
  */
-import { createPublicClient, http } from "viem";
+import { createPublicClient } from "viem";
 import { hederaMainnet } from "@/lib/chains";
+import { hederaReadTransport } from "@/lib/rpc-client";
 import { lensAbi, marketAbi } from "@/lib/abis";
 import { ADDRESSES } from "@/lib/addresses";
 
 let _client: ReturnType<typeof createPublicClient> | null = null;
 function client() {
   if (!_client) {
-    _client = createPublicClient({ chain: hederaMainnet, transport: http() });
+    _client = createPublicClient({ chain: hederaMainnet, transport: hederaReadTransport() });
   }
   return _client;
 }

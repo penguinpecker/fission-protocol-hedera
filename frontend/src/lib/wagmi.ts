@@ -1,6 +1,7 @@
-import { createConfig, http } from "wagmi";
+import { createConfig } from "wagmi";
 import { injected } from "wagmi/connectors";
 import { hederaMainnet } from "./chains";
+import { hederaReadTransport } from "./rpc-client";
 
 /**
  * Wagmi config.
@@ -40,7 +41,7 @@ export const wagmiConfig = createConfig({
     }),
   ],
   transports: {
-    [hederaMainnet.id]: http(),
+    [hederaMainnet.id]: hederaReadTransport(),
   },
   ssr: true,
 });
