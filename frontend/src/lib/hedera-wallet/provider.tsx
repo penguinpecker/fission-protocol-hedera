@@ -329,6 +329,25 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         console.log("[fission-rehydrate] connector init resolved");
 
+        // HashPack's dapp-browser frequently DELETES the app's persisted WC
+        // session on open and immediately re-pairs a fresh one (see the
+        // session_delete → new pairing sequence in the iframe logs). Register
+        // the library's iframe-session callback so we auto-connect to that
+        // fresh session — otherwise the first Connect tap lands on the dead
+        // session and the user has to tap a SECOND time. No-op top-level.
+        connector.onSessionIframeCreated = (session: WcSession) => {
+          if (cancelled) return;
+          const acct = accountIdFromSession(session);
+          if (!acct) return;
+          console.log("[fission-rehydrate] onSessionIframeCreated → reconnecting", acct);
+          setState((s) => ({ ...s, status: "connecting", error: null }));
+          resolveEvmAddress(acct)
+            .then((evmAddress) => {
+              if (!cancelled) setState({ status: "connected", accountId: acct, evmAddress, error: null });
+            })
+            .catch(() => {});
+        };
+
         const client = connector.walletConnectClient;
         console.log("[fission-rehydrate] walletConnectClient present:", !!client);
         const sessions: WcSession[] = client?.session?.getAll?.() ?? [];
@@ -401,9 +420,18 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
     let client: WcSignClient | undefined;
     let cancelled = false;
     const handleDelete = () => {
-      // Wallet-initiated disconnect — drop state regardless of which
-      // session triggered (we only support one at a time).
-      setState(INITIAL);
+      // Inside a wallet dapp-browser (HashPack), a delete is usually the wallet
+      // swapping the app's persisted session for a fresh iframe pairing — which
+      // onSessionIframeCreated catches and reconnects moments later. Show
+      // "connecting" rather than flashing a Connect prompt; fall back to INITIAL
+      // if no re-pair lands within 10s (a genuine wallet-side disconnect).
+      // Top-level (non-iframe) loads drop straight to INITIAL as before.
+      if (isInIframe()) {
+        setState((s) => (s.status === "connected" ? { ...s, status: "connecting", error: null } : s));
+        setTimeout(() => setState((s) => (s.status === "connecting" ? INITIAL : s)), 10000);
+      } else {
+        setState(INITIAL);
+      }
     };
     const handleExpire = handleDelete;
     (async () => {
@@ -470,6 +498,12 @@ interface HederaConnectorShim {
    *  to read persisted sessions synchronously and subscribe to lifecycle
    *  events (session_delete / session_expire). */
   walletConnectClient?: WcSignClient;
+  /** Set by us; the library invokes it when its in-iframe pairing (HashPack
+   *  dapp-browser) establishes a FRESH session. HashPack often DELETES the
+   *  app's persisted session on open and immediately re-pairs, so we catch the
+   *  new session here instead of stranding the user at a Connect prompt that
+   *  only works on the second tap. No-op for top-level (non-iframe) loads. */
+  onSessionIframeCreated?: ((session: WcSession) => void) | null;
 }
 
 /** Subset of the library's ExtensionData we read to detect installed wallets. */
