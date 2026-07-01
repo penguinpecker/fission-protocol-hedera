@@ -30,6 +30,7 @@ import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
 import { formatCompactBigint } from "@/lib/trade-limits";
+import { computeTradeWindow, isWithinWindow, windowRangeLine } from "@/lib/trade-window";
 import {
   FormHeaderStrip,
   MoneyInput,
@@ -631,6 +632,32 @@ function AddLp({
   const hbarExceedsContractCap =
     effectiveSource === "hbar" && contractTradeCap > 0n && estSyFromHbar > contractTradeCap;
 
+  // FEASIBLE-WINDOW (proportion guard, HBAR/MegaZap path). The zap routes a small
+  // internal PT buy, which shares buyPt's proportion behaviour: on a PT-heavy
+  // pool a too-small deposit can leave the internal buy below the proportion
+  // floor. Surface the same MIN/MAX guidance the buy forms show. SY-mode is a
+  // BALANCED add (no proportion-shifting swap), so the window is a no-op there.
+  const tradeWindow = useMemo(
+    () =>
+      computeTradeWindow({
+        side: "addLp",
+        totalPt,
+        totalSy,
+        syExchangeRate: detail.syExchangeRate,
+        existingMax: contractTradeCap,
+      }),
+    [totalPt, totalSy, detail.syExchangeRate, contractTradeCap],
+  );
+  const hbarFeasible =
+    effectiveSource !== "hbar" || isWithinWindow(estSyFromHbar, tradeWindow);
+  const hbarBelowMinFeasible =
+    effectiveSource === "hbar" &&
+    estSyFromHbar > 0n &&
+    tradeWindow.minInput > 0n &&
+    estSyFromHbar < tradeWindow.minInput;
+  const windowLine =
+    effectiveSource === "hbar" ? windowRangeLine(tradeWindow, "SY") : null;
+
   // For the MegaZap call we encode the current pool ratio as `ptShareBps`:
   // the share of the SY budget converted to PT mid-tx. Clamp to [100, 9900]
   // bps so the contract guard never trips.
@@ -1002,6 +1029,18 @@ function AddLp({
           maxBps={500}
         />
 
+        {windowLine && (
+          <p
+            className={`mb-3 rounded-[6px] border px-3 py-2 font-mono text-[10px] leading-relaxed ${
+              tradeWindow.imbalanced || hbarBelowMinFeasible
+                ? "border-warning/30 bg-warning/[0.06] text-warning"
+                : "border-border bg-bgInput text-textDim"
+            }`}
+          >
+            {windowLine}
+          </p>
+        )}
+
         <SectionDivider label="Settlement" />
 
         <button
@@ -1012,7 +1051,7 @@ function AddLp({
             isConfirmingFinal ||
             !routerDeployed ||
             (effectiveSource === "hbar"
-              ? hbarAmount <= 0 || hbarAmount < 6 || !megaZapAvailable || hbarExceedsContractCap
+              ? hbarAmount <= 0 || hbarAmount < 6 || !megaZapAvailable || hbarExceedsContractCap || !hbarFeasible
               : noInput || insufficientSy || insufficientPt || noPt)
           }
           onClick={onPrimary}
@@ -1025,8 +1064,12 @@ function AddLp({
                 ? "Enter HBAR amount"
                 : hbarAmount < 6
                   ? "Min 6 HBAR"
-                  : hbarExceedsContractCap
-                    ? "Trade too large for pool"
+                  : tradeWindow.imbalanced
+                    ? "Pool imbalanced — try again shortly"
+                    : hbarBelowMinFeasible
+                      ? "Increase size — pool is PT-heavy"
+                      : hbarExceedsContractCap || !hbarFeasible
+                        ? "Trade too large for pool"
                     : isPending
                       ? "Adding LP via MegaZap…"
                       : isConfirmingFinal

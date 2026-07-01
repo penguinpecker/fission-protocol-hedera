@@ -25,6 +25,7 @@ import { previewLeveragedYt, maxYtBuyable, type LeveragedYtQuote } from "@/lib/t
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
+import { computeTradeWindow, isWithinWindow, windowRangeLine } from "@/lib/trade-window";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
 import {
   FormHeaderStrip,
@@ -208,6 +209,26 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   }, [market]);
   const maxYtUsd =
     maxYtCostRaw > 0n && usdPerShare !== undefined ? Number(maxYtCostRaw) * usdPerShare : undefined;
+
+  // FEASIBLE-WINDOW (proportion guard). A leveraged buyYt internally SELLS PT into
+  // the pool → RAISES proportion, so while the pool is at/over the 0.96 cap
+  // (today's state) this side is entirely infeasible: previewBuyYt returns 0 and
+  // the old flow surfaced a misleading "Price quoter unreachable" after the zap.
+  // When under the cap, the max is the PT-sell headroom, tightened by the live
+  // maxYtCostRaw cap. Fail-safe on missing reserves.
+  const tradeWindow = useMemo(
+    () =>
+      computeTradeWindow({
+        side: "buyYt",
+        totalPt: detail.totalPt,
+        totalSy: detail.totalSy,
+        syExchangeRate: detail.syExchangeRate,
+        existingMax: maxYtCostRaw,
+      }),
+    [detail.totalPt, detail.totalSy, detail.syExchangeRate, maxYtCostRaw],
+  );
+  const feasibleSize = isWithinWindow(syForSwap, tradeWindow);
+  const windowLine = windowRangeLine(tradeWindow, "SY");
 
   /* ─────────────────────────── YT estimate */
 
@@ -817,6 +838,8 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
       if (hbarAmount < 6) return "Min 6 HBAR";
+      if (tradeWindow.imbalanced) return "Pool PT-saturated — buy PT first";
+      if (!feasibleSize) return "Trade too large for pool";
       if (megaZapAvailable) {
         if (flowState.kind === "error") return "Retry MegaZap";
         if (flowState.kind === "associating") return "Associating tokens…";
@@ -839,7 +862,8 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     }
     if (parsedSy === 0n) return "Enter amount";
     if (insufficient) return "Insufficient SY";
-    if (sizeLimit.exceeded) return "Trade too large for pool";
+    if (tradeWindow.imbalanced) return "Pool PT-saturated — buy PT first";
+    if (sizeLimit.exceeded || !feasibleSize) return "Trade too large for pool";
     if (flowState.kind === "error") {
       return flowState.failedAt === 1 ? "Retry association" : flowState.failedAt === 3 ? "Retry approval" : "Retry buy";
     }
@@ -865,6 +889,8 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     isPending ||
     isConfirmingFinal ||
     !routerDeployed ||
+    tradeWindow.imbalanced ||
+    !feasibleSize ||
     (effectiveSource === "hbar"
       ? hbarAmount === 0 || !zapAvailable || hbarBelowFloor
       : parsedSy === 0n || insufficient || sizeLimit.exceeded);
@@ -976,6 +1002,18 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
             source to <span className="font-semibold">HBAR</span> above to mint SY +
             buy YT in one flow.
           </div>
+        )}
+
+        {windowLine && (
+          <p
+            className={`mb-3 rounded-[6px] border px-3 py-2 font-mono text-[10px] leading-relaxed ${
+              tradeWindow.imbalanced
+                ? "border-warning/30 bg-warning/[0.06] text-warning"
+                : "border-border bg-bgInput text-textDim"
+            }`}
+          >
+            {windowLine}
+          </p>
         )}
 
         <SectionDivider label="Routing" />

@@ -22,6 +22,7 @@ import { useSyValueUsd } from "@/hooks/useSyValueUsd";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
+import { computeTradeWindow, isWithinWindow, windowRangeLine } from "@/lib/trade-window";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
 import { ADDRESSES, isDeployed, MAX_HTS_APPROVE } from "@/lib/addresses";
 import { lensAbi } from "@/lib/abis";
@@ -214,6 +215,27 @@ export function SellYtForm({ market, detail, user }: Props) {
   const insufficient = !ytBalanceReadFailed && parsedYt > ytBalance;
   // Sell YT depletes the AMM's PT inventory (PT is burned) → limit on totalPt.
   const sizeLimit = computeSizeLimit(parsedYt, detail.totalPt, detail.totalSy);
+
+  // FEASIBLE-WINDOW (proportion guard). sellYt unwinds by REMOVING PT → LOWERS
+  // proportion, so it mirrors buyPt: when the pool is PT-heavy there's a hard
+  // MINIMUM YT the AMM will accept — smaller sells revert MarketProportionTooHigh
+  // (previously surfaced only as a post-tx error). Max = the 1%-depth cap.
+  // Fail-safe on missing reserves.
+  const tradeWindow = useMemo(
+    () =>
+      computeTradeWindow({
+        side: "sellYt",
+        totalPt: detail.totalPt,
+        totalSy: detail.totalSy,
+        syExchangeRate: detail.syExchangeRate,
+        existingMax: sizeLimit.maxAllowed,
+      }),
+    [detail.totalPt, detail.totalSy, detail.syExchangeRate, sizeLimit.maxAllowed],
+  );
+  const feasibleSize = isWithinWindow(parsedYt, tradeWindow);
+  const belowMinFeasible =
+    parsedYt > 0n && tradeWindow.minInput > 0n && parsedYt < tradeWindow.minInput;
+  const windowLine = windowRangeLine(tradeWindow, "YT");
 
   /* ─────────────────────────── SY estimate via FissionLens (exact curve) */
 
@@ -512,7 +534,9 @@ export function SellYtForm({ market, detail, user }: Props) {
     if (expired) return "Market expired — YT has no SY claim";
     if (parsedYt === 0n) return "Enter amount";
     if (insufficient) return "Insufficient YT";
-    if (sizeLimit.exceeded) return "Trade too large for pool";
+    if (tradeWindow.imbalanced) return "Pool imbalanced — try again shortly";
+    if (belowMinFeasible) return "Increase size — pool is PT-heavy";
+    if (sizeLimit.exceeded || !feasibleSize) return "Trade too large for pool";
     if (priceFeedUnavailable) return "Price feed unavailable — try again";
     if (flowState.kind === "error") return "Retry Sell YT → HBAR";
     if (flowState.kind === "granting") return "Enabling selling…";
@@ -541,6 +565,8 @@ export function SellYtForm({ market, detail, user }: Props) {
     parsedYt === 0n ||
     insufficient ||
     sizeLimit.exceeded ||
+    tradeWindow.imbalanced ||
+    !feasibleSize ||
     // F3: block the sell while we can't price the SY→HBAR leg.
     priceFeedUnavailable;
 
@@ -610,6 +636,9 @@ export function SellYtForm({ market, detail, user }: Props) {
               Pool depth: {formatCompact(sizeLimit.poolDepth)} · max trade{" "}
               {MAX_TRADE_PCT_OF_POOL}% = {formatCompact(sizeLimit.maxAllowed)}
               {" · "}gas ~0.12 HBAR
+              {windowLine ? (
+                <span className="mt-1 block text-warning">{windowLine}</span>
+              ) : null}
             </>
           }
           feedback={

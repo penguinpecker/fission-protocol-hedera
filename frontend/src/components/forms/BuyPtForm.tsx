@@ -40,6 +40,7 @@ import { readLiveTradeCap, maxPtBuyable } from "@/lib/trade-cap";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
+import { computeTradeWindow, isWithinWindow, windowRangeLine } from "@/lib/trade-window";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
 import {
   FormHeaderStrip,
@@ -231,6 +232,30 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   // Live max PT a single buy can take, in USD ($ = raw SY-in × usdPerShare; PT≈1:1 SY).
   const maxPtUsd =
     maxPtSyIn > 0n && usdPerShare !== undefined ? Number(maxPtSyIn) * usdPerShare : undefined;
+
+  // FEASIBLE-WINDOW (proportion guard). buyPt REMOVES PT → lowers proportion, so
+  // when the pool is PT-heavy (proportion ≥ 0.96, today's live state) there's a
+  // hard MINIMUM buy the AMM will accept — smaller buys revert
+  // MarketProportionTooHigh, which the old guard never surfaced (it showed a
+  // misleading "Price quoter unreachable" AFTER the irreversible zap). The MAX is
+  // the already-live maxPtSyIn (contract/depth cap). Fail-safe: missing reserves
+  // → permissive window (never blocks a real trade).
+  const tradeWindow = useMemo(
+    () =>
+      computeTradeWindow({
+        side: "buyPt",
+        totalPt: detail.totalPt,
+        totalSy: detail.totalSy,
+        syExchangeRate: detail.syExchangeRate,
+        existingMax: maxPtSyIn,
+      }),
+    [detail.totalPt, detail.totalSy, detail.syExchangeRate, maxPtSyIn],
+  );
+  // Gate on the SY the swap will actually see (syForSwap ≈ ptOut at rate≈1).
+  const feasibleSize = isWithinWindow(syForSwap, tradeWindow);
+  const belowMinFeasible =
+    syForSwap > 0n && tradeWindow.minInput > 0n && syForSwap < tradeWindow.minInput;
+  const windowLine = windowRangeLine(tradeWindow, "SY");
 
   /* ─────────────────────────── PT estimate + slippage floor */
 
@@ -923,7 +948,9 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
       if (hbarAmount < 6) return "Min 6 HBAR";
-      if (hbarExceedsContractCap) return "Trade too large for pool";
+      if (tradeWindow.imbalanced) return "Pool imbalanced — try again shortly";
+      if (belowMinFeasible) return "Increase size — pool is PT-heavy";
+      if (hbarExceedsContractCap || !feasibleSize) return "Trade too large for pool";
       if (megaZapAvailable) {
         // Fast path. The MegaZap is a single contract call — at most one
         // associate popup beforehand on Hedera mode.
@@ -949,7 +976,9 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     // SY mode
     if (parsedSy === 0n) return "Enter amount";
     if (insufficient) return "Insufficient SY";
-    if (sizeLimit.exceeded) return "Trade too large for pool";
+    if (tradeWindow.imbalanced) return "Pool imbalanced — try again shortly";
+    if (belowMinFeasible) return "Increase size — pool is PT-heavy";
+    if (sizeLimit.exceeded || !feasibleSize) return "Trade too large for pool";
     if (flowState.kind === "error") {
       return flowState.failedAt === 1 ? "Retry association" : flowState.failedAt === 3 ? "Retry approval" : "Retry buy";
     }
@@ -975,6 +1004,8 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     isPending ||
     isConfirmingFinal ||
     !routerDeployed ||
+    tradeWindow.imbalanced ||
+    !feasibleSize ||
     (effectiveSource === "hbar"
       ? hbarAmount === 0 || !zapAvailable || hbarBelowFloor || hbarExceedsContractCap
       : parsedSy === 0n || insufficient || sizeLimit.exceeded);
@@ -1088,6 +1119,18 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
             source to <span className="font-semibold">HBAR</span> above to mint SY +
             buy PT in one flow.
           </div>
+        )}
+
+        {windowLine && (
+          <p
+            className={`mb-3 rounded-[6px] border px-3 py-2 font-mono text-[10px] leading-relaxed ${
+              tradeWindow.imbalanced || belowMinFeasible
+                ? "border-warning/30 bg-warning/[0.06] text-warning"
+                : "border-border bg-bgInput text-textDim"
+            }`}
+          >
+            {windowLine}
+          </p>
         )}
 
         <SectionDivider label="Routing" />

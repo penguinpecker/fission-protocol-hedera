@@ -16,6 +16,7 @@
  * pays slightly less than par. The form auto-disables in that case.
  */
 import { useCallback, useMemo, useState } from "react";
+
 import { useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import type { MarketDetail } from "@/hooks/useMarket";
 import { daysUntil, formatCompact, impliedApyPct } from "@/hooks/useMarkets";
@@ -26,6 +27,7 @@ import { lensAbi } from "@/lib/abis";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
+import { computeTradeWindow, isWithinWindow, windowRangeLine } from "@/lib/trade-window";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
 import {
   FormHeaderStrip,
@@ -198,6 +200,25 @@ export function SellPtForm({ market, detail, user }: Props) {
   const insufficient = !ptBalanceReadFailed && parsedPt > ptBalance;
   // Limit governed by the AMM's SY side — selling PT means pulling SY out.
   const sizeLimit = computeSizeLimit(parsedPt, detail.totalPt, detail.totalSy);
+
+  // FEASIBLE-WINDOW (proportion guard). Selling PT ADDS PT → raises proportion.
+  // While the pool is already at/over the 0.96 cap (today's live state) EVERY
+  // ptIn reverts MarketProportionTooHigh — the side is closed until a PT buy
+  // rebalances the pool. When under the cap, the max is the PT headroom (tightened
+  // by the 1%-depth cap). Fail-safe on missing reserves.
+  const tradeWindow = useMemo(
+    () =>
+      computeTradeWindow({
+        side: "sellPt",
+        totalPt: detail.totalPt,
+        totalSy: detail.totalSy,
+        syExchangeRate: detail.syExchangeRate,
+        existingMax: sizeLimit.maxAllowed,
+      }),
+    [detail.totalPt, detail.totalSy, detail.syExchangeRate, sizeLimit.maxAllowed],
+  );
+  const feasibleSize = isWithinWindow(parsedPt, tradeWindow);
+  const windowLine = windowRangeLine(tradeWindow, "PT");
 
   /* ─────────────────────────── SY estimate + slippage floor */
 
@@ -624,7 +645,8 @@ export function SellPtForm({ market, detail, user }: Props) {
     if (expired) return "Market expired — redeem instead";
     if (parsedPt === 0n) return "Enter amount";
     if (insufficient) return "Insufficient PT";
-    if (sizeLimit.exceeded) return "Trade too large for pool";
+    if (tradeWindow.imbalanced) return "Pool PT-saturated — buy PT first";
+    if (sizeLimit.exceeded || !feasibleSize) return "Trade too large for pool";
     if (priceFeedUnavailable) return "Price feed unavailable — try again";
     if (flowState.kind === "error") {
       switch (flowState.failedAt) {
@@ -657,6 +679,8 @@ export function SellPtForm({ market, detail, user }: Props) {
     parsedPt === 0n ||
     insufficient ||
     sizeLimit.exceeded ||
+    tradeWindow.imbalanced ||
+    !feasibleSize ||
     // F3: block the sell while we can't price the SY→HBAR leg.
     priceFeedUnavailable;
 
@@ -727,6 +751,9 @@ export function SellPtForm({ market, detail, user }: Props) {
               Pool depth: {formatCompact(sizeLimit.poolDepth)} · max trade{" "}
               {MAX_TRADE_PCT_OF_POOL}% = {formatCompact(sizeLimit.maxAllowed)}
               {" · "}gas ~0.08 HBAR
+              {windowLine ? (
+                <span className="mt-1 block text-warning">{windowLine}</span>
+              ) : null}
             </>
           }
           feedback={
