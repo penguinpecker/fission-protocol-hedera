@@ -230,7 +230,11 @@ export function Nav() {
                     disabled={onWrongChain}
                     className="rounded-[2px] border border-white bg-white px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85 disabled:opacity-50"
                   >
-                    {auth.status === "error" ? "Try again" : "Sign In"}
+                    {/* Same copy as the hero CTA — the two buttons share one auth
+                        state and must read identically. A failed attempt just
+                        means "sign in (again)", not different words. (This branch
+                        never renders while status is "loading".) */}
+                    Sign In
                   </button>
                 </div>
               )

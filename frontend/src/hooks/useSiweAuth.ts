@@ -132,6 +132,37 @@ function useAuthEngine(): SiweAuthApi {
       return;
     }
     setState({ status: "loading" });
+    // TRANSIENT failures get an automatic retry (up to 3 attempts, 2.5s apart):
+    //   - "Record was recently deleted" / stale-session WC errors: HashPack's
+    //     dapp-browser deletes the app's persisted session on open and re-pairs
+    //     a FRESH one; an auto-sign fired on the doomed session dies mid-flight.
+    //     By the retry, onSessionIframeCreated has reconnected and the signer
+    //     uses the live session.
+    //   - fetch/network blips on the nonce/verify round-trips.
+    // User rejections ("User rejected…") do NOT match — no nagging re-prompts.
+    const TRANSIENT =
+      /failed to fetch|load failed|network|record was recently deleted|no matching key|session topic|expired|not initialized/i;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const err = await signInOnce();
+      if (err === null) return; // authenticated
+      if (attempt < 3 && TRANSIENT.test(err)) {
+        await new Promise((r) => setTimeout(r, 2500));
+        continue;
+      }
+      setState({ status: "error", error: err });
+      return;
+    }
+  }, [adapter]);
+
+  /** One nonce→sign→verify attempt. Returns null on success, error string on
+   *  failure. Hoisted function (not useCallback) so `signIn` above can reference
+   *  it without a declaration-order/TDZ problem; it closes over the same
+   *  render's `adapter`. */
+  async function signInOnce(): Promise<string | null> {
+    // Re-check inside the attempt: narrows adapter.address for TS and covers a
+    // wallet that disconnected between retries.
+    if (!adapter.isConnected || !adapter.address) return "wallet_not_connected";
+    const address = adapter.address;
     try {
       // Step 1: nonce keyed by the wallet's lowercased address. For Hedera
       // mode the long-zero EVM address is used here AND on the server when
@@ -209,10 +240,11 @@ function useAuthEngine(): SiweAuthApi {
         throw new Error(parts.join(" · "));
       }
       setState({ status: "authenticated", address: adapter.address as `0x${string}` });
+      return null;
     } catch (e) {
-      setState({ status: "error", error: e instanceof Error ? e.message : "unknown" });
+      return e instanceof Error ? e.message : "unknown";
     }
-  }, [adapter]);
+  }
 
   const signOut = useCallback(async () => {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
