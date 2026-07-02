@@ -152,9 +152,48 @@ export function Nav() {
   // no way to reach /whitepaper or /profile from the header. Toggle closes
   // automatically when the route changes.
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Account dropdown (opened by clicking the connected wallet chip). Previously
+  // the chip logged the user out on a single click, which was too easy to hit by
+  // accident; now the click opens this menu and Log out is an explicit item.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [copiedAddr, setCopiedAddr] = useState(false);
+
   useEffect(() => {
     setMobileOpen(false);
+    setMenuOpen(false);
   }, [pathname]);
+
+  // Close the account dropdown on an outside click or Escape.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  const accountLabel =
+    adapter.mode === "hedera" && adapter.accountId ? adapter.accountId : adapter.address ?? "";
+  const copyAccount = async () => {
+    if (!accountLabel) return;
+    try {
+      await navigator.clipboard.writeText(accountLabel);
+      setCopiedAddr(true);
+      setTimeout(() => setCopiedAddr(false), 1500);
+    } catch {
+      /* clipboard unavailable — no-op */
+    }
+  };
 
   return (
     <>
@@ -191,16 +230,77 @@ export function Nav() {
 
             {adapter.isConnected && adapter.address ? (
               auth.status === "authenticated" ? (
-                <button
-                  type="button"
-                  onClick={handleDisconnect}
-                  className="inline-flex items-center gap-1.5 rounded-[2px] border border-borderHover bg-white/[0.04] px-3.5 py-2 font-mono text-[12px] text-text transition hover:bg-white/[0.06]"
-                >
-                  <span className="size-[5px] rounded-full bg-success" />
-                  {adapter.mode === "hedera" && adapter.accountId
-                    ? adapter.accountId
-                    : shortAddr(adapter.address)}
-                </button>
+                <div className="relative" ref={menuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setMenuOpen((o) => !o)}
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    className="inline-flex items-center gap-1.5 rounded-[2px] border border-borderHover bg-white/[0.04] px-3.5 py-2 font-mono text-[12px] text-text transition hover:bg-white/[0.06]"
+                  >
+                    <span className="size-[5px] rounded-full bg-success" />
+                    {adapter.mode === "hedera" && adapter.accountId
+                      ? adapter.accountId
+                      : shortAddr(adapter.address)}
+                    <svg
+                      viewBox="0 0 12 12"
+                      className={`size-3 text-textDim transition-transform ${menuOpen ? "rotate-180" : ""}`}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      aria-hidden
+                    >
+                      <path d="M3 4.5 6 7.5 9 4.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+
+                  {menuOpen && (
+                    <div
+                      role="menu"
+                      className="absolute right-0 top-[calc(100%+6px)] z-50 w-[240px] overflow-hidden rounded-[4px] border border-border bg-bgCard shadow-2xl"
+                    >
+                      <div className="border-b border-border px-3.5 py-3">
+                        <div className="font-mono text-[9px] uppercase tracking-[1.6px] text-textDim">
+                          Connected · {adapter.mode === "hedera" ? "HashPack" : "MetaMask"}
+                        </div>
+                        <div className="mt-1.5 break-all font-mono text-[11.5px] leading-snug text-text">
+                          {accountLabel}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={copyAccount}
+                        className="flex w-full items-center justify-between px-3.5 py-2.5 text-left font-mono text-[11px] text-textSec transition hover:bg-white/[0.05]"
+                      >
+                        <span>Copy address</span>
+                        <span className="text-[10px] text-textDim">{copiedAddr ? "Copied ✓" : ""}</span>
+                      </button>
+                      <Link
+                        href="/profile"
+                        role="menuitem"
+                        onClick={() => setMenuOpen(false)}
+                        className="flex w-full items-center px-3.5 py-2.5 text-left font-mono text-[11px] text-textSec transition hover:bg-white/[0.05]"
+                      >
+                        View profile
+                      </Link>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          void handleDisconnect();
+                        }}
+                        className="flex w-full items-center gap-2 border-t border-border px-3.5 py-2.5 text-left font-mono text-[11px] text-error transition hover:bg-error/10"
+                      >
+                        <svg viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+                          <path d="M6 14H3.5A1.5 1.5 0 0 1 2 12.5v-9A1.5 1.5 0 0 1 3.5 2H6M10.5 11 14 8l-3.5-3M14 8H6" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        Log out
+                      </button>
+                    </div>
+                  )}
+                </div>
               ) : auth.status === "loading" ? (
                 <button
                   type="button"
