@@ -132,7 +132,18 @@ export function AssociationGate({
     setIsAssociating(true);
     diag("AssociationGate", { step: "associate_click", tokens: missing });
     try {
-      const txId = await associateTokens(hedera.getConnector(), accountId, missing);
+      let txId: string;
+      try {
+        txId = await associateTokens(hedera.getConnector(), accountId, missing);
+      } catch (assocErr) {
+        const am = assocErr instanceof Error ? assocErr.message : String(assocErr);
+        if (/record was recently deleted|no matching key|session topic|not initialized|missing or invalid/i.test(am)) {
+          await hedera.refreshConnector();
+          txId = await associateTokens(hedera.getConnector(), accountId, missing);
+        } else {
+          throw assocErr;
+        }
+      }
       diag("AssociationGate", { step: "associate_success", txId });
       // Re-check rather than optimistic-assume — Mirror Node is the source
       // of truth and usually lags receipt by <1s but can spike.

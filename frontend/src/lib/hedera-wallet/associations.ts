@@ -120,7 +120,6 @@ export async function associateTokens(
     signers: Array<{ getAccountId(): { toString(): string } }>;
   };
   if (!c?.signers?.length) throw new Error("Hedera connector has no signer");
-  const signer = c.signers[0];
 
   const sdk = await import("@hashgraph/sdk");
   const { TokenAssociateTransaction, AccountId, TokenId, Client } = sdk;
@@ -130,6 +129,12 @@ export async function associateTokens(
     ? (mainnetClient._network.getNodeAccountIdsForExecute?.() as InstanceType<typeof AccountId>[]) ?? []
     : [];
   mainnetClient.close();
+
+  // Read the signer LIVE off the (possibly just-refreshed) connector at submit
+  // time — never capture it before the SDK import await, so a session that got
+  // deleted/re-paired mid-flight is picked up. See adapter.ts writeHedera for
+  // the outer self-heal retry that rebuilds the connector on a dead topic.
+  const signer = c.signers[0];
 
   const tx = new TokenAssociateTransaction()
     .setAccountId(AccountId.fromString(accountId))

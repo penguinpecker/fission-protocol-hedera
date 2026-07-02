@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
+import { useSiweAuth } from "@/hooks/useSiweAuth";
 
 type ReferralItem = {
   referee: string;
@@ -35,6 +36,7 @@ export default function ReferralsPage() {
 }
 
 function ReferralsBody() {
+  const { state: auth, signIn } = useSiweAuth();
   const [data, setData] = useState<Resp | null>(null);
   const [state, setState] = useState<"loading" | "ok" | "unauth" | "error">("loading");
   const [copied, setCopied] = useState(false);
@@ -58,6 +60,13 @@ function ReferralsBody() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Re-probe whenever the shared auth flips to authenticated — a user who signs
+  // in via the Nav while sitting on /referrals should see their link without a
+  // manual reload (mode 3 referrals symptom).
+  useEffect(() => {
+    if (auth.status === "authenticated") void load();
+  }, [auth.status, load]);
 
   const copy = async () => {
     if (!data?.link) return;
@@ -91,6 +100,15 @@ function ReferralsBody() {
           <p className="font-mono text-[13px] text-textSec">
             Connect your wallet and sign in to get your referral link.
           </p>
+          {auth.status !== "authenticated" && (
+            <button
+              type="button"
+              onClick={() => void signIn()}
+              className="mt-4 rounded-[4px] border border-white bg-white px-4 py-2 font-mono text-[12px] font-semibold uppercase tracking-[0.1em] text-black transition hover:bg-white/85"
+            >
+              Sign in
+            </button>
+          )}
         </div>
       )}
 

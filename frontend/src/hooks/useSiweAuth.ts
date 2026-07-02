@@ -53,6 +53,14 @@ const AuthContext = createContext<SiweAuthApi | null>(null);
 function useAuthEngine(): SiweAuthApi {
   const adapter = useWalletAdapter();
   const [state, setState] = useState<SiweAuthState>({ status: "idle" });
+  // Refs for the mode-3 recovery path + a concurrent-run guard. adapterRef
+  // mirrors the latest adapter so the fp:wallet-session-fresh listener (mounted
+  // once, [] deps) always reads current wallet state; signInRef exposes the
+  // latest signIn closure to that same listener.
+  const signInInFlightRef = useRef(false);
+  const signInRef = useRef<() => Promise<void>>(async () => {});
+  const adapterRef = useRef(adapter);
+  adapterRef.current = adapter;
 
   // Probe the server for an existing session on mount and whenever the
   // connected wallet changes.
@@ -90,6 +98,40 @@ function useAuthEngine(): SiweAuthApi {
     };
     window.addEventListener("fp:auth-changed", reprobe);
     return () => window.removeEventListener("fp:auth-changed", reprobe);
+  }, []);
+
+  // MODE 3 recovery. HashPack's dapp-browser deletes + re-pairs the WC session;
+  // the provider dispatches `fp:wallet-session-fresh` once a fresh iframe
+  // session lands. Re-probe /me (a cookie may already be valid), otherwise
+  // (re)sign on the NOW-live session — the only path out of a terminal 'error'
+  // (every auto-sign gates on status==='idle', which a failed sign leaves).
+  // kick() waits for the adapter hook to observe the new session before signing
+  // (provider setState → adapter propagation is async), so the first attempt
+  // doesn't hit the wallet_not_connected guard and re-error.
+  useEffect(() => {
+    const onFresh = () => {
+      fetch("/api/auth/me", { credentials: "include" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data && typeof data.address === "string" && /^0x[a-f0-9]{40}$/.test(data.address)) {
+            setState({ status: "authenticated", address: data.address as `0x${string}` });
+            return;
+          }
+          const kick = (tries: number) => {
+            if (adapterRef.current.isConnected && adapterRef.current.address) {
+              void signInRef.current();
+              return;
+            }
+            if (tries > 0) setTimeout(() => kick(tries - 1), 400);
+          };
+          kick(6);
+        })
+        .catch(() => {
+          void signInRef.current();
+        });
+    };
+    window.addEventListener("fp:wallet-session-fresh", onFresh);
+    return () => window.removeEventListener("fp:wallet-session-fresh", onFresh);
   }, []);
 
   // Wallet disconnect or address change → clear server session.
@@ -131,7 +173,10 @@ function useAuthEngine(): SiweAuthApi {
       setState({ status: "error", error: "wallet_not_connected" });
       return;
     }
+    if (signInInFlightRef.current) return;
+    signInInFlightRef.current = true;
     setState({ status: "loading" });
+    try {
     // TRANSIENT failures get an automatic retry (up to 3 attempts, 2.5s apart):
     //   - "Record was recently deleted" / stale-session WC errors: HashPack's
     //     dapp-browser deletes the app's persisted session on open and re-pairs
@@ -142,20 +187,30 @@ function useAuthEngine(): SiweAuthApi {
     // User rejections ("User rejected…") do NOT match — no nagging re-prompts.
     const TRANSIENT =
       /failed to fetch|load failed|network|record was recently deleted|no matching key|session topic|expired|not initialized/i;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      const err = await signInOnce();
-      if (err === null) return; // authenticated
-      if (attempt < 3 && TRANSIENT.test(err)) {
-        await new Promise((r) => setTimeout(r, 2500));
-        continue;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const err = await signInOnce();
+        if (err === null) return; // authenticated
+        if (attempt < 3 && TRANSIENT.test(err)) {
+          await new Promise((r) => setTimeout(r, 2500));
+          continue;
+        }
+        // Land on 'error' but NOT terminally: the entry guard only blocks
+        // concurrent runs, and a fresh HashPack session re-arms sign-in via the
+        // fp:wallet-session-fresh listener, so the app is no longer permanently
+        // pinned at SIGN IN (mode 3).
+        setState({ status: "error", error: err });
+        return;
       }
-      setState({ status: "error", error: err });
-      return;
+    } finally {
+      signInInFlightRef.current = false;
     }
     // signInOnce is a hoisted per-render function closing over the same
     // `adapter`; listing `adapter` covers its real dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adapter]);
+  // Stable ref to the latest signIn so the fp:wallet-session-fresh listener
+  // (mounted once) invokes the current closure.
+  signInRef.current = signIn;
 
   /** One nonce→sign→verify attempt. Returns null on success, error string on
    *  failure. Hoisted function (not useCallback) so `signIn` above can reference

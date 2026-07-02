@@ -39,6 +39,7 @@ import { lensAbi } from "@/lib/abis";
 import { readLiveTradeCap, maxPtBuyable } from "@/lib/trade-cap";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
+import { useHbarBalance } from "@/hooks/useHbarBalance";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
 import { computeTradeWindow, isWithinWindow, windowRangeLine } from "@/lib/trade-window";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
@@ -88,6 +89,9 @@ type FlowState =
 export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   const adapter = useWalletAdapter();
   const hedera = useHederaWallet();
+  // Native HBAR balance (fail-open: undefined = unknown, never blocks) so we can
+  // warn BEFORE the wallet hits a cryptic INSUFFICIENT_PAYER_BALANCE precheck.
+  const hbarBalance = useHbarBalance(adapter.accountId ?? adapter.address ?? undefined);
   const { usdPerShare } = useSyValueUsd(detail.sy);
   const hbarUsd = useHbarUsd();
 
@@ -157,6 +161,14 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     const n = parseFloat(rawStr);
     return Number.isFinite(n) && n > 0 ? n : 0;
   }, [effectiveSource, inputMode, usdStr, rawStr, hbarUsd]);
+
+  // The wallet must hold msg.value (= hbarAmount) + gas across the
+  // associate/zap/approve/buy txs. Warn up-front (FAIL-OPEN — only when the
+  // balance is confidently below the requirement) so under-funded users get a
+  // clear number instead of HashPack's cryptic INSUFFICIENT_PAYER_BALANCE.
+  const requiredHbar = hbarAmount + 2;
+  const hbarInsufficientBalance =
+    effectiveSource === "hbar" && hbarBalance !== undefined && hbarAmount > 0 && hbarBalance < requiredHbar;
 
   // SY-mode raw amount (legacy path).
   const parsedSy = useMemo<bigint>(() => {
@@ -432,7 +444,21 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         const missing = await getMissingAssociations(adapter.accountId, ids);
         if (missing.length === 0) return true;
         setStatus({ kind: "associating", stepIdx: 1 });
-        await associateTokens(hedera.getConnector(), adapter.accountId, missing);
+        // Self-heal the HashPack stale-session error on STEP 1: if the associate
+        // tx fires on a session HashPack already deleted/re-paired, rebuild the
+        // connector (fresh signer on the live topic) and retry ONCE — mirrors
+        // the adapter.write self-heal for the AMM/write steps.
+        try {
+          await associateTokens(hedera.getConnector(), adapter.accountId, missing);
+        } catch (assocErr) {
+          const am = assocErr instanceof Error ? assocErr.message : String(assocErr);
+          if (/record was recently deleted|no matching key|session topic|not initialized|missing or invalid/i.test(am)) {
+            await hedera.refreshConnector();
+            await associateTokens(hedera.getConnector(), adapter.accountId, missing);
+          } else {
+            throw assocErr;
+          }
+        }
         return true;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -685,7 +711,18 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
         const missing = await getMissingAssociations(adapter.accountId, ids);
         if (missing.length > 0) {
           setStatus({ kind: "associating", stepIdx: 1 });
-          await associateTokens(hedera.getConnector(), adapter.accountId, missing);
+          // Self-heal the HashPack stale-session error (mirrors stepAssociate).
+          try {
+            await associateTokens(hedera.getConnector(), adapter.accountId, missing);
+          } catch (assocErr2) {
+            const am2 = assocErr2 instanceof Error ? assocErr2.message : String(assocErr2);
+            if (/record was recently deleted|no matching key|session topic|not initialized|missing or invalid/i.test(am2)) {
+              await hedera.refreshConnector();
+              await associateTokens(hedera.getConnector(), adapter.accountId, missing);
+            } else {
+              throw assocErr2;
+            }
+          }
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -948,6 +985,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
       if (hbarAmount < 6) return "Min 6 HBAR";
+      if (hbarInsufficientBalance) return `Need ~${Math.ceil(requiredHbar)} HBAR · you have ${(hbarBalance ?? 0).toFixed(1)}`;
       if (tradeWindow.imbalanced) return "Pool imbalanced — try again shortly";
       if (belowMinFeasible) return "Increase size — pool is PT-heavy";
       if (hbarExceedsContractCap || !feasibleSize) return "Trade too large for pool";
@@ -1007,7 +1045,7 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
     tradeWindow.imbalanced ||
     !feasibleSize ||
     (effectiveSource === "hbar"
-      ? hbarAmount === 0 || !zapAvailable || hbarBelowFloor || hbarExceedsContractCap
+      ? hbarAmount === 0 || !zapAvailable || hbarBelowFloor || hbarExceedsContractCap || hbarInsufficientBalance
       : parsedSy === 0n || insufficient || sizeLimit.exceeded);
 
   return (

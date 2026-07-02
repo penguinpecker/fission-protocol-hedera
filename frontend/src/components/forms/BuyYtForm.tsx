@@ -24,6 +24,7 @@ import { ADDRESSES, HEDERA_TOKENS, isDeployed, MAX_HTS_APPROVE } from "@/lib/add
 import { previewLeveragedYt, maxYtBuyable, type LeveragedYtQuote } from "@/lib/trade-cap";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 import { useHederaWallet } from "@/lib/hedera-wallet/provider";
+import { useHbarBalance } from "@/hooks/useHbarBalance";
 import { computeSizeLimit, MAX_TRADE_PCT_OF_POOL } from "@/lib/trade-limits";
 import { computeTradeWindow, isWithinWindow, windowRangeLine } from "@/lib/trade-window";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
@@ -62,6 +63,9 @@ type FlowState =
 export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   const adapter = useWalletAdapter();
   const hedera = useHederaWallet();
+  // Native HBAR balance (fail-open: undefined = unknown, never blocks) so we can
+  // warn BEFORE the wallet hits a cryptic INSUFFICIENT_PAYER_BALANCE precheck.
+  const hbarBalance = useHbarBalance(adapter.accountId ?? adapter.address ?? undefined);
   const { usdPerShare } = useSyValueUsd(detail.sy);
   const hbarUsd = useHbarUsd();
 
@@ -129,6 +133,13 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     const n = parseFloat(rawStr);
     return Number.isFinite(n) && n > 0 ? n : 0;
   }, [effectiveSource, inputMode, usdStr, rawStr, hbarUsd]);
+
+  // Wallet must hold msg.value (= hbarAmount) + gas across the flow. Warn
+  // up-front (FAIL-OPEN — only when balance is confidently below requirement)
+  // instead of HashPack's cryptic INSUFFICIENT_PAYER_BALANCE precheck.
+  const requiredHbar = hbarAmount + 2;
+  const hbarInsufficientBalance =
+    effectiveSource === "hbar" && hbarBalance !== undefined && hbarAmount > 0 && hbarBalance < requiredHbar;
 
   const parsedSy = useMemo<bigint>(() => {
     if (effectiveSource !== "sy") return 0n;
@@ -838,6 +849,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
       if (!zapAvailable) return "Zap not deployed";
       if (hbarAmount === 0) return "Enter amount";
       if (hbarAmount < 6) return "Min 6 HBAR";
+      if (hbarInsufficientBalance) return `Need ~${Math.ceil(requiredHbar)} HBAR · you have ${(hbarBalance ?? 0).toFixed(1)}`;
       if (tradeWindow.imbalanced) return "Pool PT-saturated — buy PT first";
       if (!feasibleSize) return "Trade too large for pool";
       if (megaZapAvailable) {
@@ -892,7 +904,7 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
     tradeWindow.imbalanced ||
     !feasibleSize ||
     (effectiveSource === "hbar"
-      ? hbarAmount === 0 || !zapAvailable || hbarBelowFloor
+      ? hbarAmount === 0 || !zapAvailable || hbarBelowFloor || hbarInsufficientBalance
       : parsedSy === 0n || insufficient || sizeLimit.exceeded);
 
   return (

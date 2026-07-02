@@ -272,7 +272,25 @@ export function useWalletAdapter(): AdapterAPI {
         return writeEvm(op, writeContractAsync);
       }
       if (mode === "hedera") {
-        return writeHedera(op, hedera.getConnector());
+        // Pre-flight: if the current signer's topic is no longer live (HashPack
+        // deleted/re-paired the session), rebuild BEFORE we sign so we never
+        // execute against a dead topic.
+        if (!hedera.isSessionLive()) {
+          await hedera.refreshConnector();
+        }
+        try {
+          return await writeHedera(op, hedera.getConnector());
+        } catch (e) {
+          // Self-heal the stale-session error class (mirrors the connect + SIWE
+          // self-heal): rebuild the connector to mint a fresh signer bound to
+          // the live session, then retry ONCE. User rejections don't match.
+          const msg = e instanceof Error ? e.message : String(e);
+          if (STALE_SESSION.test(msg)) {
+            await hedera.refreshConnector();
+            return writeHedera(op, hedera.getConnector());
+          }
+          throw e;
+        }
       }
       throw new Error("Wallet not connected");
     },
@@ -286,17 +304,35 @@ export function useWalletAdapter(): AdapterAPI {
         return { format: "eip191" as const, signature: sig as `0x${string}` };
       }
       if (mode === "hedera") {
-        const connector = hedera.getConnector() as null | {
+        type HederaSigner = {
           signMessage(params: { signerAccountId: string; message: string }): Promise<{ signatureMap: string }>;
         };
-        if (!connector) throw new Error("Hedera connector not initialized");
-        const accountId = hedera.accountId;
-        if (!accountId) throw new Error("Hedera accountId missing");
-        const { signatureMap } = await connector.signMessage({
-          signerAccountId: `hedera:mainnet:${accountId}`,
-          message,
-        });
-        return { format: "hedera" as const, signatureMap, accountId };
+        // Pre-flight: rebuild if the signer's session is dead before signing so
+        // the SIWE sign doesn't fire on a HashPack-deleted session (mode 3).
+        if (!hedera.isSessionLive()) {
+          await hedera.refreshConnector();
+        }
+        const doSign = async (): Promise<{ format: "hedera"; signatureMap: string; accountId: string }> => {
+          const connector = hedera.getConnector() as null | HederaSigner;
+          if (!connector) throw new Error("Hedera connector not initialized");
+          const accountId = hedera.accountId;
+          if (!accountId) throw new Error("Hedera accountId missing");
+          const { signatureMap } = await connector.signMessage({
+            signerAccountId: `hedera:mainnet:${accountId}`,
+            message,
+          });
+          return { format: "hedera" as const, signatureMap, accountId };
+        };
+        try {
+          return await doSign();
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (STALE_SESSION.test(msg)) {
+            await hedera.refreshConnector();
+            return doSign();
+          }
+          throw e;
+        }
       }
       throw new Error("Wallet not connected");
     },
@@ -326,6 +362,16 @@ export function useWalletAdapter(): AdapterAPI {
     [mode, address, hedera.accountId, wagmiChainId, write, signMessage, disconnect, isEvmWritePending],
   );
 }
+
+/**
+ * Stale-session error class raised when a DAppSigner's WC topic was deleted /
+ * re-paired by the wallet (HashPack dapp-browser does this on open). Matches
+ * the tx path ('Record was recently deleted - session: <topic>') and the WC
+ * client-not-ready cases. Deliberately does NOT match 'User rejected' so we
+ * never re-prompt a user who declined.
+ */
+const STALE_SESSION =
+  /record was recently deleted|no matching key|session topic|not initialized|missing or invalid/i;
 
 /* ───────────────────────────────────────────────────────── EVM path */
 

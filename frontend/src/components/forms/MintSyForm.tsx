@@ -27,6 +27,7 @@ import {
 } from "@/lib/addresses";
 import { AssociationGate } from "@/components/AssociationGate";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
+import { useHbarBalance } from "@/hooks/useHbarBalance";
 import { formatBigInt } from "@/hooks/useMarkets";
 import { useHbarUsd } from "@/hooks/useSyValueUsd";
 import { FlowOfFunds, type FlowStep } from "@/components/FlowOfFunds";
@@ -65,6 +66,9 @@ function ZapMintForm({ sy, syShare, user }: MintFormProps) {
 
 function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}` | undefined }) {
   const adapter = useWalletAdapter();
+  // Native HBAR balance (fail-open: undefined = unknown, never blocks) so we can
+  // warn BEFORE the wallet hits a cryptic INSUFFICIENT_PAYER_BALANCE precheck.
+  const hbarBalance = useHbarBalance(adapter.accountId ?? adapter.address ?? undefined);
   const hbarUsd = useHbarUsd();
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -124,6 +128,9 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
   // Periphery reserves 5 HBAR (v3NpmFeeBudget) — block ≤6 HBAR so users
   // see a clear floor instead of an AmountZero revert.
   const tooSmall = hbarAmount > 0 && hbarAmount < 6;
+  // Wallet must hold msg.value (= hbarAmount) + gas. Warn up-front (FAIL-OPEN).
+  const requiredHbar = hbarAmount + 2;
+  const hbarInsufficientBalance = hbarBalance !== undefined && hbarAmount > 0 && hbarBalance < requiredHbar;
   const isPending = isSubmitting || adapter.isWritePending;
   const isActive = isPending || isConfirmingFinal;
   const isDone = isConfirmedFinal;
@@ -318,7 +325,7 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
 
         <button
           type="button"
-          disabled={!user || hbarAmount === 0 || hbarAmount < 6 || isPending || isConfirmingFinal}
+          disabled={!user || hbarAmount === 0 || hbarAmount < 6 || hbarInsufficientBalance || isPending || isConfirmingFinal}
           onClick={onZap}
           className="w-full rounded-[10px] bg-white px-7 py-3.5 font-mono text-sm font-semibold uppercase tracking-[1px] text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -328,7 +335,9 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
               ? "Enter amount"
               : hbarAmount < 6
                 ? "Min 6 HBAR"
-                : isPending
+                : hbarInsufficientBalance
+                  ? `Need ~${Math.ceil(requiredHbar)} HBAR · you have ${(hbarBalance ?? 0).toFixed(1)}`
+                  : isPending
                   ? "Sign in HashPack…"
                   : isConfirmingFinal
                     ? "Waiting for confirmation…"

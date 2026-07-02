@@ -40,6 +40,19 @@ interface HederaWalletAPI extends HederaWalletState {
   disconnect: () => Promise<void>;
   /** Returns the live DAppConnector (after a successful connect). */
   getConnector: () => unknown | null;
+  /**
+   * Tear down the current connector, rebuild it, and re-acquire a signer from
+   * the CURRENT live WC session (or the iframe extension when framed). Returns
+   * the fresh connector. Callers on the tx/sign path invoke this when they hit
+   * a 'record was recently deleted' / 'no matching key' / 'not initialized'
+   * error — HashPack's dapp-browser deletes+re-pairs the session out from under
+   * us, leaving connector.signers[0] bound to a dead topic. No-op-safe on the
+   * top-level (non-iframe) path: it rebuilds and reconnects to the live session.
+   */
+  refreshConnector: () => Promise<unknown | null>;
+  /** True when the connector's signer is bound to a topic still present in the
+   *  live WC session set. Cheap pre-flight guard for the tx/sign path. */
+  isSessionLive: () => boolean;
 }
 
 const HederaWalletContext = createContext<HederaWalletAPI | null>(null);
@@ -303,6 +316,60 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
 
   const getConnector = useCallback(() => connectorRef.current, []);
 
+  // Is the current signer's topic still in the live WC session set? When
+  // HashPack deletes/re-pairs the session, signers[0] keeps pointing at the
+  // dead topic — this returns false so the caller knows to refresh first.
+  const isSessionLive = useCallback((): boolean => {
+    const c = connectorRef.current as unknown as HederaConnectorShim | null;
+    if (!c) return false;
+    const client = c.walletConnectClient;
+    const signers = c.signers as Array<{ topic?: string; getAccountId?: () => { toString(): string } }> | undefined;
+    if (!client?.session?.getAll || !signers?.length) return false;
+    const live = client.session.getAll();
+    const now = Math.floor(Date.now() / 1000);
+    const liveTopics = new Set(live.filter((s) => s.expiry > now).map((s) => s.topic));
+    if (liveTopics.size === 0) return false;
+    // Prefer matching the signer's own topic when the library exposes it;
+    // otherwise fall back to "there is at least one live session".
+    const signerTopic = signers[0]?.topic;
+    if (typeof signerTopic === "string") return liveTopics.has(signerTopic);
+    return true;
+  }, []);
+
+  // Rebuild the connector and re-acquire a signer from the CURRENT live session
+  // (or the iframe extension). This is the mode-2 self-heal: on a HashPack
+  // session delete/re-pair we mint a fresh DAppSigner bound to the live topic
+  // so the retried tx/sign lands on a real session instead of the dead one.
+  const refreshConnector = useCallback(async (): Promise<unknown | null> => {
+    diag("HederaConnect", { step: "refreshConnector" });
+    try { await connectorRef.current?.disconnectAll(); } catch { /* ignore orphan */ }
+    connectorRef.current = null;
+    try { clearStaleWcStorage(); } catch { /* ignore */ }
+    const connector = await getOrInit();
+    // Prefer a direct extension connect inside a wallet dapp-browser; otherwise
+    // adopt the live session the library rehydrated during init.
+    try {
+      if (isInIframe() && typeof connector.connectExtension === "function") {
+        const ext = await findAvailableExtension(connector, { iframe: true }, 2500);
+        if (ext) await connector.connectExtension(ext.id);
+      } else if ((connector.signers?.length ?? 0) === 0) {
+        await connector.openModal();
+      }
+    } catch (err) {
+      diag("HederaConnect", { step: "refreshConnector_reconnect_failed", error: err instanceof Error ? err.message : String(err) });
+    }
+    // Sync React state to whatever signer we now hold.
+    try {
+      const signer = connector.signers?.[0] as { getAccountId(): { toString(): string } } | undefined;
+      const acct = signer?.getAccountId().toString();
+      if (acct) {
+        const evmAddress = await resolveEvmAddress(acct);
+        setState({ status: "connected", accountId: acct, evmAddress, error: null });
+      }
+    } catch { /* leave state as-is; caller will surface a real error if the retry also fails */ }
+    return connectorRef.current;
+  }, [getOrInit]);
+
   // On mount, if a Hedera session already exists in storage, restore it.
   // Set status to "connecting" while the SDK + WC client load asynchronously
   // (1-3 s on a cold page) so the gate / nav can show a skeleton instead of
@@ -343,7 +410,14 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
           setState((s) => ({ ...s, status: "connecting", error: null }));
           resolveEvmAddress(acct)
             .then((evmAddress) => {
-              if (!cancelled) setState({ status: "connected", accountId: acct, evmAddress, error: null });
+              if (cancelled) return;
+              // A fresh iframe session landed. Broadcast so the auth engine can
+              // (re)sign even if it was previously pinned at 'error'/'loading'
+              // on the now-dead session (mode 3). The 'connected' transition
+              // below re-arms the Nav auto-sign; this event forces a /me
+              // re-probe + re-sign for consumers that already left 'idle'.
+              setState({ status: "connected", accountId: acct, evmAddress, error: null });
+              try { window.dispatchEvent(new Event("fp:wallet-session-fresh")); } catch { /* ignore */ }
             })
             .catch(() => {});
         };
@@ -420,6 +494,14 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
     let client: WcSignClient | undefined;
     let cancelled = false;
     const handleDelete = () => {
+      // The deleted session's signer is now dead. NULL the connector ref so the
+      // very next getConnector()/write/sign is forced to rebuild+reconnect to a
+      // live session instead of executing against the dead topic (mode 2 root
+      // cause: session_delete previously only mutated React state, leaving the
+      // stale connector+signer in place). connectorRef is repopulated by
+      // getOrInit() on the next refresh/rehydrate.
+      try { void connectorRef.current?.disconnectAll(); } catch { /* ignore orphan */ }
+      connectorRef.current = null;
       // Inside a wallet dapp-browser (HashPack), a delete is usually the wallet
       // swapping the app's persisted session for a fresh iframe pairing — which
       // onSessionIframeCreated catches and reconnects moments later. Show
@@ -465,8 +547,8 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const api = useMemo<HederaWalletAPI>(
-    () => ({ ...state, connect, disconnect, getConnector }),
-    [state, connect, disconnect, getConnector],
+    () => ({ ...state, connect, disconnect, getConnector, refreshConnector, isSessionLive }),
+    [state, connect, disconnect, getConnector, refreshConnector, isSessionLive],
   );
 
   return <HederaWalletContext.Provider value={api}>{children}</HederaWalletContext.Provider>;
