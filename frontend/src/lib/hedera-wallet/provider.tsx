@@ -99,22 +99,35 @@ const MIRROR_BASE = "https://mainnet-public.mirrornode.hedera.com/api/v1";
 async function resolveEvmAddress(accountId: string): Promise<`0x${string}`> {
   const num = Number(accountId.split(".")[2]);
   const longZero = ("0x" + num.toString(16).padStart(40, "0")) as `0x${string}`;
-  try {
-    const res = await fetch(`${MIRROR_BASE}/accounts/${accountId}`);
-    if (res.ok) {
-      const data = (await res.json()) as { evm_address?: string | null };
-      const evm = data.evm_address;
-      // Mirror returns the long-zero form in `evm_address` for Ed25519 accounts
-      // that never registered a real alias — treat that (and null/empty) as "no
-      // real alias" and keep the long-zero. A genuine ECDSA alias is a distinct
-      // non-long-zero 20-byte hex; use it verbatim.
-      if (evm && /^0x[0-9a-fA-F]{40}$/.test(evm) && evm.toLowerCase() !== longZero.toLowerCase()) {
-        return evm.toLowerCase() as `0x${string}`;
+  // RETRY before falling back to long-zero. For an ECDSA account the long-zero
+  // is the WRONG identity (its real alias differs), and the whole session keys
+  // on this address — a transient Mirror blip here would otherwise pin the
+  // session to a wrong long-zero, breaking HTS balance reads AND SIWE (the
+  // server resolves the real alias → nonce address mismatch → 401). A HashPack
+  // account always exists, so a non-ok/throw is transient and worth retrying.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${MIRROR_BASE}/accounts/${accountId}`);
+      if (res.ok) {
+        const data = (await res.json()) as { evm_address?: string | null };
+        const evm = data.evm_address;
+        // A genuine ECDSA alias is a distinct non-long-zero 20-byte hex; use it.
+        if (evm && /^0x[0-9a-fA-F]{40}$/.test(evm) && evm.toLowerCase() !== longZero.toLowerCase()) {
+          return evm.toLowerCase() as `0x${string}`;
+        }
+        // res.ok with no distinct alias → genuine Ed25519 (long-zero is the only
+        // address it has). Authoritative — don't retry.
+        return longZero;
       }
+      // non-ok (transient 5xx/429) → fall through to retry.
+    } catch {
+      /* network error → retry */
     }
-  } catch {
-    /* Mirror unreachable — fall back to long-zero below. */
+    if (attempt < 2) await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
   }
+  // Mirror stayed unreachable across retries. Long-zero is wrong for an ECDSA
+  // account, but the server-side nonce fix accepts either form so SIWE still
+  // succeeds; a later connect/switch re-resolve corrects the rest.
   return longZero;
 }
 

@@ -302,7 +302,17 @@ async function verifyHedera(body: HederaBody, req: NextRequest, originHost: stri
   //    long-zero for an ECDSA account matched 0 rows → invalid_or_expired_nonce
   //    401 after a valid signature, breaking every ECDSA HashPack login.
   const address = canonicalAddressForHedera(accountId, mirrorEvmAddress);
-  return consumeNonceAndIssueCookie(address, nonce, req, EXPECTED_CHAIN_ID);
+  // Accept a nonce minted under EITHER the real alias OR the long-zero for this
+  // SAME account. The client's provider mints the nonce under whatever its own
+  // Mirror lookup resolved at connect; if Mirror was transiently down there it
+  // fell back to the long-zero for an ECDSA account, while we resolve the real
+  // alias here — a strict single-form match then 401s a VALID signature. The
+  // signature is already verified against the account's Mirror public key above,
+  // so both forms provably belong to this one account; the session is still
+  // keyed on the canonical `address`.
+  const longZero = longZeroFromAccountId(accountId).toLowerCase();
+  const nonceForms = address === longZero ? [address] : [address, longZero];
+  return consumeNonceAndIssueCookie(address, nonce, req, EXPECTED_CHAIN_ID, nonceForms);
 }
 
 /* ────────────────────────────────────────── shared nonce + session step */
@@ -312,16 +322,23 @@ async function consumeNonceAndIssueCookie(
   nonce: string,
   req: NextRequest,
   chainId: number,
+  nonceAddresses?: string[],
 ) {
   if (!/^0x[a-f0-9]{40}$/.test(lowerAddress)) {
     return NextResponse.json({ error: "bad_address_normalized" }, { status: 500 });
   }
+  // The nonce is a unique single-use token; `address` on the row is defence-in-
+  // depth (the signature is the real auth). Consume the row for THIS nonce if it
+  // was minted under any of the accepted address forms (see verifyHedera), but
+  // always issue the session under the canonical `lowerAddress`. Defaults to the
+  // strict single-form match for the eip191 path (unchanged behaviour).
+  const acceptForms = (nonceAddresses && nonceAddresses.length ? nonceAddresses : [lowerAddress]).map((a) => a.toLowerCase());
   const supa = createServiceRoleClient();
   const { data: flipped, error: flipErr } = await supa
     .from("auth_nonces")
     .update({ consumed_at: new Date().toISOString() })
     .eq("nonce", nonce)
-    .eq("address", lowerAddress)
+    .in("address", acceptForms)
     .is("consumed_at", null)
     .gt("expires_at", new Date().toISOString())
     .select()

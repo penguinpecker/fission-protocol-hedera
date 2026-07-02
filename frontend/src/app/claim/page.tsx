@@ -106,6 +106,21 @@ function ClaimBody() {
     }
   }, [adapter.isConnected, adapter.address, auth.status, signIn, onWrongChain]);
 
+  // Follow an in-wallet ACCOUNT SWITCH mid-claim. When the user switches
+  // HashPack accounts, useSiweAuth logs the old session out → auth drops to
+  // idle; re-arm the one-shot so the effect above auto-signs the NEW account
+  // instead of stranding the user at "Sign In". Consistent with the app's
+  // connect-then-auto-sign flow; guarded on a real change so it fires once.
+  const prevAddrRef = useRef<string | null>(null);
+  useEffect(() => {
+    const cur = adapter.isConnected ? adapter.address : null;
+    const prev = prevAddrRef.current;
+    prevAddrRef.current = cur;
+    if (prev && cur && prev.toLowerCase() !== cur.toLowerCase()) {
+      autoSignRef.current = true;
+    }
+  }, [adapter.isConnected, adapter.address]);
+
   // Let the Nav's separate useSiweAuth instance re-sync once we're signed in.
   useEffect(() => {
     if (authed) window.dispatchEvent(new Event("fp:auth-changed"));
