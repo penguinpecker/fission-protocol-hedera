@@ -53,6 +53,10 @@ interface HederaWalletAPI extends HederaWalletState {
   /** True when the connector's signer is bound to a topic still present in the
    *  live WC session set. Cheap pre-flight guard for the tx/sign path. */
   isSessionLive: () => boolean;
+  /** True while the DAppConnector is being (re)built + initialized — on mount
+   *  and during any rebuild. Connect buttons gate on this so a tap can't race a
+   *  half-initialized WC client and trigger "WalletConnect is not initialized". */
+  initializing: boolean;
 }
 
 const HederaWalletContext = createContext<HederaWalletAPI | null>(null);
@@ -63,28 +67,6 @@ const INITIAL: HederaWalletState = {
   evmAddress: null,
   error: null,
 };
-
-/** Sync localStorage probe used as the LAZY initial useState value. If the
- *  browser has any non-empty wc@2 session key we assume a restore is about
- *  to happen and bake `status: "connecting"` into the very first render —
- *  otherwise WalletGate sees `idle` for one frame and flashes the "Connect"
- *  prompt before the mount effect can mark us as connecting. */
-function probeHasStoredWcSession(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    for (let i = 0; i < window.localStorage.length; i++) {
-      const k = window.localStorage.key(i);
-      if (!k) continue;
-      if (k.startsWith("wc@2:") && k.includes("session")) {
-        const v = window.localStorage.getItem(k);
-        if (v && v !== "[]" && v !== "{}" && v !== "null") return true;
-      }
-    }
-  } catch {
-    /* localStorage disabled / private mode — fall through */
-  }
-  return false;
-}
 
 const APP_METADATA = {
   name: "Fission Protocol",
@@ -147,6 +129,17 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
     status: "connecting",
   }));
   const connectorRef = useRef<{ disconnectAll: () => Promise<void>; signers: unknown[] } | null>(null);
+  // Shared in-flight init promise. The mount rehydrate effect AND a user Connect
+  // tap both call getOrInit(); without sharing this promise they each build a
+  // SEPARATE DAppConnector and init() them concurrently against the same WC
+  // storage — corrupting the SignClient and surfacing as "WalletConnect is not
+  // initialized" on the first tap. Memoizing collapses them onto ONE connector.
+  const initPromiseRef = useRef<Promise<HederaConnectorShim> | null>(null);
+  const [initializing, setInitializing] = useState(false);
+  // Mirror of the live accountId for the [] -deps WC event listener, which must
+  // read the CURRENT account (its closure captures the initial state otherwise).
+  const accountIdRef = useRef<string | null>(null);
+  accountIdRef.current = state.accountId;
 
   /**
    * Lazy-load and initialize the DAppConnector on first connect() call.
@@ -162,70 +155,83 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
     const cached = connectorRef.current as unknown as HederaConnectorShim | null;
     if (cached?.walletConnectClient) return cached;
 
-    const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
-    if (!projectId) {
-      throw new Error("NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is not set");
-    }
+    // CONCURRENCY GUARD: share the single in-flight build. A second caller
+    // (e.g. the mount effect + a Connect tap) must NOT spin up a competing
+    // DAppConnector — see initPromiseRef comment above.
+    if (initPromiseRef.current) return initPromiseRef.current;
 
-    // Dynamic imports. We pull from two deep paths to dodge the wallet-side
-    // code in the package's top-level index.js (it imports @reown/walletkit
-    // which we don't need on the dApp side):
-    //   - /dist/lib/dapp     → DAppConnector class
-    //   - /dist/lib/shared   → HederaJsonRpcMethod, HederaSessionEvent,
-    //                          HederaChainId enums (used in constructor)
-    const [hwcDapp, hwcShared, sdk] = await Promise.all([
-      import("@hashgraph/hedera-wallet-connect/dist/lib/dapp/index.js"),
-      import("@hashgraph/hedera-wallet-connect/dist/lib/shared/index.js"),
-      import("@hashgraph/sdk"),
-    ]);
-    const { DAppConnector } = hwcDapp as unknown as {
-      DAppConnector: new (...args: unknown[]) => HederaConnectorShim;
-    };
-    const { HederaJsonRpcMethod, HederaSessionEvent, HederaChainId } =
-      hwcShared as unknown as {
-        HederaJsonRpcMethod: Record<string, string>;
-        HederaSessionEvent: Record<string, string>;
-        HederaChainId: Record<string, string>;
+    const build = async (): Promise<HederaConnectorShim> => {
+      const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
+      if (!projectId) {
+        throw new Error("NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is not set");
+      }
+
+      // Dynamic imports. We pull from two deep paths to dodge the wallet-side
+      // code in the package's top-level index.js (it imports @reown/walletkit
+      // which we don't need on the dApp side):
+      //   - /dist/lib/dapp     → DAppConnector class
+      //   - /dist/lib/shared   → HederaJsonRpcMethod, HederaSessionEvent,
+      //                          HederaChainId enums (used in constructor)
+      const [hwcDapp, hwcShared, sdk] = await Promise.all([
+        import("@hashgraph/hedera-wallet-connect/dist/lib/dapp/index.js"),
+        import("@hashgraph/hedera-wallet-connect/dist/lib/shared/index.js"),
+        import("@hashgraph/sdk"),
+      ]);
+      const { DAppConnector } = hwcDapp as unknown as {
+        DAppConnector: new (...args: unknown[]) => HederaConnectorShim;
       };
+      const { HederaJsonRpcMethod, HederaSessionEvent, HederaChainId } =
+        hwcShared as unknown as {
+          HederaJsonRpcMethod: Record<string, string>;
+          HederaSessionEvent: Record<string, string>;
+          HederaChainId: Record<string, string>;
+        };
 
-    const connector = new DAppConnector(
-      APP_METADATA,
-      sdk.LedgerId.MAINNET,
-      projectId,
-      Object.values(HederaJsonRpcMethod),
-      [HederaSessionEvent.ChainChanged, HederaSessionEvent.AccountsChanged],
-      [HederaChainId.Mainnet],
-      "error",
-    );
-    // `init` tries to rehydrate any persisted WC session. If that session
-    // got serialized in an older library format, the lib can throw inside
-    // `loadPersistedSession → setChainIds` ("Cannot read properties of
-    // undefined (reading 'filter')"). When that happens we clear the WC
-    // localStorage namespace, build a fresh connector, and retry once —
-    // otherwise the user is stuck on every page load with a stale session
-    // they can't recover from without devtools.
-    try {
-      await connector.init({ logger: "error" });
-    } catch (e) {
-      diag("HederaConnect", { step: "init_failed_clear_session", error: e instanceof Error ? e.message : String(e) });
+      const mkConnector = () =>
+        new DAppConnector(
+          APP_METADATA,
+          sdk.LedgerId.MAINNET,
+          projectId,
+          Object.values(HederaJsonRpcMethod),
+          [HederaSessionEvent.ChainChanged, HederaSessionEvent.AccountsChanged],
+          [HederaChainId.Mainnet],
+          "error",
+        );
+
+      let connector = mkConnector();
+      // `init` tries to rehydrate any persisted WC session. If that session
+      // got serialized in an older library format, the lib can throw inside
+      // `loadPersistedSession → setChainIds` ("Cannot read properties of
+      // undefined (reading 'filter')"). When that happens we clear the WC
+      // localStorage namespace, build a fresh connector, and retry once —
+      // otherwise the user is stuck on every page load with a stale session
+      // they can't recover from without devtools. A SECOND failure propagates
+      // to the caller's connect-time self-heal (no unhandled rejection).
       try {
-        clearStaleWcStorage();
-      } catch { /* ignore */ }
-      const fresh = new DAppConnector(
-        APP_METADATA,
-        sdk.LedgerId.MAINNET,
-        projectId,
-        Object.values(HederaJsonRpcMethod),
-        [HederaSessionEvent.ChainChanged, HederaSessionEvent.AccountsChanged],
-        [HederaChainId.Mainnet],
-        "error",
-      );
-      await fresh.init({ logger: "error" });
-      connectorRef.current = fresh as unknown as { disconnectAll: () => Promise<void>; signers: unknown[] };
-      return fresh as unknown as HederaConnectorShim;
+        await connector.init({ logger: "error" });
+      } catch (e) {
+        diag("HederaConnect", { step: "init_failed_clear_session", error: e instanceof Error ? e.message : String(e) });
+        try {
+          clearStaleWcStorage();
+        } catch { /* ignore */ }
+        connector = mkConnector();
+        await connector.init({ logger: "error" });
+      }
+      connectorRef.current = connector as unknown as { disconnectAll: () => Promise<void>; signers: unknown[] };
+      return connector as unknown as HederaConnectorShim;
+    };
+
+    setInitializing(true);
+    initPromiseRef.current = build();
+    try {
+      return await initPromiseRef.current;
+    } finally {
+      // Clear on both success and failure: on success the cached-client early
+      // return covers subsequent calls; on failure the next call must be free
+      // to rebuild rather than await a rejected promise.
+      initPromiseRef.current = null;
+      setInitializing(false);
     }
-    connectorRef.current = connector as unknown as { disconnectAll: () => Promise<void>; signers: unknown[] };
-    return connector as unknown as HederaConnectorShim;
   }, []);
 
   const connect = useCallback(async () => {
@@ -269,28 +275,36 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
       return { accountId, evmAddress };
     };
 
+    // SELF-HEAL the classic "WalletConnect is not initialized" (WC client not
+    // ready yet / stale-session init failure): tear down, clear the WC
+    // localStorage namespace, rebuild a fresh connector, and retry — up to 3
+    // attempts with a short backoff so init has time to actually settle before
+    // the next try (an immediate retry races the same half-torn-down state).
+    // Only retries this specific class of error; user rejections fail fast.
+    const RETRIABLE = /not initialized|no matching key|cannot read prop/i;
     try {
-      let result: { accountId: string; evmAddress: `0x${string}` };
-      try {
-        result = await attempt(1);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        // SELF-HEAL the classic "WalletConnect is not initialized" (WC client
-        // not ready yet / stale-session init failure): tear down, clear the WC
-        // localStorage namespace, rebuild a fresh connector, and retry ONCE.
-        // This turns the prior hard failure ("Connect failed: WalletConnect is
-        // not initialized") into a transparent retry that succeeds once init
-        // completes. Only retries on this specific class of error.
-        if (/not initialized|no matching key|cannot read prop/i.test(msg)) {
-          diag("HederaConnect", { step: "retry_after_not_initialized", error: msg });
-          try { await connectorRef.current?.disconnectAll(); } catch { /* ignore */ }
-          connectorRef.current = null;
-          try { clearStaleWcStorage(); } catch { /* ignore */ }
-          result = await attempt(2);
-        } else {
+      let result: { accountId: string; evmAddress: `0x${string}` } | null = null;
+      let lastErr: unknown = null;
+      for (let pass = 1; pass <= 3; pass++) {
+        try {
+          result = await attempt(pass);
+          break;
+        } catch (e) {
+          lastErr = e;
+          const msg = e instanceof Error ? e.message : String(e);
+          if (pass < 3 && RETRIABLE.test(msg)) {
+            diag("HederaConnect", { step: "retry_after_not_initialized", pass, error: msg });
+            try { await connectorRef.current?.disconnectAll(); } catch { /* ignore */ }
+            connectorRef.current = null;
+            initPromiseRef.current = null;
+            try { clearStaleWcStorage(); } catch { /* ignore */ }
+            await new Promise((r) => setTimeout(r, 600));
+            continue;
+          }
           throw e;
         }
       }
+      if (!result) throw lastErr ?? new Error("connect_failed");
       diag("HederaConnect", { step: "success", accountId: result.accountId, evmAddress: result.evmAddress });
       setState({ status: "connected", accountId: result.accountId, evmAddress: result.evmAddress, error: null });
     } catch (e) {
@@ -516,39 +530,66 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
       }
     };
     const handleExpire = handleDelete;
-    (async () => {
-      // Wait for the connector to exist (it may not at first mount if
-      // no stored session — that's fine, no events to listen for).
-      // If a session DOES get added later via connect(), we'll catch
-      // events for it because `client.on` is sticky across sessions.
-      if (!connectorRef.current) {
-        // Best effort — if probe says we should rehydrate, getOrInit
-        // is already in flight from the effect above; wait a tick.
-        if (probeHasStoredWcSession()) {
-          for (let i = 0; i < 20 && !connectorRef.current; i++) {
-            await new Promise((r) => setTimeout(r, 100));
-            if (cancelled) return;
+    // A HashPack in-wallet ACCOUNT SWITCH surfaces as session_update (the
+    // session's namespaces change) or session_event (accountsChanged). Re-derive
+    // the account from the now-current session and, if it changed, FOLLOW it so
+    // balances, the tx-signer selection, and SIWE all move to the new account.
+    // Without this the app stays pinned to the account that was active at connect
+    // time — the user sees the wrong balance and a false "NEED ~N HBAR".
+    const handleSessionChanged = (data: { topic?: string }) => {
+      void (async () => {
+        try {
+          const c = client;
+          if (!c?.session) return;
+          let session: WcSession | undefined;
+          if (data?.topic && c.session.get) session = c.session.get(data.topic);
+          if (!session && c.session.getAll) {
+            const now = Math.floor(Date.now() / 1000);
+            session = c.session.getAll().find((s) => s.expiry > now);
           }
-        } else {
-          return;
-        }
+          if (!session) return;
+          const acct = accountIdFromSession(session);
+          if (!acct || acct === accountIdRef.current) return;
+          const evmAddress = await resolveEvmAddress(acct);
+          // Re-check after the async Mirror lookup: bail if unmounted or if a
+          // concurrent handler already applied this exact switch.
+          if (cancelled || accountIdRef.current === acct) return;
+          diag("HederaConnect", { step: "account_switched", to: acct });
+          setState({ status: "connected", accountId: acct, evmAddress, error: null });
+        } catch { /* ignore */ }
+      })();
+    };
+    (async () => {
+      // The mount rehydrate effect ALWAYS calls getOrInit() (always-init mode),
+      // so connectorRef becomes available within ~1-3s even for users with NO
+      // stored session. Poll for it (bounded ~6s) so the lifecycle + account-
+      // switch listeners attach for EVERYONE — not only users who arrived with a
+      // persisted session. (The old probe-gated early-return meant a fresh user
+      // who connected later never got these listeners.)
+      for (let i = 0; i < 60 && !connectorRef.current; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        if (cancelled) return;
       }
       const c = connectorRef.current as unknown as HederaConnectorShim | null;
       client = c?.walletConnectClient;
       if (!client) return;
       client.on("session_delete", handleDelete);
       client.on("session_expire", handleExpire);
+      client.on("session_update", handleSessionChanged);
+      client.on("session_event", handleSessionChanged);
     })();
     return () => {
       cancelled = true;
       client?.off?.("session_delete", handleDelete);
       client?.off?.("session_expire", handleExpire);
+      client?.off?.("session_update", handleSessionChanged);
+      client?.off?.("session_event", handleSessionChanged);
     };
   }, []);
 
   const api = useMemo<HederaWalletAPI>(
-    () => ({ ...state, connect, disconnect, getConnector, refreshConnector, isSessionLive }),
-    [state, connect, disconnect, getConnector, refreshConnector, isSessionLive],
+    () => ({ ...state, initializing, connect, disconnect, getConnector, refreshConnector, isSessionLive }),
+    [state, initializing, connect, disconnect, getConnector, refreshConnector, isSessionLive],
   );
 
   return <HederaWalletContext.Provider value={api}>{children}</HederaWalletContext.Provider>;

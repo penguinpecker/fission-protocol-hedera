@@ -89,10 +89,14 @@ export function HeroCta() {
         redirectAfterAuthRef.current = true;
         await hedera.connect();
       }}
-      disabled={hedera.status === "connecting"}
+      disabled={hedera.initializing || hedera.status === "connecting"}
       className={baseClass}
     >
-      {hedera.status === "connecting" ? "Opening…" : "Connect Wallet"}
+      {hedera.initializing
+        ? "Initializing…"
+        : hedera.status === "connecting"
+          ? "Opening…"
+          : "Connect Wallet"}
     </button>
   );
 }

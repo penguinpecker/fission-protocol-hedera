@@ -279,7 +279,7 @@ export function useWalletAdapter(): AdapterAPI {
           await hedera.refreshConnector();
         }
         try {
-          return await writeHedera(op, hedera.getConnector());
+          return await writeHedera(op, hedera.getConnector(), hedera.accountId ?? undefined);
         } catch (e) {
           // Self-heal the stale-session error class (mirrors the connect + SIWE
           // self-heal): rebuild the connector to mint a fresh signer bound to
@@ -287,7 +287,7 @@ export function useWalletAdapter(): AdapterAPI {
           const msg = e instanceof Error ? e.message : String(e);
           if (STALE_SESSION.test(msg)) {
             await hedera.refreshConnector();
-            return writeHedera(op, hedera.getConnector());
+            return writeHedera(op, hedera.getConnector(), hedera.accountId ?? undefined);
           }
           throw e;
         }
@@ -649,14 +649,32 @@ async function writeEvmSubmit(
 
 /* ─────────────────────────────────────────────────────── Hedera path */
 
-async function writeHedera(op: WriteOp, connectorMaybe: unknown): Promise<{ txHash: string }> {
+async function writeHedera(
+  op: WriteOp,
+  connectorMaybe: unknown,
+  targetAccountId?: string,
+): Promise<{ txHash: string }> {
   const connector = connectorMaybe as null | {
     signers: Array<{ getAccountId(): { toString(): string } }>;
   };
   if (!connector || !connector.signers?.length) {
     throw new Error("Hedera connector has no signer");
   }
-  const signer = connector.signers[0];
+  // Bind to the signer for the CURRENTLY-connected account, not blindly
+  // signers[0]. After a HashPack in-wallet account switch the connector may hold
+  // signers for several accounts; picking signers[0] could build the tx for the
+  // wrong (old) account even though the UI shows the new one. Fall back to
+  // signers[0] only if no exact match (single-account sessions).
+  const signer =
+    (targetAccountId
+      ? connector.signers.find((s) => {
+          try {
+            return s.getAccountId().toString() === targetAccountId;
+          } catch {
+            return false;
+          }
+        })
+      : undefined) ?? connector.signers[0];
 
   // Lazy-load the SDK so it doesn't sit in the initial bundle.
   const sdk = await import("@hashgraph/sdk");

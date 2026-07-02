@@ -140,6 +140,7 @@ export function Nav() {
   }, [auth.status, pathname, router]);
 
   const isConnecting = hedera.status === "connecting";
+  const isInitializing = hedera.initializing;
   const connectErrorMsg = hedera.error;
 
   const isActive = (href: string) => {
@@ -242,7 +243,7 @@ export function Nav() {
               <button
                 type="button"
                 onClick={() => setPickerOpen(true)}
-                disabled={isConnecting || !hederaAvailable}
+                disabled={isConnecting || isInitializing || !hederaAvailable}
                 title={
                   !hederaAvailable
                     ? "WalletConnect not configured (NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID missing)"
@@ -250,11 +251,13 @@ export function Nav() {
                 }
                 className="rounded-[2px] border border-white bg-white px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {isConnecting
-                  ? "Opening…"
-                  : autoSignAfterConnectRef.current && auth.status === "loading"
-                    ? "Signing…"
-                    : "Connect Wallet"}
+                {isInitializing
+                  ? "Initializing…"
+                  : isConnecting
+                    ? "Opening…"
+                    : autoSignAfterConnectRef.current && auth.status === "loading"
+                      ? "Signing…"
+                      : "Connect Wallet"}
               </button>
             )}
 

@@ -141,7 +141,7 @@ export function WalletPicker({ open, onClose, onConnectStarted }: Props) {
           <button
             type="button"
             onClick={handleHashPack}
-            disabled={hedera.status === "connecting"}
+            disabled={hedera.initializing || hedera.status === "connecting"}
             className="flex items-center justify-between rounded-[10px] border border-border bg-white/[0.04] px-4 py-3.5 text-left transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <div>
@@ -151,7 +151,7 @@ export function WalletPicker({ open, onClose, onConnectStarted }: Props) {
               <div className="mt-0.5 text-[11px] text-textDim">Hedera-native · ECDSA + Ed25519</div>
             </div>
             <span className="font-mono text-[10px] uppercase tracking-[1.2px] text-textDim">
-              {hedera.status === "connecting" ? "Opening…" : "Connect"}
+              {hedera.initializing ? "Initializing…" : hedera.status === "connecting" ? "Opening…" : "Connect"}
             </span>
           </button>
 
