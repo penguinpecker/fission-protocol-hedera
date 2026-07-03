@@ -63,9 +63,8 @@ function ClaimBody() {
     wagmiAcct.chainId !== HEDERA_MAINNET_CHAIN_ID;
 
   const [pickerOpen, setPickerOpen] = useState(false);
-  const autoSignRef = useRef(false);
-  // One-shot: set when the user reaches Step 2 and connects, so the validated
-  // code auto-redeems the moment sign-in lands.
+  // One-shot: set when the user reaches Step 2, so the validated code redeems the
+  // moment sign-in lands (redeem is a server call, not a wallet sign — kept).
   const claimAfterAuthRef = useRef(false);
   const gasFiredRef = useRef(false);
 
@@ -91,35 +90,10 @@ function ClaimBody() {
     }
   }, [onWrongChain, switchChain]);
 
-  // Fire SIWE right after a click-initiated connect — but only once the chain is
-  // correct, so MetaMask sees add → switch → sign in a clean sequence.
-  useEffect(() => {
-    if (
-      autoSignRef.current &&
-      adapter.isConnected &&
-      adapter.address &&
-      auth.status === "idle" &&
-      !onWrongChain
-    ) {
-      autoSignRef.current = false;
-      void signIn();
-    }
-  }, [adapter.isConnected, adapter.address, auth.status, signIn, onWrongChain]);
-
-  // Follow an in-wallet ACCOUNT SWITCH mid-claim. When the user switches
-  // HashPack accounts, useSiweAuth logs the old session out → auth drops to
-  // idle; re-arm the one-shot so the effect above auto-signs the NEW account
-  // instead of stranding the user at "Sign In". Consistent with the app's
-  // connect-then-auto-sign flow; guarded on a real change so it fires once.
-  const prevAddrRef = useRef<string | null>(null);
-  useEffect(() => {
-    const cur = adapter.isConnected ? adapter.address : null;
-    const prev = prevAddrRef.current;
-    prevAddrRef.current = cur;
-    if (prev && cur && prev.toLowerCase() !== cur.toLowerCase()) {
-      autoSignRef.current = true;
-    }
-  }, [adapter.isConnected, adapter.address]);
+  // No auto-sign anywhere: signing is user-initiated via StepConnect's button
+  // (connectAndClaim → signIn when the wallet is connected). On an in-wallet
+  // account switch, useSiweAuth logs the old session out → auth drops to idle;
+  // the user taps "Sign in & claim" again for the new account.
 
   // Let the Nav's separate useSiweAuth instance re-sync once we're signed in.
   useEffect(() => {
@@ -249,10 +223,6 @@ function ClaimBody() {
     }
   }, [authed, claim.loaded, claim.claimed, submitting, justClaimed, submit]);
 
-  const handleConnectStarted = () => {
-    autoSignRef.current = true;
-  };
-
   // ── Step 1: validate the code against the DB (exists + unclaimed). Only on
   // success do we advance to Step 2. No wallet involved yet.
   const validateCode = useCallback(async () => {
@@ -286,8 +256,10 @@ function ClaimBody() {
     }
   }, [code]);
 
-  // ── Step 2: connect + sign (or claim directly if already signed in). The
-  // auto-claim effect finishes the redemption once authenticated.
+  // ── Step 2: one manual button drives the flow (no auto-sign). Already signed
+  // in → redeem. Connected but not signed → sign (the redeem auto-fires once
+  // authenticated via claimAfterAuthRef). Not connected → open the picker; after
+  // connecting, the user taps the button again to sign.
   const connectAndClaim = useCallback(() => {
     setError(null);
     if (authed) {
@@ -296,10 +268,9 @@ function ClaimBody() {
     }
     claimAfterAuthRef.current = true;
     if (adapter.isConnected && adapter.address) {
-      void signIn(); // wallet connected, just needs the signature
+      void signIn(); // wallet connected → sign now
     } else {
-      autoSignRef.current = true;
-      setPickerOpen(true); // connect → auto-sign → auto-claim
+      setPickerOpen(true); // pick a wallet; sign on the next tap
     }
   }, [authed, adapter.isConnected, adapter.address, signIn, submit]);
 
@@ -431,6 +402,7 @@ function ClaimBody() {
                 <StepConnect
                   code={code}
                   authed={authed}
+                  walletConnected={adapter.isConnected && !!adapter.address}
                   submitting={submitting}
                   signingIn={signingIn}
                   onWrongChain={onWrongChain}
@@ -468,7 +440,7 @@ function ClaimBody() {
         </div>
       </section>
 
-      <WalletPicker open={pickerOpen} onClose={() => setPickerOpen(false)} onConnectStarted={handleConnectStarted} />
+      <WalletPicker open={pickerOpen} onClose={() => setPickerOpen(false)} />
 
       {addrModalOpen && (
         <ClaimAddressModal
@@ -755,6 +727,7 @@ function StepEnterCode({
 function StepConnect({
   code,
   authed,
+  walletConnected,
   submitting,
   signingIn,
   onWrongChain,
@@ -764,6 +737,7 @@ function StepConnect({
 }: {
   code: string;
   authed: boolean;
+  walletConnected: boolean;
   submitting: boolean;
   signingIn: boolean;
   onWrongChain: boolean;
@@ -778,7 +752,9 @@ function StepConnect({
       ? "Signing in…"
       : authed
         ? "Claim now"
-        : "Connect wallet & claim";
+        : walletConnected
+          ? "Sign in & claim"
+          : "Connect wallet";
   return (
     <div>
       <div className="flex items-center justify-between">

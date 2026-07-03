@@ -53,14 +53,9 @@ const AuthContext = createContext<SiweAuthApi | null>(null);
 function useAuthEngine(): SiweAuthApi {
   const adapter = useWalletAdapter();
   const [state, setState] = useState<SiweAuthState>({ status: "idle" });
-  // Refs for the mode-3 recovery path + a concurrent-run guard. adapterRef
-  // mirrors the latest adapter so the fp:wallet-session-fresh listener (mounted
-  // once, [] deps) always reads current wallet state; signInRef exposes the
-  // latest signIn closure to that same listener.
+  // Concurrent-run guard for signIn. Signing is USER-INITIATED only now — there
+  // is no auto-sign anywhere, so no signInRef/adapterRef listener plumbing.
   const signInInFlightRef = useRef(false);
-  const signInRef = useRef<() => Promise<void>>(async () => {});
-  const adapterRef = useRef(adapter);
-  adapterRef.current = adapter;
 
   // Probe the server for an existing session on mount and whenever the
   // connected wallet changes.
@@ -100,14 +95,12 @@ function useAuthEngine(): SiweAuthApi {
     return () => window.removeEventListener("fp:auth-changed", reprobe);
   }, []);
 
-  // MODE 3 recovery. HashPack's dapp-browser deletes + re-pairs the WC session;
-  // the provider dispatches `fp:wallet-session-fresh` once a fresh iframe
-  // session lands. Re-probe /me (a cookie may already be valid), otherwise
-  // (re)sign on the NOW-live session — the only path out of a terminal 'error'
-  // (every auto-sign gates on status==='idle', which a failed sign leaves).
-  // kick() waits for the adapter hook to observe the new session before signing
-  // (provider setState → adapter propagation is async), so the first attempt
-  // doesn't hit the wallet_not_connected guard and re-error.
+  // HashPack's dapp-browser deletes + re-pairs the WC session; the provider
+  // dispatches `fp:wallet-session-fresh` once a fresh iframe session lands.
+  // Re-probe /me so an existing cookie is picked up on the re-paired session.
+  // NO auto-sign — if there's no live cookie the user taps "Sign In" once the
+  // session has settled (auto-signing here fired on the doomed pre-repair
+  // session and hung on "Signing…").
   useEffect(() => {
     const onFresh = () => {
       fetch("/api/auth/me", { credentials: "include" })
@@ -115,20 +108,9 @@ function useAuthEngine(): SiweAuthApi {
         .then((data) => {
           if (data && typeof data.address === "string" && /^0x[a-f0-9]{40}$/.test(data.address)) {
             setState({ status: "authenticated", address: data.address as `0x${string}` });
-            return;
           }
-          const kick = (tries: number) => {
-            if (adapterRef.current.isConnected && adapterRef.current.address) {
-              void signInRef.current();
-              return;
-            }
-            if (tries > 0) setTimeout(() => kick(tries - 1), 400);
-          };
-          kick(6);
         })
-        .catch(() => {
-          void signInRef.current();
-        });
+        .catch(() => {});
     };
     window.addEventListener("fp:wallet-session-fresh", onFresh);
     return () => window.removeEventListener("fp:wallet-session-fresh", onFresh);
@@ -208,9 +190,6 @@ function useAuthEngine(): SiweAuthApi {
     // `adapter`; listing `adapter` covers its real dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adapter]);
-  // Stable ref to the latest signIn so the fp:wallet-session-fresh listener
-  // (mounted once) invokes the current closure.
-  signInRef.current = signIn;
 
   /** One nonce→sign→verify attempt. Returns null on success, error string on
    *  failure. Hoisted function (not useCallback) so `signIn` above can reference
