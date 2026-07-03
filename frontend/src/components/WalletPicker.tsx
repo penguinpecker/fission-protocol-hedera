@@ -11,9 +11,9 @@
  * No third option (Blade, Kabila) yet — additive when needed; each is a
  * 10-line patch since the adapter is wallet-agnostic.
  *
- * Once a wallet connects, SIWE auto-fires via the Nav's effect on
- * `adapter.isConnected` transitioning to `true`. The picker just kicks
- * off the connect; it doesn't track auth state itself.
+ * The picker only kicks off the CONNECT; it does not sign in. Signing is
+ * manual everywhere (no auto-sign) — after connecting, the user taps the
+ * "Sign In" button (Nav/Hero) or "Sign in & claim" (claim) themselves.
  */
 
 import { useEffect, useState } from "react";
