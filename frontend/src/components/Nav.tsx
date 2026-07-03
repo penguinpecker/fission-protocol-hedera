@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useAccount, useSwitchChain } from "wagmi";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { HEDERA_MAINNET_CHAIN_ID, HEDERA_ADD_PARAMS } from "@/lib/wagmi";
 import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
-import { useHederaWallet, isInIframe } from "@/lib/hedera-wallet/provider";
-import { WalletPicker } from "@/components/WalletPicker";
+import { useHederaWallet } from "@/lib/hedera-wallet/provider";
+import { useWalletUi } from "@/components/WalletUiProvider";
 
 function shortAddr(addr: string): string {
   return addr.slice(0, 6) + "…" + addr.slice(-4);
@@ -25,7 +25,6 @@ function shortAddr(addr: string): string {
  */
 export function Nav() {
   const pathname = usePathname() ?? "/";
-  const router = useRouter();
   const adapter = useWalletAdapter();
   const wagmiAcct = useAccount();
   const { switchChain } = useSwitchChain();
@@ -53,91 +52,17 @@ export function Nav() {
 
   const hederaAvailable = Boolean(process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID);
 
-  // One-click Connect → Sign-In flow.
-  //
-  // Without this, the user clicks Connect (1st popup) → connects → then clicks
-  // Sign In (2nd popup) → signs. Now: click Connect → 1st popup → after the
-  // wallet returns, we auto-trigger SIWE → 2nd popup fires immediately. One
-  // user click, both signatures back-to-back. The ref distinguishes a
-  // user-initiated connect (auto-sign) from a session-restore on page load
-  // (don't auto-sign — that'd surprise users).
-  // Two refs gate the auto-sign / redirect flow so they ONLY fire when the
-  // user clicks our Connect button — never on session restore or on a
-  // /api/auth/me probe that flips state to "authenticated" silently.
-  //   - autoSignAfterConnectRef: trigger SIWE right after a click-initiated
-  //     `hedera.connect()` succeeds.
-  //   - redirectAfterAuthRef: redirect to /markets after the resulting SIWE
-  //     verify lands. Cleared after one use so navigating to /profile later
-  //     (with a still-valid cookie) doesn't bounce the user back to /markets.
-  const autoSignAfterConnectRef = useRef(false);
-  const redirectAfterAuthRef = useRef(false);
-  // Picker modal — replaces the direct hedera.connect() call. Lets the user
-  // pick between HashPack (Hedera-native WC) and MetaMask (EIP-6963 injected).
-  // The picker calls back when a connect attempt is kicked off so this Nav
-  // can arm the auto-sign + redirect refs (same effect as the prior
-  // handleConnect did for HashPack-only).
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const handleConnectStarted = () => {
-    autoSignAfterConnectRef.current = true;
-    redirectAfterAuthRef.current = true;
-  };
+  // Connect UI is centralized in <WalletUiProvider>: the Nav "Connect Wallet"
+  // button opens the ONE shared picker, so it stays in lock-step with the hero
+  // CTA (same modal, same shared auth/wallet state). Auto-sign was REMOVED —
+  // after connecting, the user taps "Sign In" explicitly; the post-auth redirect
+  // lives in the provider and is armed on a user-initiated connect/sign.
+  const { openPicker, armRedirect } = useWalletUi();
+
   const handleDisconnect = async () => {
     if (auth.status === "authenticated") await signOut();
     await adapter.disconnect();
   };
-
-  // When the wallet has just connected AND the user clicked our Connect button
-  // (not a session restore), fire SIWE automatically.
-  //
-  // Order matters for MetaMask: we wait until the wallet is on Hedera before
-  // prompting the signature. `!onWrongChain` blocks SIWE while the add+switch
-  // (the onWrongChain effect above) is still pending, so the user sees the
-  // MetaMask prompts in a clean sequence — add Hedera → switch → sign — instead
-  // of a signature popup landing on the wrong chain mid-switch. For HashPack
-  // (mode='hedera') onWrongChain is always false, so it's unaffected. The
-  // autoSign ref stays armed until the chain is right, so a declined/slow
-  // switch just defers the signature rather than dropping it.
-  useEffect(() => {
-    if (
-      // Auto-sign after a click-initiated connect (autoSignAfterConnectRef), OR
-      // whenever we're inside a wallet dapp-browser iframe (e.g. HashPack) — there
-      // the wallet auto-connects on mount with no click, so without this the
-      // "Sign In" button lingers even though the wallet is connected. Inside the
-      // dapp browser a seamless auto-sign is the expected flow. Top-level loads
-      // still only auto-sign after a user click (a restored session must NOT pop
-      // a spontaneous signature prompt on every refresh).
-      (autoSignAfterConnectRef.current || isInIframe()) &&
-      adapter.isConnected &&
-      adapter.address &&
-      auth.status === "idle" &&
-      !onWrongChain
-    ) {
-      autoSignAfterConnectRef.current = false;
-      // Inside a wallet dapp browser (iframe) the connect+sign is auto-initiated
-      // on entry — so also arm the one-shot redirect to land the user on /markets
-      // after sign-in, matching the click-initiated flow. This only runs on a
-      // fresh auto-sign (auth.status === "idle" above), so a passive reload with a
-      // live session won't fire it; the redirect effect's pathname guard also
-      // skips /markets and /claim.
-      if (isInIframe()) redirectAfterAuthRef.current = true;
-      void signIn();
-    }
-  }, [adapter.isConnected, adapter.address, auth.status, signIn, onWrongChain]);
-
-  // Redirect to /markets ONCE, only after a click-initiated Connect & Sign
-  // chain finishes. Probes that flip state to "authenticated" (eg. /api/auth/me
-  // on a refresh, or visiting /profile while a cookie is live) do NOT trigger
-  // this — the ref isn't set in those paths.
-  useEffect(() => {
-    if (auth.status === "authenticated" && redirectAfterAuthRef.current) {
-      redirectAfterAuthRef.current = false;
-      // /claim drives its own post-redeem redirect to /markets — don't yank the
-      // user off the claim page the instant they sign in (before entering a code).
-      if (!pathname.startsWith("/markets") && !pathname.startsWith("/claim")) {
-        router.push("/markets");
-      }
-    }
-  }, [auth.status, pathname, router]);
 
   const isConnecting = hedera.status === "connecting";
   const isInitializing = hedera.initializing;
@@ -319,13 +244,9 @@ export function Nav() {
                   <button
                     type="button"
                     onClick={() => {
-                      // Arm the post-auth redirect ref so the "Sign In" path
-                      // (wallet already connected, just signing) lands on
-                      // /markets like the combined Connect & Sign path does.
-                      // Without this, only handleConnect would trigger the
-                      // redirect and the standalone Sign In click silently
-                      // stayed on whatever page the user was on.
-                      redirectAfterAuthRef.current = true;
+                      // Manual sign. Arm the shared post-auth redirect so signing
+                      // in from here lands on /markets, same as the connect flow.
+                      armRedirect();
                       void signIn();
                     }}
                     disabled={onWrongChain}
@@ -342,12 +263,12 @@ export function Nav() {
             ) : (
               <button
                 type="button"
-                onClick={() => setPickerOpen(true)}
+                onClick={openPicker}
                 disabled={isConnecting || isInitializing || !hederaAvailable}
                 title={
                   !hederaAvailable
                     ? "WalletConnect not configured (NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID missing)"
-                    : "Pick HashPack or MetaMask; we'll auto-sign you in right after."
+                    : "Pick HashPack or MetaMask, then sign in."
                 }
                 className="rounded-[2px] border border-white bg-white px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -355,9 +276,7 @@ export function Nav() {
                   ? "Initializing…"
                   : isConnecting
                     ? "Opening…"
-                    : autoSignAfterConnectRef.current && auth.status === "loading"
-                      ? "Signing…"
-                      : "Connect Wallet"}
+                    : "Connect Wallet"}
               </button>
             )}
 
@@ -418,12 +337,7 @@ export function Nav() {
           Connect failed: {connectErrorMsg.slice(0, 160)}
         </div>
       )}
-
-      <WalletPicker
-        open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        onConnectStarted={handleConnectStarted}
-      />
+      {/* The wallet picker is rendered once by <WalletUiProvider>. */}
     </>
   );
 }

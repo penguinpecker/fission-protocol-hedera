@@ -6,6 +6,7 @@ import { ReactNode, useState } from "react";
 import { wagmiConfig } from "@/lib/wagmi";
 import { HederaWalletProvider } from "@/lib/hedera-wallet/provider";
 import { AuthProvider } from "@/hooks/useSiweAuth";
+import { WalletUiProvider } from "@/components/WalletUiProvider";
 
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -24,7 +25,9 @@ export function Providers({ children }: { children: ReactNode }) {
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
         <HederaWalletProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider>
+            <WalletUiProvider>{children}</WalletUiProvider>
+          </AuthProvider>
         </HederaWalletProvider>
       </QueryClientProvider>
     </WagmiProvider>
