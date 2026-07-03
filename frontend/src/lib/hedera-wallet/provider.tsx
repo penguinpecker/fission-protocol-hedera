@@ -77,6 +77,19 @@ const APP_METADATA = {
 
 const MIRROR_BASE = "https://mainnet-public.mirrornode.hedera.com/api/v1";
 
+// WalletConnect relay override. hedera-wallet-connect 2.1.3 HARDCODES
+// wss://relay.walletconnect.com in DAppConnector.init() (no config knob), so we
+// intercept SignClient.init (the deduped module the lib imports) in build()
+// below. Default = wss://relay.reown.com — Reown's own live relay (same AWS
+// backend, /health=204) whose hostname does NOT contain the string
+// "walletconnect", so it evades the Nigerian ISP crypto DNS/SNI filter that
+// blocks *.walletconnect.com/.org. Build-time overridable via
+// NEXT_PUBLIC_HEDERA_WC_RELAY_URL for instant rollback to .com/.org.
+// NOTE: if the block turns out to be IP/ASN-level (all relays are AWS Singapore),
+// a hostname swap won't help — a wss reverse-proxy on a neutral domain would.
+const WC_RELAY_URL =
+  process.env.NEXT_PUBLIC_HEDERA_WC_RELAY_URL || "wss://relay.reown.com";
+
 /**
  * Resolve the EVM address the rest of the app should use for HTS facade reads
  * (balanceOf / allowance) and as the on-chain receiver.
@@ -185,10 +198,11 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
       //   - /dist/lib/dapp     → DAppConnector class
       //   - /dist/lib/shared   → HederaJsonRpcMethod, HederaSessionEvent,
       //                          HederaChainId enums (used in constructor)
-      const [hwcDapp, hwcShared, sdk] = await Promise.all([
+      const [hwcDapp, hwcShared, sdk, wcSign] = await Promise.all([
         import("@hashgraph/hedera-wallet-connect/dist/lib/dapp/index.js"),
         import("@hashgraph/hedera-wallet-connect/dist/lib/shared/index.js"),
         import("@hashgraph/sdk"),
+        import("@walletconnect/sign-client"),
       ]);
       const { DAppConnector } = hwcDapp as unknown as {
         DAppConnector: new (...args: unknown[]) => HederaConnectorShim;
@@ -199,6 +213,23 @@ export function HederaWalletProvider({ children }: { children: ReactNode }) {
           HederaSessionEvent: Record<string, string>;
           HederaChainId: Record<string, string>;
         };
+
+      // Route the WC relay through WC_RELAY_URL. DAppConnector.init() hardcodes
+      // relay.walletconnect.com; SignClient is the SAME (deduped) module it
+      // imports, so wrapping its static init once makes the lib's hardcoded call
+      // use our relay instead. Only the websocket transport is affected — the
+      // extension/iframe path + DAppSigner are postMessage-based and untouched.
+      const SC = ((wcSign as { default?: unknown }).default ?? wcSign) as {
+        init: (opts: Record<string, unknown>) => Promise<unknown>;
+        __fissionRelayPatched?: boolean;
+      };
+      if (typeof SC.init === "function" && !SC.__fissionRelayPatched) {
+        const origInit = SC.init.bind(SC);
+        SC.init = (opts: Record<string, unknown>) =>
+          origInit({ ...opts, relayUrl: WC_RELAY_URL });
+        SC.__fissionRelayPatched = true;
+        diag("HederaConnect", { step: "relay_override", relayUrl: WC_RELAY_URL });
+      }
 
       const mkConnector = () =>
         new DAppConnector(
