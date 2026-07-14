@@ -56,6 +56,11 @@ function useAuthEngine(): SiweAuthApi {
   // Concurrent-run guard for signIn. Signing is USER-INITIATED only now — there
   // is no auto-sign anywhere, so no signInRef/adapterRef listener plumbing.
   const signInInFlightRef = useRef(false);
+  // Set true the instant we ask the wallet to sign. The outer retry loop must
+  // NOT re-run signInOnce once this is set, or the user gets a SECOND signature
+  // prompt (the exact HashPack-dapp-browser "sign in twice" bug). Retries are
+  // only for pre-prompt failures (nonce fetch, session not yet live).
+  const promptedRef = useRef(false);
 
   // Probe the server for an existing session on mount and whenever the
   // connected wallet changes.
@@ -157,6 +162,7 @@ function useAuthEngine(): SiweAuthApi {
     }
     if (signInInFlightRef.current) return;
     signInInFlightRef.current = true;
+    promptedRef.current = false;
     setState({ status: "loading" });
     try {
     // TRANSIENT failures get an automatic retry (up to 3 attempts, 2.5s apart):
@@ -172,7 +178,9 @@ function useAuthEngine(): SiweAuthApi {
       for (let attempt = 1; attempt <= 3; attempt++) {
         const err = await signInOnce();
         if (err === null) return; // authenticated
-        if (attempt < 3 && TRANSIENT.test(err)) {
+        // Only retry PRE-prompt failures. Once the wallet has been asked to sign,
+        // retrying would pop a second signature dialog — the "sign in twice" bug.
+        if (attempt < 3 && !promptedRef.current && TRANSIENT.test(err)) {
           await new Promise((r) => setTimeout(r, 2500));
           continue;
         }
@@ -215,6 +223,9 @@ function useAuthEngine(): SiweAuthApi {
 
       // Step 2: build the message + sign. Different message shape per mode
       // (SIWE for EVM, plain text for Hedera) but both carry a Nonce: line.
+      // Mark that a signature dialog is imminent so a later failure never
+      // triggers an outer-loop retry that would re-prompt the user.
+      promptedRef.current = true;
       let verifyBody: Record<string, unknown>;
       if (adapter.mode === "evm") {
         const message = new SiweMessage({
@@ -257,13 +268,29 @@ function useAuthEngine(): SiweAuthApi {
         throw new Error("wallet_not_connected");
       }
 
-      // Step 3: verify.
-      const verifyRes = await fetch("/api/auth/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(verifyBody),
-        credentials: "include",
-      });
+      // Step 3: verify. The signature is already captured, so retry the verify
+      // NETWORK call here (no re-sign) — a blip must not cost the user a second
+      // signature. Only the fetch is retried; an HTTP rejection falls straight
+      // through to the error path below.
+      let verifyRes: Response | null = null;
+      for (let vAttempt = 0; vAttempt < 3; vAttempt++) {
+        try {
+          verifyRes = await fetch("/api/auth/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(verifyBody),
+            credentials: "include",
+          });
+          break;
+        } catch (netErr) {
+          if (vAttempt < 2) {
+            await new Promise((r) => setTimeout(r, 1200));
+            continue;
+          }
+          throw netErr;
+        }
+      }
+      if (!verifyRes) throw new Error("verify_unreachable");
       if (!verifyRes.ok) {
         const j = await verifyRes.json().catch(() => ({}));
         const j2 = j as { error?: string; expected?: string; gotInMessage?: string; detail?: string };

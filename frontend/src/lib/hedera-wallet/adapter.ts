@@ -307,32 +307,28 @@ export function useWalletAdapter(): AdapterAPI {
         type HederaSigner = {
           signMessage(params: { signerAccountId: string; message: string }): Promise<{ signatureMap: string }>;
         };
-        // Pre-flight: rebuild if the signer's session is dead before signing so
-        // the SIWE sign doesn't fire on a HashPack-deleted session (mode 3).
+        // ONE prompt only. HashPack's dapp-browser churns the WC session on open,
+        // so make the session STABLE *before* prompting: if it's not live, refresh
+        // once (which in-iframe silently re-pairs) and WAIT for the fresh session
+        // to register live, then sign a SINGLE time. The old code prompted, and on
+        // a stale-session error refreshed + re-prompted — so HashPack asked the
+        // user to approve the signature twice. We no longer re-prompt after the
+        // session is confirmed live; a genuine death throws and the user re-taps.
         if (!hedera.isSessionLive()) {
           await hedera.refreshConnector();
-        }
-        const doSign = async (): Promise<{ format: "hedera"; signatureMap: string; accountId: string }> => {
-          const connector = hedera.getConnector() as null | HederaSigner;
-          if (!connector) throw new Error("Hedera connector not initialized");
-          const accountId = hedera.accountId;
-          if (!accountId) throw new Error("Hedera accountId missing");
-          const { signatureMap } = await connector.signMessage({
-            signerAccountId: `hedera:mainnet:${accountId}`,
-            message,
-          });
-          return { format: "hedera" as const, signatureMap, accountId };
-        };
-        try {
-          return await doSign();
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          if (STALE_SESSION.test(msg)) {
-            await hedera.refreshConnector();
-            return doSign();
+          for (let i = 0; i < 15 && !hedera.isSessionLive(); i++) {
+            await new Promise((r) => setTimeout(r, 400));
           }
-          throw e;
         }
+        const connector = hedera.getConnector() as null | HederaSigner;
+        if (!connector) throw new Error("Hedera connector not initialized");
+        const accountId = hedera.accountId;
+        if (!accountId) throw new Error("Hedera accountId missing");
+        const { signatureMap } = await connector.signMessage({
+          signerAccountId: `hedera:mainnet:${accountId}`,
+          message,
+        });
+        return { format: "hedera" as const, signatureMap, accountId };
       }
       throw new Error("Wallet not connected");
     },
