@@ -27,6 +27,42 @@ function shortAddr(a: string): string {
   return a.length > 14 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a;
 }
 
+/**
+ * Copy text to the clipboard with a fallback that works inside the HashPack
+ * dapp-browser iframe, where navigator.clipboard is undefined or permission-
+ * blocked (async Clipboard API needs a permission the cross-origin iframe isn't
+ * granted). Falls back to a hidden-textarea + execCommand('copy'), which works
+ * in that context. Returns true on success.
+ */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* clipboard API blocked in this context — fall through to execCommand */
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.left = "0";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 export default function ReferralsPage() {
   return (
     <main className="min-h-screen text-text">
@@ -43,44 +79,49 @@ function ReferralsBody() {
   const adapter = useWalletAdapter();
   const [data, setData] = useState<Resp | null>(null);
   const [state, setState] = useState<"loading" | "ok" | "unauth" | "error">("loading");
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "ok" | "fail">("idle");
 
-  const load = useCallback(async () => {
-    setState("loading");
-    try {
-      const r = await fetch("/api/referrals/me", { cache: "no-store", credentials: "include" });
-      if (r.status === 401) {
-        setState("unauth");
+  // Fetch the referral data. When we're already signed in app-wide (shared
+  // auth === authenticated), a 401 is almost always the fresh-nav cookie race in
+  // the dapp-browser iframe (the partitioned cookie isn't attached to the very
+  // first request yet), so retry a few times before concluding "signed out" —
+  // this is why the user shouldn't have to re-sign-in on /referrals.
+  const load = useCallback(async (maxRetryOn401 = 0) => {
+    setState((s) => (s === "ok" ? s : "loading"));
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const r = await fetch("/api/referrals/me", { cache: "no-store", credentials: "include" });
+        if (r.status === 401) {
+          if (attempt < maxRetryOn401) {
+            await new Promise((res) => setTimeout(res, 700));
+            continue;
+          }
+          setState("unauth");
+          return;
+        }
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        setData((await r.json()) as Resp);
+        setState("ok");
+        return;
+      } catch {
+        setState("error");
         return;
       }
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setData((await r.json()) as Resp);
-      setState("ok");
-    } catch {
-      setState("error");
     }
   }, []);
 
+  // Drive loading off the SHARED auth state. Runs on mount and whenever auth
+  // flips. When authenticated, retry through the cookie race so an already-
+  // signed-in user gets their link without a manual re-sign-in.
   useEffect(() => {
-    void load();
-  }, [load]);
-
-  // Re-probe whenever the shared auth flips to authenticated — a user who signs
-  // in via the Nav while sitting on /referrals should see their link without a
-  // manual reload (mode 3 referrals symptom).
-  useEffect(() => {
-    if (auth.status === "authenticated") void load();
+    void load(auth.status === "authenticated" ? 4 : 0);
   }, [auth.status, load]);
 
   const copy = async () => {
     if (!data?.link) return;
-    try {
-      await navigator.clipboard.writeText(data.link);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    } catch {
-      /* clipboard blocked — user can select manually */
-    }
+    const ok = await copyText(data.link);
+    setCopyState(ok ? "ok" : "fail");
+    setTimeout(() => setCopyState("idle"), 1800);
   };
 
   return (
@@ -95,11 +136,11 @@ function ReferralsBody() {
         transaction. Works for both MetaMask and HashPack sign-ins.
       </p>
 
-      {state === "loading" && (
+      {(state === "loading" || (auth.status === "loading" && state === "unauth")) && (
         <div className="mt-8 font-mono text-[12px] text-textDim">Loading…</div>
       )}
 
-      {state === "unauth" && (
+      {state === "unauth" && auth.status !== "loading" && (
         <div className="mt-8 rounded-[6px] border border-border bg-bgCard px-5 py-8 text-center">
           <p className="font-mono text-[13px] text-textSec">
             {adapter.isConnected && adapter.address
@@ -123,14 +164,9 @@ function ReferralsBody() {
               await signIn();
               void load();
             }}
-            disabled={auth.status === "loading"}
             className="mt-4 rounded-[4px] border border-white bg-white px-4 py-2 font-mono text-[12px] font-semibold uppercase tracking-[0.1em] text-black transition hover:bg-white/85 disabled:opacity-50"
           >
-            {auth.status === "loading"
-              ? "Signing…"
-              : adapter.isConnected && adapter.address
-                ? "Sign in"
-                : "Connect wallet"}
+            {adapter.isConnected && adapter.address ? "Sign in" : "Connect wallet"}
           </button>
         </div>
       )}
@@ -161,9 +197,14 @@ function ReferralsBody() {
                 disabled={!data.link}
                 className="rounded-[4px] border border-white bg-white px-4 py-2 font-mono text-[12px] font-semibold uppercase tracking-[0.1em] text-black transition hover:bg-white/85 disabled:opacity-40"
               >
-                {copied ? "Copied" : "Copy"}
+                {copyState === "ok" ? "Copied" : copyState === "fail" ? "Copy failed" : "Copy"}
               </button>
             </div>
+            {copyState === "fail" && (
+              <div className="mt-2 font-mono text-[10px] text-warning">
+                Couldn&apos;t copy automatically — tap the link above and press &amp; hold to copy.
+              </div>
+            )}
             <div className="mt-2 font-mono text-[10px] text-textDim">
               code: <span className="text-textSec">{data.code ?? "—"}</span>
             </div>
