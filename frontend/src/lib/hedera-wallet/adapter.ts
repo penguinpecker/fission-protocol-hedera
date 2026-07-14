@@ -838,7 +838,11 @@ async function writeHedera(
           .addAddress(op.receiver.replace(/^0x/, ""))
           .addUint256(toBN(0n)),
         op.hbarIn,
-        15_000_000,
+        // Gas LIMIT, not usage: Hedera fronts limit×gasPrice up-front (refunds
+        // unused). A real zap uses ~1.4M, so 15M reserved ~19 HBAR and blocked
+        // small-balance buys with INSUFFICIENT_PAYER_BALANCE. 5M (~3.5× actual)
+        // reserves ~6 HBAR — enough headroom, far lower balance bar.
+        5_000_000,
       );
     case "depositLiquidity":
       return exec(
@@ -852,7 +856,7 @@ async function writeHedera(
           .addAddress(op.receiver)
           .addUint128(toBN(op.minShares)),
         op.npmHbar,
-        14_500_000,
+        6_000_000, // was 14.5M — over-reserved HBAR; deposit uses ~1.4M
       );
     case "redeemAfterExpiry":
       return exec(
@@ -1003,28 +1007,28 @@ async function writeHedera(
       switch (fn) {
         case "zapHbarToSy":
           p.addAddress(addrArg(a[0])).addAddress(addrArg(a[1])).addUint256(toBN(a[2] as bigint));
-          return exec(ADDRESSES.periphery, fn, p, valueHbar, 15_000_000);
+          return exec(ADDRESSES.periphery, fn, p, valueHbar, 5_000_000);
         case "buySyForPt":
         case "sellPtForSy":
         case "sellLpForSy":
         case "sellYtForSy":
           p.addAddress(addrArg(a[0])).addUint256(toBN(a[1] as bigint))
             .addUint256(toBN(a[2] as bigint)).addAddress(addrArg(a[3])).addUint256(toBN(a[4] as bigint));
-          return exec(ADDRESSES.periphery, fn, p, 0, 10_000_000);
+          return exec(ADDRESSES.periphery, fn, p, 0, 6_000_000);
         case "buySyForYt":
           p.addAddress(addrArg(a[0])).addUint256(toBN(a[1] as bigint))
             .addUint256(toBN(a[2] as bigint)).addAddress(addrArg(a[3])).addUint256(toBN(a[4] as bigint));
-          return exec(ADDRESSES.periphery, fn, p, 0, 12_000_000);
+          return exec(ADDRESSES.periphery, fn, p, 0, 6_000_000);
         case "buySyForLp":
           // (market, syIn, ptShareBps, ptOutFromSwap, minLpOut, receiver, deadline)
           p.addAddress(addrArg(a[0])).addUint256(toBN(a[1] as bigint)).addUint16(Number(a[2]))
             .addUint256(toBN(a[3] as bigint)).addUint256(toBN(a[4] as bigint))
             .addAddress(addrArg(a[5])).addUint256(toBN(a[6] as bigint));
-          return exec(ADDRESSES.periphery, fn, p, 0, 12_000_000);
+          return exec(ADDRESSES.periphery, fn, p, 0, 6_000_000);
         case "unzapSyToHbar":
           p.addAddress(addrArg(a[0])).addUint256(toBN(a[1] as bigint))
             .addUint256(toBN(a[2] as bigint)).addUint256(toBN(a[3] as bigint));
-          return exec(ADDRESSES.periphery, fn, p, 0, 10_000_000);
+          return exec(ADDRESSES.periphery, fn, p, 0, 6_000_000);
         default:
           throw new Error(`writePeriphery: unsupported function ${fn}`);
       }

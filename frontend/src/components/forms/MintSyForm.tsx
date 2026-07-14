@@ -129,7 +129,10 @@ function ZapMintFormInner({ sy, user }: { sy: `0x${string}`; user: `0x${string}`
   // see a clear floor instead of an AmountZero revert.
   const tooSmall = hbarAmount > 0 && hbarAmount < 6;
   // Wallet must hold msg.value (= hbarAmount) + gas. Warn up-front (FAIL-OPEN).
-  const requiredHbar = hbarAmount + 2;
+  // +10 = 5 HBAR NPM fee (the adapter adds it to the zap's msg.value) + ~5 HBAR
+  // for the network fee. The old "+2" omitted the NPM fee, so an under-funded
+  // mint passed the check then failed with INSUFFICIENT_PAYER_BALANCE.
+  const requiredHbar = hbarAmount + 10;
   const hbarInsufficientBalance = hbarBalance !== undefined && hbarAmount > 0 && hbarBalance < requiredHbar;
   const isPending = isSubmitting || adapter.isWritePending;
   const isActive = isPending || isConfirmingFinal;

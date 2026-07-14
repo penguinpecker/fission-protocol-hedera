@@ -137,7 +137,11 @@ export function BuyYtForm({ market, detail, user, syBalance }: Props) {
   // Wallet must hold msg.value (= hbarAmount) + gas across the flow. Warn
   // up-front (FAIL-OPEN — only when balance is confidently below requirement)
   // instead of HashPack's cryptic INSUFFICIENT_PAYER_BALANCE precheck.
-  const requiredHbar = hbarAmount + 2;
+  // +10 = 5 HBAR NPM fee (the adapter adds it to the zap's msg.value) + ~5 HBAR
+  // for network fees across the zap/approve/buy txs. The old "+2" omitted the NPM
+  // fee, so an under-funded buy passed the check then died mid-flow with
+  // INSUFFICIENT_PAYER_BALANCE, stranding the Step-1 HBAR.
+  const requiredHbar = hbarAmount + 10;
   const hbarInsufficientBalance =
     effectiveSource === "hbar" && hbarBalance !== undefined && hbarAmount > 0 && hbarBalance < requiredHbar;
 

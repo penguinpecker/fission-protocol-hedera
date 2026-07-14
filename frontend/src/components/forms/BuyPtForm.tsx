@@ -166,7 +166,13 @@ export function BuyPtForm({ market, detail, user, syBalance }: Props) {
   // associate/zap/approve/buy txs. Warn up-front (FAIL-OPEN — only when the
   // balance is confidently below the requirement) so under-funded users get a
   // clear number instead of HashPack's cryptic INSUFFICIENT_PAYER_BALANCE.
-  const requiredHbar = hbarAmount + 2;
+  // The wallet must hold the zap's msg.value — which the adapter sets to
+  // (hbarAmount + 5 HBAR NPM fee) — PLUS the network fee for EACH tx in the flow
+  // (zap ~2.5, optional approve, buy ~1.5 HBAR). The old "+2" omitted the 5 HBAR
+  // NPM fee entirely, so "Need ~N HBAR" was ~8 short and the zap died mid-flow
+  // with INSUFFICIENT_PAYER_BALANCE, stranding the Step-1 HBAR. +10 = 5 NPM + ~5
+  // for fees across the 2-3 tx flow.
+  const requiredHbar = hbarAmount + 10;
   const hbarInsufficientBalance =
     effectiveSource === "hbar" && hbarBalance !== undefined && hbarAmount > 0 && hbarBalance < requiredHbar;
 
