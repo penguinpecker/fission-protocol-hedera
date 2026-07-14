@@ -164,37 +164,47 @@ export async function getSession(): Promise<Session | null> {
   return verifySession(tok);
 }
 
-/**
- * Set the session cookie on a NextResponse. Use after SIWE verify.
- * Cookie attributes:
- *   - HttpOnly: not readable from JS (XSS-resistant)
- *   - Secure: in production only (NODE_ENV)
- *   - SameSite=Lax: blocks cross-origin POSTs from third-party sites
- *   - Path=/: available to every route
- */
-export function attachSessionCookie(res: NextResponse, token: string) {
-  res.cookies.set({
+// Cookie attributes.
+//   - HttpOnly: not readable from JS (XSS-resistant)
+//   - Path=/: available to every route
+//   - PRODUCTION: SameSite=None + Secure + Partitioned. REQUIRED because HashPack's
+//     mobile dapp-browser loads Fission in a CROSS-ORIGIN IFRAME (provider.tsx
+//     isInIframe()). A SameSite=Lax cookie is NEVER sent on requests from a
+//     third-party iframe, so the session cookie set at SIWE-verify was silently
+//     dropped on every subsequent /api call in-wallet → getSession() null → 401,
+//     while the client showed "authenticated" optimistically. SameSite=None makes
+//     the cookie ride cross-site; Partitioned (CHIPS) scopes it to the embedding
+//     top-level site so it still works as third-party cookies are phased out (and
+//     is ignored by browsers that don't support it, degrading to plain None).
+//   - DEV: SameSite=Lax + insecure, so it works over http://localhost.
+const IS_PROD = process.env.NODE_ENV === "production";
+// `partitioned` is a valid Set-Cookie attribute (CHIPS) that Next serializes but
+// is absent from some @types builds; build a plain options object and cast at the
+// set() call so it always type-checks.
+function sessionCookieOpts(value: string, maxAge: number): Record<string, unknown> {
+  return {
     name: SESSION_COOKIE,
-    value: token,
+    value,
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    secure: IS_PROD,
+    sameSite: IS_PROD ? "none" : "lax",
+    partitioned: IS_PROD,
     path: "/",
-    maxAge: SEVEN_DAYS_S,
-  });
+    maxAge,
+  };
+}
+// The object-form overload param (ResponseCookie), extracted from the union.
+type CookieObj = Extract<Parameters<NextResponse["cookies"]["set"]>[0], object>;
+
+/** Set the session cookie on a NextResponse. Use after SIWE verify. */
+export function attachSessionCookie(res: NextResponse, token: string) {
+  res.cookies.set(sessionCookieOpts(token, SEVEN_DAYS_S) as unknown as CookieObj);
 }
 
-/** Clear the session cookie on a NextResponse. */
+/** Clear the session cookie on a NextResponse. Attributes MUST match the set
+ *  call (same SameSite/Secure/Partitioned) or the browser won't match+delete it. */
 export function clearSessionCookie(res: NextResponse) {
-  res.cookies.set({
-    name: SESSION_COOKIE,
-    value: "",
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 0,
-  });
+  res.cookies.set(sessionCookieOpts("", 0) as unknown as CookieObj);
 }
 
 /** Helper for route handlers that need a session — short-circuit on null. */
