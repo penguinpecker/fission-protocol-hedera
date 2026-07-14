@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
+import { useWalletUi } from "@/components/WalletUiProvider";
+import { useWalletAdapter } from "@/lib/hedera-wallet/adapter";
 
 type ReferralItem = {
   referee: string;
@@ -37,6 +39,8 @@ export default function ReferralsPage() {
 
 function ReferralsBody() {
   const { state: auth, signIn } = useSiweAuth();
+  const { openPicker } = useWalletUi();
+  const adapter = useWalletAdapter();
   const [data, setData] = useState<Resp | null>(null);
   const [state, setState] = useState<"loading" | "ok" | "unauth" | "error">("loading");
   const [copied, setCopied] = useState(false);
@@ -98,17 +102,36 @@ function ReferralsBody() {
       {state === "unauth" && (
         <div className="mt-8 rounded-[6px] border border-border bg-bgCard px-5 py-8 text-center">
           <p className="font-mono text-[13px] text-textSec">
-            Connect your wallet and sign in to get your referral link.
+            {adapter.isConnected && adapter.address
+              ? "Sign in to get your referral link."
+              : "Connect your wallet and sign in to get your referral link."}
           </p>
-          {auth.status !== "authenticated" && (
-            <button
-              type="button"
-              onClick={() => void signIn()}
-              className="mt-4 rounded-[4px] border border-white bg-white px-4 py-2 font-mono text-[12px] font-semibold uppercase tracking-[0.1em] text-black transition hover:bg-white/85"
-            >
-              Sign in
-            </button>
-          )}
+          {/* This card renders ONLY when the SERVER returned 401 (state==="unauth"),
+              so an action is ALWAYS the right offer — even if the client-side
+              auth.status is stale-"authenticated" (useSiweAuth never downgrades on a
+              failed re-probe, so a revoked/expired session leaves the Nav chip up
+              while the API 401s). Not connected → open the picker; connected →
+              re-run SIWE to mint a fresh cookie, then reload. This clears the
+              client/server desync that used to leave this card a dead end. */}
+          <button
+            type="button"
+            onClick={async () => {
+              if (!adapter.isConnected || !adapter.address) {
+                openPicker();
+                return;
+              }
+              await signIn();
+              void load();
+            }}
+            disabled={auth.status === "loading"}
+            className="mt-4 rounded-[4px] border border-white bg-white px-4 py-2 font-mono text-[12px] font-semibold uppercase tracking-[0.1em] text-black transition hover:bg-white/85 disabled:opacity-50"
+          >
+            {auth.status === "loading"
+              ? "Signing…"
+              : adapter.isConnected && adapter.address
+                ? "Sign in"
+                : "Connect wallet"}
+          </button>
         </div>
       )}
 
